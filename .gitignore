@@ -9,3 +9,4 @@ data/raw/
 data/processed/
 artifacts/runs/
 .env
+.DS_Store
