@@ -54,14 +54,20 @@ uv run recagent-eval download-data --output data/raw
 uv run recagent-eval prepare-cases \
   --data-dir data/raw/ml-1m \
   --output cases/fixed_cases.json
+uv run recagent-eval select-retrieval \
+  --data-dir data/raw/ml-1m \
+  --evidence-output artifacts/retrieval_ablation.json \
+  --config-output configs/full_constraint_aware.yaml
 uv run recagent-eval tune \
   --data-dir data/raw/ml-1m \
-  --output artifacts/tuned_weights.json
+  --config configs/full_constraint_aware.yaml \
+  --config-output configs/full_constraint_aware.yaml \
+  --output artifacts/tuned_weights_constraint_aware.json
 uv run recagent-eval evaluate \
-  --config configs/full.yaml \
+  --config configs/full_constraint_aware.yaml \
   --cases cases/fixed_cases.json \
   --data-dir data/raw/ml-1m \
-  --output artifacts/runs/full-rule \
+  --output artifacts/runs/full-constraint-aware-rule \
   --provider rule-based
 ```
 
@@ -101,34 +107,26 @@ uv run --extra demo python -m recagent_eval.demo
 
 ## Current verified result
 
-The local rule-based provider run verifies the recommendation and evaluation
-pipeline without claiming LLM quality:
+The constraint-aware DeepSeek matrix uses one fixed case fingerprint and a
+validation-selected Top-500 candidate budget for every formal variant:
 
-| Variant | Recall@10 | NDCG@10 | Plan valid | Constraints | Tool success |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Unstructured, no memory | 0.0600 | 0.0486 | 0% | 100% | 100% |
-| Structured + memory | 0.0600 | 0.0360 | 100% | 100% | 100% |
-| Full hybrid | 0.0800 | 0.0418 | 100% | 100% | 100% |
+| Variant | Recall@10 | NDCG@10 | Union candidate recall | Plan valid | Pipeline | Constraints |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Unstructured, no memory | 0.0600 | **0.0486** | 0.5800 | N/A | 100% | 100% |
+| Structured + memory | **0.0600** | 0.0360 | 0.7800 | 100% | 100% | 100% |
+| Full hybrid | 0.0400 | 0.0149 | **0.8800** | 100% | 100% | 100% |
+| Full, 20-case stability | 0.0000 | 0.0000 | 0.7500 | 100% | 100% | 100% |
 
-The full model improves held-out hit/recall from 6% to 8%, but does **not** beat
-the baseline NDCG. That negative result is retained in
-[reports/experiments/offline-rule-based.md](reports/experiments/offline-rule-based.md).
+The hybrid route improves candidate coverage by 10 percentage points over the
+same-depth ItemCF variant, but does not improve top-10 ranking. This negative
+result is retained rather than filtered. See the
+[constraint-aware DeepSeek report](reports/experiments/deepseek-constraint-aware.md)
+for validation ablations, fingerprints, latency, token usage, and failure
+analysis.
 
-The formal DeepSeek matrix is also complete:
-
-| Variant | Recall@10 | NDCG@10 | Plan valid | Fallback | Constraints |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Unstructured, no memory | 0.0600 | 0.0486 | N/A | 0% | 100% |
-| Structured + memory | 0.0400 | 0.0326 | 84% | 16% | 100% |
-| Full hybrid | 0.0400 | 0.0226 | 86% | 14% | 100% |
-| Full, 20-case repeat | 0.0000 | 0.0000 | 90% | 10% | 100% |
-
-The plan-validity target was not met; failures were concentrated entirely in
-multi-turn episodes. See the
-[DeepSeek report](reports/experiments/deepseek-formal.md) for token use,
-latency, metric caveats, and the targeted fix. After strengthening the initial
-and repair prompts without relaxing validation, a 10-case multi-turn rerun
-reached 100% plan validity, 0% fallback, and 90% semantic preference retention.
+The [archived first DeepSeek report](reports/experiments/deepseek-formal.md)
+documents the invalid-label and policy-drift failures that motivated the revised
+evaluator. The fingerprints differ, so the two result tables are not merged.
 Remote Qwen numbers remain pending until the RTX 4090 host is free.
 
 ## Testing and evidence
@@ -138,9 +136,11 @@ uv run pytest
 uv run ruff check .
 ```
 
-The suite covers schemas, memory updates, invalid plans, one-shot repair,
-provider retries, chronological splitting, hard constraints, retrieval,
-ranking, weight tuning, metrics, CLI smoke tests, and deterministic manifests.
+The 54-test suite covers schemas, memory updates, invalid plans, one-shot repair,
+provider retries, chronological splitting, case-label preflight, frozen
+retrieval policy, hard constraints, route-level diagnostics, retrieval
+selection, ranking, weight tuning, metrics, CLI smoke tests, scripts, and
+deterministic manifests. Current line coverage is 89%.
 
 - Upstream audit: [reports/audit/overview.md](reports/audit/overview.md)
 - Candidate ranking: [reports/ranking/candidate_score.md](reports/ranking/candidate_score.md)
@@ -151,10 +151,9 @@ ranking, weight tuning, metrics, CLI smoke tests, and deterministic manifests.
 
 - TF-IDF uses MovieLens title/genre text; it is deliberately lightweight and is
   not a learned sentence embedding model.
-- The formal DeepSeek run exposed a mismatch between exact preference-state
-  labels and semantically equivalent hard/soft exclusions; retention=0 is not
-  used as a project claim.
-- The current hybrid improves coverage but not NDCG. A learned or calibrated
-  second-stage ranker is intentionally outside v1.
+- The current hybrid improves candidate coverage but not Recall@10 or NDCG@10.
+  A learned or calibrated second-stage ranker is intentionally outside v1.
+- The unstructured no-memory baseline falls back to popularity retrieval, so its
+  strong NDCG on 50 fixed cases should not be generalized beyond this matrix.
 - MovieLens data is downloaded separately and remains subject to GroupLens
   terms.
