@@ -14,11 +14,12 @@
 - Validation-selected hybrid weights: ItemCF 0.7, TF-IDF 0.3,
   explicit affinity 0.0
 - Total API usage: 238 calls and 167,621 tokens
-- Raw local artifacts:
-  `artifacts/runs/*-deepseek-constraint-aware*`
+- Machine-readable aggregate:
+  `reports/experiments/deepseek-constraint-aware.json`
 
-The raw run directories are intentionally ignored by Git. The fixed cases,
-configuration, validation ablation, tuned weights, and this aggregate report are
+Per-episode run directories are intentionally ignored by Git and are regenerated
+with `scripts/run_deepseek_matrix.sh`. The fixed cases, configuration,
+validation ablation, tuned weights, and Markdown/JSON aggregate reports are
 versioned.
 
 ## Evaluation-integrity changes

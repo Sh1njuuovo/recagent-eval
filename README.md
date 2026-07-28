@@ -122,7 +122,9 @@ same-depth ItemCF variant, but does not improve top-10 ranking. This negative
 result is retained rather than filtered. See the
 [constraint-aware DeepSeek report](reports/experiments/deepseek-constraint-aware.md)
 for validation ablations, fingerprints, latency, token usage, and failure
-analysis.
+analysis. A
+[machine-readable summary](reports/experiments/deepseek-constraint-aware.json)
+contains the same frozen aggregate metrics.
 
 The [archived first DeepSeek report](reports/experiments/deepseek-formal.md)
 documents the invalid-label and policy-drift failures that motivated the revised
