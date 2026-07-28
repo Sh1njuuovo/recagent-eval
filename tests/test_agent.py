@@ -1,6 +1,10 @@
 from collections import deque
 
-from recagent_eval.agent import AgentConfig, RecommendationAgent
+from recagent_eval.agent import (
+    AgentConfig,
+    RecommendationAgent,
+    build_semantic_profile,
+)
 from recagent_eval.data import Movie, Rating
 from recagent_eval.models import PreferenceState
 from recagent_eval.provider import LLMResponse, ProviderError, TokenUsage
@@ -131,6 +135,41 @@ def test_full_profile_fallback_retains_both_required_routes() -> None:
     assert result.fallback_used is True
     assert result.plan is not None
     assert [step.tool for step in result.plan.steps].count("semantic_retrieve") == 1
+
+
+def test_semantic_profile_is_ordered_capped_and_omits_negative_tokens() -> None:
+    state = PreferenceState(
+        liked_movie_ids={3, 1, 2},
+        liked_genres={"Sci-Fi"},
+        disliked_genres={"Horror"},
+        excluded_genres={"Musical"},
+    )
+
+    profile = build_semantic_profile(
+        "recommend something",
+        state,
+        MOVIES,
+        history_cap=2,
+    )
+
+    assert "Space Quest" in profile
+    assert "Galaxy War" in profile
+    assert "Quiet Drama" not in profile
+    assert "Sci-Fi" in profile
+    assert "Horror" not in profile
+    assert "Musical" not in profile
+
+
+def test_retrieval_traces_save_ordered_candidate_ids() -> None:
+    result = make_agent(SequenceProvider([valid_response()])).recommend(
+        "science fiction",
+        PreferenceState(liked_movie_ids={1}),
+    )
+
+    traces = {trace.tool: trace for trace in result.traces}
+    assert traces["itemcf_retrieve"].candidate_movie_ids == [2]
+    assert traces["semantic_retrieve"].candidate_movie_ids
+    assert traces["rerank"].candidate_movie_ids == [2]
 
 
 def test_agent_updates_memory_executes_tools_and_respects_exclusions() -> None:

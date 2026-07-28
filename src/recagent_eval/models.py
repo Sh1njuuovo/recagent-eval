@@ -131,6 +131,7 @@ class ToolTrace(BaseModel):
     success: bool = True
     latency_ms: float = 0.0
     candidate_count: int | None = None
+    candidate_movie_ids: list[int] = Field(default_factory=list)
     error: str | None = None
 
 

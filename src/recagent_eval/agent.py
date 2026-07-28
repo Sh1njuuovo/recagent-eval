@@ -165,6 +165,7 @@ class RecommendationAgent:
 
         for step in plan.steps:
             step_started = time.perf_counter()
+            candidate_movie_ids: list[int] = []
             try:
                 if step.tool == "lookup":
                     candidate_count = len(allowed_movies)
@@ -175,23 +176,30 @@ class RecommendationAgent:
                     candidate_count = len(allowed_movies)
                 elif step.tool == "itemcf_retrieve":
                     history = state.liked_movie_ids
-                    itemcf_scores = dict(
-                        self.itemcf.retrieve(
-                            history,
-                            top_k=_top_k(step, self.config.retrieval_top_k),
-                            allowed_ids=set(allowed_movies),
-                        )
+                    retrieved = self.itemcf.retrieve(
+                        history,
+                        top_k=_top_k(step, self.config.retrieval_top_k),
+                        allowed_ids=set(allowed_movies),
                     )
+                    itemcf_scores = dict(retrieved)
+                    candidate_movie_ids = [movie_id for movie_id, _ in retrieved]
                     candidate_count = len(itemcf_scores)
                 elif step.tool == "semantic_retrieve":
                     if self.config.enable_semantic_retrieval:
-                        semantic_scores = dict(
-                            self.semantic.retrieve(
-                                _semantic_query(message, state),
-                                top_k=_top_k(step, self.config.retrieval_top_k),
-                                allowed_ids=set(allowed_movies),
-                            )
+                        retrieved = self.semantic.retrieve(
+                            build_semantic_profile(
+                                message,
+                                state,
+                                self.movies,
+                                history_cap=self.config.semantic_profile_history_cap,
+                            ),
+                            top_k=_top_k(step, self.config.retrieval_top_k),
+                            allowed_ids=set(allowed_movies),
                         )
+                        semantic_scores = dict(retrieved)
+                        candidate_movie_ids = [
+                            movie_id for movie_id, _ in retrieved
+                        ]
                     candidate_count = len(semantic_scores)
                 elif step.tool == "rerank":
                     ranked = self.ranker.rank(
@@ -201,6 +209,7 @@ class RecommendationAgent:
                         state=state,
                         top_k=_top_k(step, state.requested_count),
                     )
+                    candidate_movie_ids = [movie.movie_id for movie in ranked]
                     candidate_count = len(ranked)
                 else:
                     for item in ranked:
@@ -211,6 +220,7 @@ class RecommendationAgent:
                         tool=step.tool,
                         args=step.args,
                         candidate_count=candidate_count,
+                        candidate_movie_ids=candidate_movie_ids,
                         latency_ms=(time.perf_counter() - step_started) * 1000,
                     )
                 )
@@ -356,14 +366,20 @@ def _top_k(step: ToolStep, default: int) -> int:
     return max(1, min(int(value), 1000))
 
 
-def _semantic_query(message: str, state: PreferenceState) -> str:
-    return " ".join(
-        [
-            message,
-            *sorted(state.liked_genres),
-            *(f"not {genre}" for genre in sorted(state.disliked_genres)),
-        ]
-    )
+def build_semantic_profile(
+    message: str,
+    state: PreferenceState,
+    movies: dict[int, Movie],
+    *,
+    history_cap: int,
+) -> str:
+    parts = [message]
+    parts.extend(sorted(state.liked_genres))
+    for movie_id in sorted(state.liked_movie_ids)[: max(history_cap, 0)]:
+        movie = movies.get(movie_id)
+        if movie is not None:
+            parts.append(movie.text)
+    return " ".join(parts)
 
 
 def _reason(movie: Any, state: PreferenceState) -> str:
