@@ -39,16 +39,14 @@ def generate_cases(
         & {user_id for user_id, history in positive_history.items() if history}
     )
     random.Random(seed).shuffle(eligible)
-    required = single_turn_count + multi_turn_count
-    if len(eligible) < required:
-        repeated = (
-            [eligible[index % len(eligible)] for index in range(required)] if eligible else []
-        )
-    else:
-        repeated = eligible[:required]
+    single_users = (
+        [eligible[index % len(eligible)] for index in range(single_turn_count)]
+        if eligible
+        else []
+    )
 
     cases: list[EvaluationCase] = []
-    for index, user_id in enumerate(repeated[:single_turn_count], start=1):
+    for index, user_id in enumerate(single_users, start=1):
         history = positive_history[user_id]
         genres = _favorite_genres(history, movies)
         state = PreferenceState(
@@ -68,12 +66,34 @@ def generate_cases(
             )
         )
 
-    multi_users = repeated[single_turn_count:]
-    for index, user_id in enumerate(multi_users, start=1):
+    split_index = min(single_turn_count, len(eligible))
+    multi_user_order = eligible[split_index:] + eligible[:split_index]
+    multi_candidates: list[tuple[int, str]] = []
+    for user_id in multi_user_order:
         history = positive_history[user_id]
         genres = _favorite_genres(history, movies)
         liked_genre = genres[0] if genres else "Drama"
-        disliked_genre = _different_genre(liked_genre, movies)
+        target = movies[split.test_targets[user_id]]
+        disliked_genre = _different_genre(
+            liked_genre,
+            movies,
+            forbidden_genres=set(target.genres),
+        )
+        if disliked_genre is not None:
+            multi_candidates.append((user_id, disliked_genre))
+
+    multi_users = (
+        [
+            multi_candidates[index % len(multi_candidates)]
+            for index in range(multi_turn_count)
+        ]
+        if multi_candidates
+        else []
+    )
+    for index, (user_id, disliked_genre) in enumerate(multi_users, start=1):
+        history = positive_history[user_id]
+        genres = _favorite_genres(history, movies)
+        liked_genre = genres[0] if genres else "Drama"
         initial = PreferenceState(
             liked_movie_ids=set(history),
             requested_count=10,
@@ -94,6 +114,7 @@ def generate_cases(
                 tags=("multi-turn", "preference-retention", "negative-feedback"),
             )
         )
+    validate_cases_relevance(cases, movies)
     return cases
 
 
@@ -130,12 +151,72 @@ def _favorite_genres(history: list[int], movies: dict[int, Movie]) -> list[str]:
     return [genre for genre, _ in sorted(counts.items(), key=lambda item: (-item[1], item[0]))]
 
 
-def _different_genre(liked_genre: str, movies: dict[int, Movie]) -> str:
+def _different_genre(
+    liked_genre: str,
+    movies: dict[int, Movie],
+    *,
+    forbidden_genres: set[str],
+) -> str | None:
     genres = sorted({genre for movie in movies.values() for genre in movie.genres})
-    return next((genre for genre in genres if genre != liked_genre), "Horror")
+    return next(
+        (
+            genre
+            for genre in genres
+            if genre != liked_genre and genre not in forbidden_genres
+        ),
+        None,
+    )
 
 
 def _genre_patch(liked: str, disliked: str):
     from recagent_eval.models import PreferencePatch
 
     return PreferencePatch(liked_genres={liked}, excluded_genres={disliked})
+
+
+def validate_case_relevance(
+    case: EvaluationCase,
+    movies: dict[int, Movie],
+) -> None:
+    state = case.expected_preferences or case.initial_state
+    blocked_ids = (
+        state.liked_movie_ids
+        | state.disliked_movie_ids
+        | state.excluded_movie_ids
+    )
+    for movie_id in sorted(case.relevant_movie_ids):
+        movie = movies.get(movie_id)
+        if movie is None:
+            raise ValueError(
+                f"{case.case_id}: relevant movie {movie_id} is missing from metadata"
+            )
+        reasons: list[str] = []
+        if movie_id in blocked_ids:
+            reasons.append("blocked movie ID")
+        genres = set(movie.genres)
+        excluded = sorted(state.excluded_genres & genres)
+        if excluded:
+            reasons.append(f"excluded genre {', '.join(excluded)}")
+        if state.required_genres and not state.required_genres.issubset(genres):
+            reasons.append("missing required genre")
+        if state.year_min is not None and (
+            movie.year is None or movie.year < state.year_min
+        ):
+            reasons.append("below minimum year")
+        if state.year_max is not None and (
+            movie.year is None or movie.year > state.year_max
+        ):
+            reasons.append("above maximum year")
+        if reasons:
+            raise ValueError(
+                f"{case.case_id}: relevant movie {movie_id} violates "
+                + "; ".join(reasons)
+            )
+
+
+def validate_cases_relevance(
+    cases: list[EvaluationCase],
+    movies: dict[int, Movie],
+) -> None:
+    for case in cases:
+        validate_case_relevance(case, movies)
