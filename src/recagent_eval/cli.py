@@ -88,14 +88,17 @@ def tune(
 ) -> None:
     movies, ratings = _load_dataset(data_dir)
     config = _validated_config(config_path) if config_path is not None else None
-    weights = tune_on_validation(
-        movies,
-        chronological_split(ratings),
-        step=step,
-        retrieval_top_k=config.retrieval_top_k if config else 100,
-        semantic_profile_history_cap=(
-            config.semantic_profile_history_cap if config else 20
-        ),
+    weights = tuple(
+        round(value, 10)
+        for value in tune_on_validation(
+            movies,
+            chronological_split(ratings),
+            step=step,
+            retrieval_top_k=config.retrieval_top_k if config else 100,
+            semantic_profile_history_cap=(
+                config.semantic_profile_history_cap if config else 20
+            ),
+        )
     )
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps({"weights": weights}, indent=2) + "\n")

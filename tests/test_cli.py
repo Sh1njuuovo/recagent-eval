@@ -108,7 +108,7 @@ def test_tune_updates_a_frozen_config_with_validation_weights(
     monkeypatch.setattr("recagent_eval.cli._load_dataset", lambda path: ({}, []))
     monkeypatch.setattr(
         "recagent_eval.cli.tune_on_validation",
-        lambda *args, **kwargs: (0.6, 0.4, 0.0),
+        lambda *args, **kwargs: (0.7000000000000001, 0.30000000000000004, 0.0),
     )
     source = tmp_path / "source.yaml"
     source.write_text(
@@ -139,5 +139,5 @@ def test_tune_updates_a_frozen_config_with_validation_weights(
     )
 
     assert result.exit_code == 0, result.output
-    assert json.loads(weights_output.read_text())["weights"] == [0.6, 0.4, 0.0]
-    assert yaml.safe_load(config_output.read_text())["weights"] == [0.6, 0.4, 0.0]
+    assert json.loads(weights_output.read_text())["weights"] == [0.7, 0.3, 0.0]
+    assert yaml.safe_load(config_output.read_text())["weights"] == [0.7, 0.3, 0.0]
