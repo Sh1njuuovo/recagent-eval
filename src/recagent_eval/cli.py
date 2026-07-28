@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
+import yaml
 
 from recagent_eval.cases import (
     EvaluationCase,
@@ -26,7 +27,11 @@ from recagent_eval.dataset import download_movielens_1m
 from recagent_eval.models import PreferenceState
 from recagent_eval.provider import OpenAICompatibleProvider, RuleBasedProvider
 from recagent_eval.runner import ExperimentConfig, run_experiment
-from recagent_eval.tuning import tune_on_validation
+from recagent_eval.tuning import (
+    build_retrieval_ablation,
+    select_retrieval_parameters,
+    tune_on_validation,
+)
 
 app = typer.Typer(no_args_is_help=True, help="Evaluate a conversational movie recommender.")
 
@@ -71,13 +76,96 @@ def tune(
     output: Annotated[Path, typer.Option(help="Tuned weight JSON")] = Path(
         "artifacts/tuned_weights.json"
     ),
+    config_path: Annotated[
+        Path | None,
+        typer.Option("--config", help="Frozen retrieval config"),
+    ] = None,
+    config_output: Annotated[
+        Path | None,
+        typer.Option("--config-output", help="Config updated with tuned weights"),
+    ] = None,
     step: float = 0.1,
 ) -> None:
     movies, ratings = _load_dataset(data_dir)
-    weights = tune_on_validation(movies, chronological_split(ratings), step=step)
+    config = _validated_config(config_path) if config_path is not None else None
+    weights = tune_on_validation(
+        movies,
+        chronological_split(ratings),
+        step=step,
+        retrieval_top_k=config.retrieval_top_k if config else 100,
+        semantic_profile_history_cap=(
+            config.semantic_profile_history_cap if config else 20
+        ),
+    )
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps({"weights": weights}, indent=2) + "\n")
+    if config_output is not None:
+        if config_path is None:
+            raise typer.BadParameter("--config-output requires --config")
+        payload = yaml.safe_load(config_path.read_text()) or {}
+        payload["weights"] = list(weights)
+        config_output.parent.mkdir(parents=True, exist_ok=True)
+        config_output.write_text(
+            yaml.safe_dump(payload, sort_keys=False),
+            encoding="utf-8",
+        )
     typer.echo(f"Validation-selected weights: {weights}")
+
+
+@app.command("select-retrieval")
+def select_retrieval(
+    data_dir: Annotated[Path, typer.Option(help="MovieLens 1M directory")] = Path(
+        "data/raw/ml-1m"
+    ),
+    evidence_output: Annotated[
+        Path,
+        typer.Option(help="Validation ablation JSON"),
+    ] = Path("artifacts/retrieval_ablation.json"),
+    config_output: Annotated[
+        Path,
+        typer.Option(help="Frozen hybrid YAML"),
+    ] = Path("configs/full_constraint_aware.yaml"),
+) -> None:
+    movies, ratings = _load_dataset(data_dir)
+    split = chronological_split(ratings)
+    rows = build_retrieval_ablation(movies, split)
+    selection = select_retrieval_parameters(movies, split, rows=rows)
+    evidence_output.parent.mkdir(parents=True, exist_ok=True)
+    evidence_output.write_text(
+        json.dumps(
+            {"rows": rows, "selection": selection},
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    frozen_config = {
+        "name": "structured-memory-hybrid-constraint-aware",
+        "seed": 42,
+        "retrieval_top_k": int(selection["retrieval_top_k"]),
+        "semantic_profile_history_cap": int(
+            selection["semantic_profile_history_cap"]
+        ),
+        "enable_memory": True,
+        "enable_semantic_retrieval": True,
+        "structured_planning": True,
+        "required_retrieval_tools": [
+            "itemcf_retrieve",
+            "semantic_retrieve",
+        ],
+        "weights": [0.7, 0.3, 0.0],
+    }
+    config_output.parent.mkdir(parents=True, exist_ok=True)
+    config_output.write_text(
+        yaml.safe_dump(frozen_config, sort_keys=False),
+        encoding="utf-8",
+    )
+    typer.echo(
+        "Selected retrieval_top_k="
+        f"{selection['retrieval_top_k']}, semantic_profile_history_cap="
+        f"{selection['semantic_profile_history_cap']}"
+    )
 
 
 @app.command("subset-cases")
