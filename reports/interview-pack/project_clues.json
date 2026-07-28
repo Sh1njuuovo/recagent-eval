@@ -1,0 +1,110 @@
+{
+  "notes_root": "reports",
+  "source_files": [
+    "audit/audit.json",
+    "audit/overview.md",
+    "experiments/offline-rule-based.json",
+    "experiments/offline-rule-based.md",
+    "profile/candidates.json",
+    "profile/jd.txt",
+    "profile/taste.json",
+    "ranking/candidate_score.json",
+    "ranking/candidate_score.md"
+  ],
+  "metric_hits": [
+    {
+      "source": "experiments/offline-rule-based.md",
+      "text": "Recall@10"
+    },
+    {
+      "source": "experiments/offline-rule-based.md",
+      "text": "memory | 0.0600"
+    },
+    {
+      "source": "experiments/offline-rule-based.md",
+      "text": "memory | 0.0600"
+    },
+    {
+      "source": "experiments/offline-rule-based.md",
+      "text": "recall from 6%"
+    },
+    {
+      "source": "ranking/candidate_score.md",
+      "text": "gpu | license unclear; distributed pretraining; 100"
+    }
+  ],
+  "claim_lines": [
+    {
+      "source": "audit/audit.json",
+      "text": "\"README.md\": \"# Recommender AI Agent: Integrating Large Language Models for Interactive Recommendations\\nThis is the Repo for InteRecAgent, a interactive recommender agent, which applies Large Language Model(LLM) to bridge the gap between traditional recommend"
+    },
+    {
+      "source": "audit/audit.json",
+      "text": "\"demonstration/README.md\": \"# Demonstrations\\n\\n\\nDemonstration plays an import role in in-context learning for LLM. However, we could not put too many demonstrations in the prompt due to the limit \\nof tokens and the cost. Therefore, we want to build a demons"
+    },
+    {
+      "source": "audit/audit.json",
+      "text": "\"tests/README.md\": \"# Test Examples\\n\\nHere are some test examples/cases to test our Conversational Recommender System. Those examples are designed with different conditions:\\n\\n- Intention Only\\n    - Hard conditions only\\n    - Soft conditions only\\n    - Mi"
+    },
+    {
+      "source": "audit/overview.md",
+      "text": "## Notebook / Docker / Test 线索"
+    },
+    {
+      "source": "audit/overview.md",
+      "text": "- 找到最小可运行命令：API、页面、CLI、worker、测试、训练或 demo 至少一个。"
+    },
+    {
+      "source": "audit/overview.md",
+      "text": "- 确认 baseline/demo 是否能在本地、Docker、云服务器或 GPU 环境上跑通。"
+    },
+    {
+      "source": "experiments/offline-rule-based.json",
+      "text": "\"status\": \"pipeline-validation-only\","
+    },
+    {
+      "source": "experiments/offline-rule-based.json",
+      "text": "\"baseline\": {"
+    },
+    {
+      "source": "experiments/offline-rule-based.md",
+      "text": "# Offline rule-based experiment"
+    },
+    {
+      "source": "experiments/offline-rule-based.md",
+      "text": "## Result"
+    },
+    {
+      "source": "experiments/offline-rule-based.md",
+      "text": "- It does not meet the target `NDCG@10 >= ItemCF baseline`: the relevant item is"
+    },
+    {
+      "source": "experiments/offline-rule-based.md",
+      "text": "- Next ranking experiment: calibrate per-source scores or train a small"
+    },
+    {
+      "source": "experiments/offline-rule-based.md",
+      "text": "validation-only linear/listwise reranker while keeping the same test split."
+    },
+    {
+      "source": "experiments/offline-rule-based.md",
+      "text": "integration test exposed the issue; candidates now require positive cosine"
+    },
+    {
+      "source": "profile/candidates.json",
+      "text": "\"MovieLens baseline\","
+    },
+    {
+      "source": "profile/candidates.json",
+      "text": "\"small-data smoke test\","
+    },
+    {
+      "source": "ranking/candidate_score.json",
+      "text": "\"MovieLens baseline\","
+    },
+    {
+      "source": "ranking/candidate_score.json",
+      "text": "\"small-data smoke test\","
+    }
+  ]
+}

@@ -1,0 +1,242 @@
+{
+  "name": "RecAI-InteRecAgent",
+  "repo_path": "/private/tmp/recagent-audit.JQMsWk/RecAI/InteRecAgent",
+  "generated_at": "2026-07-28T04:56:23.822592+00:00",
+  "summary": {
+    "file_count_scanned": 69,
+    "approx_total_bytes": 3455653,
+    "top_extensions": [
+      [
+        ".py",
+        44
+      ],
+      [
+        ".jsonl",
+        9
+      ],
+      [
+        ".ipynb",
+        5
+      ],
+      [
+        ".md",
+        4
+      ],
+      [
+        ".sh",
+        3
+      ],
+      [
+        "[no extension]",
+        1
+      ],
+      [
+        ".txt",
+        1
+      ],
+      [
+        ".pdf",
+        1
+      ],
+      [
+        ".png",
+        1
+      ]
+    ],
+    "language_counts": [
+      [
+        "Python",
+        44
+      ],
+      [
+        "Other",
+        17
+      ],
+      [
+        "Notebook",
+        5
+      ],
+      [
+        "Shell",
+        3
+      ]
+    ]
+  },
+  "readme_files": [
+    "README.md",
+    "demonstration/README.md",
+    "tests/README.md"
+  ],
+  "dependency_files": [
+    "requirements.txt"
+  ],
+  "notebooks": [
+    "preprocess/ItemCF.ipynb",
+    "preprocess/movies.ipynb",
+    "preprocess/prepare_amazon.ipynb",
+    "preprocess/prepare_steam.ipynb",
+    "preprocess/preprocess_redial.ipynb"
+  ],
+  "docker_files": [],
+  "test_files": [
+    "tests/README.md",
+    "tests/single_turn_cases.md"
+  ],
+  "signals": {
+    "data_pipeline": [
+      "preprocess/ItemCF.ipynb",
+      "preprocess/movies.ipynb",
+      "preprocess/prepare_amazon.ipynb",
+      "preprocess/prepare_steam.ipynb",
+      "preprocess/preprocess_redial.ipynb"
+    ],
+    "database_state": [
+      "llm4crs/ranking/reco_model_tool.py",
+      "llm4crs/retrieval/sql_tool.py",
+      "llm4crs/utils/sql.py"
+    ],
+    "evaluation": [
+      "eval/eval_simulator.sh",
+      "eval/eval_single_turn.sh",
+      "eval/one_turn_eval.py",
+      "eval/one_turn_eval_ranking.py",
+      "eval/user_simulator.py",
+      "llm4crs/retrieval/__init__.py",
+      "llm4crs/retrieval/itemcf_tool.py",
+      "llm4crs/retrieval/sql_tool.py",
+      "tests/README.md",
+      "tests/single_turn_cases.md"
+    ],
+    "frontend_mobile": [
+      "llm4crs/buffer/store.py"
+    ],
+    "inference_demo": [
+      "app.py",
+      "demonstration/README.md",
+      "demonstration/filter.py",
+      "demonstration/filtered/filtered_2023-07-12-14_06_31.jsonl",
+      "demonstration/fixed/case1.jsonl",
+      "demonstration/fixed/case2.jsonl",
+      "demonstration/fixed/case3.jsonl",
+      "demonstration/generator.py",
+      "demonstration/seed/beauty.jsonl",
+      "demonstration/seed/games.jsonl",
+      "demonstration/seed/movies.jsonl",
+      "demonstration/seed_demos.jsonl",
+      "demonstration/seed_demos_placeholder.jsonl",
+      "demonstration/tagger.py",
+      "llm4crs/demo/__init__.py",
+      "llm4crs/demo/base.py",
+      "llm4crs/mapper/__init__.py",
+      "llm4crs/mapper/map_tool.py"
+    ],
+    "model": [
+      "llm4crs/ranking/reco_model_tool.py"
+    ],
+    "testing_quality": [
+      "tests/README.md",
+      "tests/single_turn_cases.md"
+    ]
+  },
+  "potential_data_or_model_paths": [
+    "assets/framework.pdf",
+    "assets/framework.png"
+  ],
+  "tree": [
+    "InteRecAgent/",
+    "  assets/",
+    "  demonstration/",
+    "  eval/",
+    "  llm4crs/",
+    "  preprocess/",
+    "  tests/",
+    "  .gitignore",
+    "  README.md",
+    "  app.py",
+    "  requirements.txt",
+    "  run.sh",
+    "    framework.pdf",
+    "    framework.png",
+    "    filtered/",
+    "    fixed/",
+    "    seed/",
+    "    README.md",
+    "    filter.py",
+    "    generator.py",
+    "    seed_demos.jsonl",
+    "    seed_demos_placeholder.jsonl",
+    "    tagger.py",
+    "      filtered_2023-07-12-14_06_31.jsonl",
+    "      case1.jsonl",
+    "      case2.jsonl",
+    "      case3.jsonl",
+    "      beauty.jsonl",
+    "      games.jsonl",
+    "      movies.jsonl",
+    "    eval_simulator.sh",
+    "    eval_single_turn.sh",
+    "    one_turn_eval.py",
+    "    one_turn_eval_ranking.py",
+    "    user_simulator.py",
+    "    buffer/",
+    "    corups/",
+    "    critic/",
+    "    demo/",
+    "    mapper/",
+    "    memory/",
+    "    prompt/",
+    "    query/",
+    "    ranking/",
+    "    retrieval/",
+    "    utils/",
+    "    __init__.py",
+    "    agent.py",
+    "    agent_plan_first.py",
+    "    agent_plan_first_openai.py",
+    "    environ_variables.py",
+    "      __init__.py",
+    "      base.py",
+    "      clear.py",
+    "      store.py",
+    "      __init__.py",
+    "      base.py",
+    "      __init__.py",
+    "      base.py",
+    "      __init__.py",
+    "      base.py",
+    "      __init__.py",
+    "      map_tool.py",
+    "      __init__.py",
+    "      memory.py",
+    "      __init__.py",
+    "      critic.py",
+    "      system.py",
+    "      tool.py",
+    "      __init__.py",
+    "      query_tool.py",
+    "      __init__.py",
+    "      reco_model_tool.py",
+    "      __init__.py",
+    "      itemcf_tool.py",
+    "      sql_tool.py",
+    "      __init__.py",
+    "      exceptions.py",
+    "      open_ai.py",
+    "      prompt.py",
+    "      sql.py",
+    "      text_sim.py",
+    "      util.py",
+    "    ItemCF.ipynb",
+    "    movies.ipynb",
+    "    prepare_amazon.ipynb",
+    "    prepare_steam.ipynb",
+    "    preprocess_redial.ipynb",
+    "    README.md",
+    "    single_turn_cases.md"
+  ],
+  "readme_samples": {
+    "README.md": "# Recommender AI Agent: Integrating Large Language Models for Interactive Recommendations\nThis is the Repo for InteRecAgent, a interactive recommender agent, which applies Large Language Model(LLM) to bridge the gap between traditional recommender systems and  conversational recommender system(CRS). \n\n\n## Table of Contents\n\n- [Recommender AI Agent: Integrating Large Language Models for Interactive Recommendations](#recommender-ai-agent-integrating-large-language-models-for-interactive-recommendations)\n  - [Table of Contents](#table-of-contents)\n  - [InteRecAgent Framework](#interecagent-framework)\n  - [Usage](#usage)\n  - [Citation](#citation)\n\n\n## InteRecAgent Framework\n<p align=\"center\">\n  <img src=\"./assets/framework.png\" alt=\"InteRecAgnet Framework\" width=\"100%\">\n  <br>\n  <b>Figure 1</b>: InteRecAgent Framework\n</p>\n\nInteRecAgent (**Inte**ractive **Rec**ommender **Agent**) is a framework to utilize pre-trained domain-specific recommendation tools (such as SQL tools, id-based recommendation models) and large language models (LLM) to implement an interactive, conversational recommendation agent. In this framework, the LLM primarily engages in user interaction and parses user interests as input for the recommendation tools, which are responsible for finding suitable items.   \n  \nWithin the InteRecAgent framework, recommendation tools are divided into three main categories: query, retrieval, and ranking. You need to provide the API for the LLM and the pre-configured domain-specific recommendation tools to build an interactive recommendation agent using the InteRecAgent framework. Neither the LLM nor the recommendation tools will be updated or modified within InteRecAgent.\n  \nThis repository mainly implements the right-hand side of the figure, i.e., the communication between the LLM and the recommendation tools. For more details, please refer to our paper [*Recommender AI Agent: Integrating Large Language Models for Interactive Recommendations*](https://arxiv.org/abs/2308.16505).\n\nInteRecAgent consists of 4 necessary components:\n\n1. LLM: A large language model, which serves as conversational agent.\n \n2. Item profile table: A table containing item informations, whose columns consists of id, title, tag, description, price, release_date, visited_num, et al.\n\n\n3. Query module: A SQL module to query item information in the item profile table.\n    - Input: SQL command\n    - Output: information queried with SQL\n\n\n4. Retrieval module: The module aims to retrieve item candidates from the all item corups according to user's intention(requirements). Note that the module does not function in deal with user's personal profile, like user history, user age, et al. Instead, it focuses on what user wants, like \"give me some sports games\", \"I want some popular games\". The module should consist of at least two kinds of retrieval tools:\n    - SQL tool: The tools is used to deal with complex search condition, which is related to item information. For example, \"I want s\n...[truncated]",
+    "demonstration/README.md": "# Demonstrations\n\n\nDemonstration plays an import role in in-context learning for LLM. However, we could not put too many demonstrations in the prompt due to the limit \nof tokens and the cost. Therefore, we want to build a demonstration memory and retrieve the most relevant demos from the memory when dealing with \nuser request. \n\nTo build such a memory, manually contruction is time-consuming and challenging for few developers. Language is diverse, and different people express \nthe same idea differently. So we want to generate demonstrations with the help of LLM.\n\nHere we provide demonstration generating scripts and filtering scripts.\n\n- `generator.py`: the scripts is used to generate some demonstrations and save them into jsonl file\n- `filter.py`: the scripts is used to filter out some repetitive and unqualitied demons\n\n\n## Usage\n\n### Generator\n \n1. You should have your LLM API, like personal OpenAI API, Azure API or some open-source LLM deployed locally, such as Vicuna.\n\n2. Add API-related info to environment and run the scripy. Just like:\n\n    - Personal OpenAI API key:\n\n        ```bash\n        cd LLM4CRS/demonstration\n        OPENAI_API_KEY=\"xxxx\" python generator.py --engine [YOUR_LLM_DEPLOY_ID] -m [LLM_MODEL_NAME]  -n 20 --mode input-first --verbose\n        ```\n\n    - Azure OpenAI API key:\n\n        ```bash\n        cd LLM4CRS/demonstration\n        OPENAI_API_KEY=\"xxx\" OPENAI_API_BASE=\"xxx\" OPENAI_API_VERSION=\"xxx\" OPENAI_API_TYPE=\"xxx\" python generator.py --engine [YOUR_LLM_DEPLOY_ID] -m [LLM_MODEL_NAME] -n 20 --mode input-first --verbose\n        ```\n\n    For details about arguments, you could run: `python generator.py -h`.\n\n    > Note:\n    > There are two modes supported in `generator.py`: input-first and output-first. \n    > - input-first: LLM would generate user request first and then make plans for those requests. Here `n` controls the number of demos to be generated.\n    > \n    >     `python generator.py --engine [YOUR_LLM_DEPLOY_ID] -m [LLM_MODEL_NAME] -n 20 --mode input-first --verbose`\n    > - output-first: LLM would receive a plan first and then generate several requests according to the plan. Then LLM would make plan for the request. \n    Here, there is an optional argument `check_consistency`, which could be used to check the consistency of generated plan and the given plan. If set true, only the consisten demos would be saved. In output-first mode, `n` represents number of request generated for each plan.\n    > \n    >     Don't check consistency:  `python generator.py --engine [YOUR_LLM_DEPLOY_ID] -m [LLM_MODEL_NAME] -n 3 --mode output-first --verbose`\n    > \n    >     Check consistency: `python generator.py --engine [YOUR_LLM_DEPLOY_ID] -m [LLM_MODEL_NAME] -n 3 --mode output-first --check_consistency --verbose`\n\n    The generated would be saved in the `./gen_demos` folder by default. Also you can change the saved folder with `--dir [YOU_FOLDER]`.\n\n\n*Tips*\n\n*If you want to use open-source LLM to complete the task, I recommend Vicun\n...[truncated]",
+    "tests/README.md": "# Test Examples\n\nHere are some test examples/cases to test our Conversational Recommender System. Those examples are designed with different conditions:\n\n- Intention Only\n    - Hard conditions only\n    - Soft conditions only\n    - Mixed conditions\n- Profile Only\n    - User history only\n    - User unwanted only\n    - User history + unwanted\n- Profile + Intention\n    - User history + hard conditions\n    - User history + soft conditions\n    - User history + mixed conditions\n    - User unwanted + hard conditions\n    - User unwanted + soft conditions\n    - User unwanted + mixed conditions\n    - User history + unwanted + hard conditions\n    - User history + unwanted + soft conditions\n    - User history + unwanted + mixed conditions\n\nAll the cases consist of [single-turn conversations](./single_turn_cases.md) and multi-turn conversations."
+  }
+}

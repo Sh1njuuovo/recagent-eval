@@ -1,0 +1,7 @@
+name: structured-plan-memory
+seed: 42
+retrieval_top_k: 100
+enable_memory: true
+enable_semantic_retrieval: false
+structured_planning: true
+weights: [1.0, 0.0, 0.0]

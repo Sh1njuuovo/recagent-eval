@@ -1,0 +1,40 @@
+{
+  "case_fingerprint": "5e242d292164fee7755483b77cb66008b9e02cc06bb5e10627e363787d8cb3cf",
+  "provider": "rule-based",
+  "status": "pipeline-validation-only",
+  "variants": {
+    "baseline": {
+      "constraint_satisfaction_rate": 1.0,
+      "episode_failure_rate": 0.0,
+      "excluded_item_violation_rate": 0.0,
+      "fallback_rate": 0.0,
+      "hit_rate_at_10": 0.06,
+      "ndcg_at_10": 0.048613531161467854,
+      "plan_valid_rate": 0.0,
+      "recall_at_10": 0.06,
+      "tool_success_rate": 1.0
+    },
+    "structured_memory": {
+      "constraint_satisfaction_rate": 1.0,
+      "episode_failure_rate": 0.0,
+      "excluded_item_violation_rate": 0.0,
+      "fallback_rate": 0.0,
+      "hit_rate_at_10": 0.06,
+      "ndcg_at_10": 0.036020599913279626,
+      "plan_valid_rate": 1.0,
+      "recall_at_10": 0.06,
+      "tool_success_rate": 1.0
+    },
+    "full": {
+      "constraint_satisfaction_rate": 1.0,
+      "episode_failure_rate": 0.0,
+      "excluded_item_violation_rate": 0.0,
+      "fallback_rate": 0.0,
+      "hit_rate_at_10": 0.08,
+      "ndcg_at_10": 0.04180189643963738,
+      "plan_valid_rate": 1.0,
+      "recall_at_10": 0.08,
+      "tool_success_rate": 1.0
+    }
+  }
+}

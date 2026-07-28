@@ -1,0 +1,11 @@
+RecAgent-Eval is an independent implementation inspired by the tool-oriented
+recommendation workflow in Microsoft RecAI / InteRecAgent:
+https://github.com/microsoft/RecAI/tree/main/InteRecAgent
+
+Microsoft RecAI is distributed under the MIT License. No source files from
+RecAI are vendored in this repository. The concepts Query, Filter, Retrieval,
+Ranking, candidate buffering, and plan-first recommendation are acknowledged
+as upstream inspiration.
+
+MovieLens data is provided separately by GroupLens and is not redistributed
+in this repository. Users must follow the MovieLens usage terms.
