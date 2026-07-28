@@ -477,7 +477,7 @@
     "user_id": 1313,
     "turns": [
       "I usually like Action movies.",
-      "Please avoid Adventure.",
+      "Please avoid Animation.",
       "Now give me ten recommendations and exclude movies I have seen."
     ],
     "relevant_movie_ids": [
@@ -541,7 +541,7 @@
       "disliked_genres": [],
       "required_genres": [],
       "excluded_genres": [
-        "Adventure"
+        "Animation"
       ],
       "excluded_movie_ids": [],
       "year_min": null,
@@ -653,7 +653,7 @@
     "user_id": 3423,
     "turns": [
       "I usually like Comedy movies.",
-      "Please avoid Action.",
+      "Please avoid Animation.",
       "Now give me ten recommendations and exclude movies I have seen."
     ],
     "relevant_movie_ids": [
@@ -1143,7 +1143,7 @@
       "disliked_genres": [],
       "required_genres": [],
       "excluded_genres": [
-        "Action"
+        "Animation"
       ],
       "excluded_movie_ids": [],
       "year_min": null,
@@ -1251,7 +1251,7 @@
     "user_id": 724,
     "turns": [
       "I usually like Romance movies.",
-      "Please avoid Action.",
+      "Please avoid Adventure.",
       "Now give me ten recommendations and exclude movies I have seen."
     ],
     "relevant_movie_ids": [
@@ -1477,7 +1477,7 @@
       "disliked_genres": [],
       "required_genres": [],
       "excluded_genres": [
-        "Action"
+        "Adventure"
       ],
       "excluded_movie_ids": [],
       "year_min": null,
@@ -1571,7 +1571,7 @@
     "user_id": 341,
     "turns": [
       "I usually like Drama movies.",
-      "Please avoid Action.",
+      "Please avoid Adventure.",
       "Now give me ten recommendations and exclude movies I have seen."
     ],
     "relevant_movie_ids": [
@@ -1627,7 +1627,7 @@
       "disliked_genres": [],
       "required_genres": [],
       "excluded_genres": [
-        "Action"
+        "Adventure"
       ],
       "excluded_movie_ids": [],
       "year_min": null,

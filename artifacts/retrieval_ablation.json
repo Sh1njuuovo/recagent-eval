@@ -1,0 +1,105 @@
+{
+  "rows": [
+    {
+      "itemcf_candidate_recall": 0.336,
+      "latency_ms_per_user": 27.923944584093988,
+      "ndcg_at_10": 0.031794765073955185,
+      "retrieval_top_k": 100,
+      "semantic_candidate_recall": 0.116,
+      "semantic_profile_history_cap": 10,
+      "union_candidate_recall": 0.408,
+      "users": 500
+    },
+    {
+      "itemcf_candidate_recall": 0.336,
+      "latency_ms_per_user": 26.535079250112176,
+      "ndcg_at_10": 0.03237171535022947,
+      "retrieval_top_k": 100,
+      "semantic_candidate_recall": 0.13,
+      "semantic_profile_history_cap": 20,
+      "union_candidate_recall": 0.424,
+      "users": 500
+    },
+    {
+      "itemcf_candidate_recall": 0.336,
+      "latency_ms_per_user": 26.161687331972644,
+      "ndcg_at_10": 0.034060164401027354,
+      "retrieval_top_k": 100,
+      "semantic_candidate_recall": 0.14,
+      "semantic_profile_history_cap": 50,
+      "union_candidate_recall": 0.424,
+      "users": 500
+    },
+    {
+      "itemcf_candidate_recall": 0.468,
+      "latency_ms_per_user": 27.253123249858618,
+      "ndcg_at_10": 0.033134084558027105,
+      "retrieval_top_k": 200,
+      "semantic_candidate_recall": 0.186,
+      "semantic_profile_history_cap": 10,
+      "union_candidate_recall": 0.556,
+      "users": 500
+    },
+    {
+      "itemcf_candidate_recall": 0.468,
+      "latency_ms_per_user": 26.897442415822297,
+      "ndcg_at_10": 0.03390741273040153,
+      "retrieval_top_k": 200,
+      "semantic_candidate_recall": 0.206,
+      "semantic_profile_history_cap": 20,
+      "union_candidate_recall": 0.574,
+      "users": 500
+    },
+    {
+      "itemcf_candidate_recall": 0.468,
+      "latency_ms_per_user": 27.009298084070906,
+      "ndcg_at_10": 0.0351447646375739,
+      "retrieval_top_k": 200,
+      "semantic_candidate_recall": 0.23,
+      "semantic_profile_history_cap": 50,
+      "union_candidate_recall": 0.584,
+      "users": 500
+    },
+    {
+      "itemcf_candidate_recall": 0.696,
+      "latency_ms_per_user": 28.264665082097054,
+      "ndcg_at_10": 0.035524715675349365,
+      "retrieval_top_k": 500,
+      "semantic_candidate_recall": 0.362,
+      "semantic_profile_history_cap": 10,
+      "union_candidate_recall": 0.792,
+      "users": 500
+    },
+    {
+      "itemcf_candidate_recall": 0.696,
+      "latency_ms_per_user": 27.978670249925926,
+      "ndcg_at_10": 0.03268589893490669,
+      "retrieval_top_k": 500,
+      "semantic_candidate_recall": 0.386,
+      "semantic_profile_history_cap": 20,
+      "union_candidate_recall": 0.806,
+      "users": 500
+    },
+    {
+      "itemcf_candidate_recall": 0.696,
+      "latency_ms_per_user": 28.540469917934388,
+      "ndcg_at_10": 0.03660049211342688,
+      "retrieval_top_k": 500,
+      "semantic_candidate_recall": 0.408,
+      "semantic_profile_history_cap": 50,
+      "union_candidate_recall": 0.818,
+      "users": 500
+    }
+  ],
+  "selection": {
+    "itemcf_candidate_recall": 0.696,
+    "latency_ms_per_user": 28.540469917934388,
+    "ndcg_at_10": 0.03660049211342688,
+    "retrieval_top_k": 500,
+    "selection_metric": "validation_ndcg_at_10",
+    "semantic_candidate_recall": 0.408,
+    "semantic_profile_history_cap": 50,
+    "union_candidate_recall": 0.818,
+    "users": 500
+  }
+}
