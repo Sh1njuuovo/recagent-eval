@@ -59,7 +59,10 @@ def generate_cases(
             EvaluationCase(
                 case_id=f"single-{index:03d}",
                 user_id=user_id,
-                turns=(f"Recommend movies matching {genre_text}.",),
+                turns=(
+                    f"I tend to enjoy {genre_text}. "
+                    "Please recommend ten movies based on those preferences.",
+                ),
                 relevant_movie_ids={split.test_targets[user_id]},
                 initial_state=state,
                 tags=("single-turn", "history-aware"),

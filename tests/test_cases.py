@@ -38,6 +38,8 @@ def test_generate_cases_is_deterministic_and_respects_requested_mix() -> None:
         "multi-001",
     ]
     assert len(cases[0].turns) == 1
+    assert cases[0].turns[0].startswith("I tend to enjoy ")
+    assert "matching" not in cases[0].turns[0]
     assert len(cases[-1].turns) == 3
     assert cases[-1].relevant_movie_ids
     assert cases[-1].expected_preferences is not None
