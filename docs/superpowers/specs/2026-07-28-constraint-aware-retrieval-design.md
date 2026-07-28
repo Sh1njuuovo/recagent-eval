@@ -104,12 +104,16 @@ tokens. The revised query will build a deterministic user content profile from:
 - the current user message;
 - titles and genres of positively liked history movies;
 - explicitly liked genres;
-- negative genre tokens for diagnostic visibility.
+- negative preferences in the saved diagnostic context, but not as positive
+  TF-IDF query tokens.
 
 To avoid very long and popularity-biased profiles, history movies are ordered by
 movie ID and capped by a configuration value. The default cap will be selected
 on validation data. Hard exclusions remain the responsibility of `hard_filter`;
-negative text does not override or relax them.
+negative preferences remain available to hard filtering and the explicit
+preference score. They are intentionally omitted from the unsigned TF-IDF query:
+including text such as "not Action" would still increase the positive weight of
+the token `Action`.
 
 The TF-IDF index stays local and deterministic. The first optimization does not
 introduce an external embedding model, GPU dependency, or model download. This
@@ -127,8 +131,10 @@ will compare Top-100, Top-200, and Top-500 for:
 - retrieval and total latency.
 
 Selection uses validation NDCG@10, with union candidate recall as the first
-tie-breaker and lower latency as the second tie-breaker. The chosen depth and
-profile-history cap are frozen before the test run.
+tie-breaker and lower retrieval depth/profile cap as a deterministic latency
+proxy. Measured latency is reported but does not control selection because
+runtime noise would make an exact-metric tie irreproducible. The chosen depth
+and profile-history cap are frozen before the test run.
 
 Top-100 remains in the ablation table so the original design and the optimized
 design are directly comparable. The project will not claim that increasing
@@ -171,6 +177,7 @@ relevant target:
 Aggregate metrics will add:
 
 - relevance-label eligibility rate;
+- target eligibility under the agent's final preference state;
 - ItemCF candidate Recall@K;
 - semantic candidate Recall@K;
 - union candidate Recall@K;
