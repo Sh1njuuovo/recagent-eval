@@ -1,19 +1,10 @@
-# Ten-minute demo script
+# 十分钟演示脚本
 
-1. **0:00–1:00 — Problem.** Show why conversational recommendation needs both
-   LLM flexibility and deterministic ranking/measurement.
-2. **1:00–2:00 — Upstream choice.** Explain RecAI’s tool workflow, its legacy
-   dependency risk, and why RecBole remained a backup.
-3. **2:00–4:00 — Architecture.** Walk from utterance to preference state,
-   validated plan, hard filters, dual retrieval, reranking, and traces.
-4. **4:00–5:30 — Failure behavior.** Feed an invalid provider response in the
-   test and show one repair followed by deterministic fallback.
-5. **5:30–7:00 — Reproduction.** Run `recagent-eval smoke`, inspect
-   `metrics.json` and `run_manifest.json`, then show the stable case fingerprint.
-6. **7:00–8:30 — Results.** Present the three-row table. Explicitly state that
-   recall rose from 0.06 to 0.08 while NDCG stayed below baseline.
-7. **8:30–9:30 — Debug story.** Explain the zero-similarity retrieval bug and
-   cross-process set-order fingerprint bug found by tests.
-8. **9:30–10:00 — Next step.** Run DeepSeek formal evaluation and Qwen/vLLM
-   smoke on the 4090; then improve head ranking rather than hiding the negative
-   NDCG result.
+1. **0:00–1:00 — 问题。** 说明对话推荐既需要 LLM 理解开放语言，也需要确定性的候选边界、硬约束和离线评测。
+2. **1:00–2:00 — 项目边界。** 介绍 RecAI 的工具化思路、旧依赖风险，以及为什么本项目选择 Python 3.11 独立实现而将 RecBole 仅作为备选。
+3. **2:00–4:00 — 架构。** 从用户表达依次讲 `PreferenceState`、schema 校验后的 `ToolPlan`、硬过滤、ItemCF/TF-IDF 双路召回、混合重排和可审计轨迹。
+4. **4:00–5:15 — 可靠性。** 用测试注入非法 provider 输出，展示只修复一次、仍失败则确定性回退；再说明正式矩阵中计划、工具、pipeline 和硬约束指标均为 100%，排除项违规率为 0。
+5. **5:15–6:30 — 可复现。** 运行 `recagent-eval smoke`，查看 `metrics.json` 与 `run_manifest.json`；展示正式 case fingerprint、验证集选择的 Top-500/历史上限 50，以及测试阶段冻结配置。
+6. **6:30–8:15 — 正式结果。** 展示三行 DeepSeek 表：无记忆 baseline 为 `0.06/0.0486`，structured ItemCF 为 `0.06/0.0360`，full hybrid 为 `0.04/0.0149`。重点说明 full 相对同深度 ItemCF 将候选覆盖从 78% 提升到 88%，但没有改善 top-10。
+7. **8:15–9:30 — 失败定位。** 展示 route-level candidate trace，说明 TF-IDF 找到了更多目标，但异构分数直接线性融合扰动了头部排序；补充标签预检、必需检索路由和禁止 plan 覆盖冻结 `top_k` 三个评测完整性修复。
+8. **9:30–10:00 — 下一步。** 保持测试矩阵冻结，先在验证集比较分数校准、RRF 和轻量 LTR；只有离线 NDCG 改善才重跑 DeepSeek。Qwen/vLLM 待 4090 空闲后仅做兼容性冒烟。

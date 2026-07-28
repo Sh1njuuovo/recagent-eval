@@ -10,7 +10,7 @@ RecAI/InteRecAgent 提供 Query、Filter、Retrieval、Ranking 和 plan-first �
 
 ## 3. 一次请求怎么走？
 
-输入是用户文本与当前 `PreferenceState`。Provider 输出 JSON；Pydantic 校验工具白名单与顺序；硬过滤先剔除不允许项目；ItemCF 和 TF-IDF 分别返回 Top-100；混合重排输出 Top-10、分数分解、理由、工具轨迹和系统指标。
+输入是用户文本与当前 `PreferenceState`。Provider 输出 JSON；Pydantic 校验工具白名单、顺序和当前实验要求的检索路由；硬过滤先剔除不允许项目；ItemCF 和 TF-IDF 按验证集冻结的 Top-500 深度召回；混合重排输出 Top-10、分数分解、理由、工具轨迹和系统指标。
 
 ## 4. 为什么不让 LLM 直接推荐电影？
 
@@ -28,9 +28,9 @@ Provider 对 408/409/429/5xx 和网络错误指数退避。Agent 对非法 schem
 
 步长 0.1、最多 500 个验证用户的搜索选择了 0.7 ItemCF、0.3 TF-IDF、0.0 手工偏好分。偏好仍参与硬过滤、记忆和解释，但手工 affinity 没提高验证 NDCG，所以没有为了故事完整强行给正权重。
 
-## 8. 为什么 Recall 提升但 NDCG 下降？
+## 8. 为什么候选覆盖提升，但 Recall 和 NDCG 反而下降？
 
-语义通道扩大了覆盖，使一个额外测试目标进入 Top-10，所以 Recall/HitRate 从 0.06 到 0.08；但该目标位置偏后，整体折损增益不足，NDCG 为 0.0418，低于 0.0486 基线。下一步应做源分数校准或轻量 learning-to-rank。
+和同样使用记忆、同样冻结 Top-500 深度的 ItemCF 方案相比，语义通道把测试目标的候选并集覆盖率从 0.78 提高到 0.88；但固定线性融合没有把新增相关项排进前十，反而扰动了 ItemCF 的头部顺序。因此 Recall@10 从 0.06 降到 0.04，NDCG@10 从 0.0360 降到 0.0149。这说明问题不是“没召回”，而是异构分数不可直接相加；下一步应先在验证集做分数校准、RRF 或轻量 learning-to-rank。
 
 ## 9. 你实际 debug 过什么？
 
@@ -38,10 +38,7 @@ Provider 对 408/409/429/5xx 和网络错误指数退避。Agent 对非法 schem
 
 ## 10. 本地、DeepSeek 和 Qwen 的结果如何区分？
 
-rule-based 表格只验证离线链路；DeepSeek 正式矩阵完整组最初计划合法率
-86%、fallback 14%，且失败全部集中在多轮 episode。复现发现最终轮漏掉
-`hard_filter`，强化首轮与 repair 约束后，10 个多轮案例复测达到 100%
-合法率、0% fallback。Qwen/vLLM 仍只用于 10–20 条兼容性测试。
+rule-based 表格只验证离线链路，不能表述成 LLM 效果。当前可对外使用的是同一 case fingerprint 下的 DeepSeek 正式矩阵：结构化 ItemCF 和完整方案的计划合法率、pipeline 合规率、工具成功率、硬约束满足率均为 100%，fallback 为 0。此前旧矩阵暴露过标签与负类型约束冲突、完整方案漏语义路由、计划 `top_k` 覆盖冻结预算等评测污染；旧、新 fingerprint 不同，因此不合并结果。Qwen/vLLM 仍只计划做 10–20 条兼容性冒烟，服务器未空闲前不报告吞吐和显存。
 
 ## 11. 如何估算线上延迟和成本？
 
@@ -49,4 +46,4 @@ manifest 和 episode 同时记录 LLM 延迟、工具延迟、调用次数和 to
 
 ## 12. 最大限制是什么？
 
-MovieLens 文本只有标题和类型，TF-IDF 语义较弱；固定案例只覆盖离线用户历史；当前没有训练排序器。v1 故意不引入多 Agent 或大规模训练，优先保证证据链清楚且一周可完成。
+MovieLens 文本只有标题和类型，TF-IDF 语义较弱；50 个固定案例的 top-10 指标方差较大；无记忆基线会退化为流行度召回，在这组小样本上得到更高 NDCG，不能泛化为“不需要记忆”。当前也没有训练排序器。v1 故意不引入多 Agent 或大规模训练，优先保证证据链清楚且一周可完成。
