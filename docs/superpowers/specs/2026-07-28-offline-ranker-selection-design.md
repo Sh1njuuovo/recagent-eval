@@ -97,14 +97,16 @@ policy:
 4. Apply each ranker to the identical candidate inputs.
 5. Measure validation Recall@10, NDCG@10, HitRate@10, route candidate recall,
    and latency.
-6. Select by validation NDCG@10, then Recall@10, then lower measured
-   complexity using the fixed order `itemcf`, `rrf`, `percentile_linear`,
-   `minmax_linear`; parameter values provide the final deterministic tie-break.
+6. Select only among `itemcf`, `rrf`, and `percentile_linear`, by validation
+   NDCG@10, then Recall@10, then the fixed conservative method order
+   `itemcf`, `rrf`, `percentile_linear`; parameter values provide the final
+   deterministic tie-break. The existing `minmax_linear` row remains an
+   informative control but is not eligible for selection.
 7. Persist every row, the selected configuration, and the gate decision.
 
 The fixed method order prevents a tie from being presented as an improvement.
-`test_unlocked` is true only when the selected non-ItemCF ranker's NDCG@10 is
-strictly greater than ItemCF by more than `1e-12`.
+`test_unlocked` is true only when the selected RRF or percentile ranker's
+NDCG@10 is strictly greater than ItemCF by more than `1e-12`.
 
 ## Frozen-Test Gate
 
@@ -171,4 +173,3 @@ formal configuration must not change.
   behavior.
 - The experiment truthfully reports either a validation improvement or a
   negative result; it does not promise a test or DeepSeek gain.
-
