@@ -112,9 +112,22 @@ pipeline without claiming LLM quality:
 
 The full model improves held-out hit/recall from 6% to 8%, but does **not** beat
 the baseline NDCG. That negative result is retained in
-[reports/experiments/offline-rule-based.md](reports/experiments/offline-rule-based.md);
-formal DeepSeek and remote Qwen numbers remain pending until credentials and
-the 4090 host are available.
+[reports/experiments/offline-rule-based.md](reports/experiments/offline-rule-based.md).
+
+The formal DeepSeek matrix is also complete:
+
+| Variant | Recall@10 | NDCG@10 | Plan valid | Fallback | Constraints |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Unstructured, no memory | 0.0600 | 0.0486 | N/A | 0% | 100% |
+| Structured + memory | 0.0400 | 0.0326 | 84% | 16% | 100% |
+| Full hybrid | 0.0400 | 0.0226 | 86% | 14% | 100% |
+| Full, 20-case repeat | 0.0000 | 0.0000 | 90% | 10% | 100% |
+
+The plan-validity target was not met; failures were concentrated entirely in
+multi-turn episodes. See the
+[DeepSeek report](reports/experiments/deepseek-formal.md) for token use,
+latency, metric caveats, and the next falsifiable experiment. Remote Qwen
+numbers remain pending until the RTX 4090 host is free.
 
 ## Testing and evidence
 
@@ -136,8 +149,9 @@ ranking, weight tuning, metrics, CLI smoke tests, and deterministic manifests.
 
 - TF-IDF uses MovieLens title/genre text; it is deliberately lightweight and is
   not a learned sentence embedding model.
-- Rule-based CI runs cannot measure preference extraction quality; DeepSeek is
-  required for the formal Agent matrix.
+- The formal DeepSeek run exposed a mismatch between exact preference-state
+  labels and semantically equivalent hard/soft exclusions; retention=0 is not
+  used as a project claim.
 - The current hybrid improves coverage but not NDCG. A learned or calibrated
   second-stage ranker is intentionally outside v1.
 - MovieLens data is downloaded separately and remains subject to GroupLens

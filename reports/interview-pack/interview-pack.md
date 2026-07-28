@@ -7,5 +7,5 @@
 - [投递检查表](application_checklist.md)
 - [10 分钟演示脚本](../../docs/demo-script.md)
 
-当前可安全对外表述：本地 MovieLens-1M 全链路与三组离线对照已完成；
-DeepSeek 正式评测和 Qwen/RTX 4090 冒烟仍待外部凭据，不能虚构数字。
+当前可安全对外表述：本地 MovieLens-1M 全链路、三组离线对照和 DeepSeek
+正式矩阵均已完成；Qwen/RTX 4090 冒烟仍待服务器空闲，不能虚构数字。

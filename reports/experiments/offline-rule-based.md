@@ -4,8 +4,8 @@
 
 This run validates data splitting, tools, retrieval, ranking, constraints,
 metrics, and artifact generation. It does **not** measure LLM extraction
-quality. Formal DeepSeek and remote Qwen runs are pending credentials/host
-access.
+quality. The formal DeepSeek run is now reported separately in
+`deepseek-formal.md`; remote Qwen remains pending host access.
 
 - Date: 2026-07-28
 - Platform: macOS 15.7.4 arm64

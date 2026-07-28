@@ -1,0 +1,60 @@
+{
+  "provider": "deepseek-chat",
+  "status": "completed",
+  "total_calls": 255,
+  "total_tokens": 145919,
+  "variants": {
+    "baseline": {
+      "episodes": 50,
+      "llm_calls": 70,
+      "total_tokens": 50645,
+      "recall_at_10": 0.06,
+      "ndcg_at_10": 0.048613531161467854,
+      "plan_valid_rate": 0.0,
+      "fallback_rate": 0.0,
+      "tool_success_rate": 1.0,
+      "constraint_satisfaction_rate": 1.0,
+      "latency_p50_ms": 10127.08433350781,
+      "latency_p95_ms": 11835.366147448076
+    },
+    "structured_memory": {
+      "episodes": 50,
+      "llm_calls": 78,
+      "total_tokens": 40761,
+      "recall_at_10": 0.04,
+      "ndcg_at_10": 0.03261859507142915,
+      "plan_valid_rate": 0.84,
+      "fallback_rate": 0.16,
+      "tool_success_rate": 1.0,
+      "constraint_satisfaction_rate": 1.0,
+      "latency_p50_ms": 1326.9256874918938,
+      "latency_p95_ms": 7636.39820375828
+    },
+    "full": {
+      "episodes": 50,
+      "llm_calls": 77,
+      "total_tokens": 38632,
+      "recall_at_10": 0.04,
+      "ndcg_at_10": 0.02261859507142915,
+      "plan_valid_rate": 0.86,
+      "fallback_rate": 0.14,
+      "tool_success_rate": 1.0,
+      "constraint_satisfaction_rate": 1.0,
+      "latency_p50_ms": 1655.9013125370257,
+      "latency_p95_ms": 6315.998537215633
+    },
+    "full_stability_repeat": {
+      "episodes": 20,
+      "llm_calls": 30,
+      "total_tokens": 15881,
+      "recall_at_10": 0.0,
+      "ndcg_at_10": 0.0,
+      "plan_valid_rate": 0.9,
+      "fallback_rate": 0.1,
+      "tool_success_rate": 1.0,
+      "constraint_satisfaction_rate": 1.0,
+      "latency_p50_ms": 1889.0700624906458,
+      "latency_p95_ms": 5938.799218507486
+    }
+  }
+}

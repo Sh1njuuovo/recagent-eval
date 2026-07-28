@@ -13,8 +13,9 @@
 | 简历 4–5 行 | `resume_star.md` | 完成 |
 | 面试追问 | `interview_qa.md` | 完成 |
 | 10 分钟展示 | `docs/demo-script.md` | 完成 |
-| DeepSeek 正式 50 案例 | `scripts/run_deepseek_matrix.sh` | 待 API Key |
+| DeepSeek 正式 50 案例 | `reports/experiments/deepseek-formal.md` | 完成 |
 | Qwen/vLLM 4090 冒烟 | `scripts/run_remote_qwen.sh` | 待远程主机 |
 | 远程硬件/成本记录 | `docs/remote-4090.md` | 待实跑填写 |
 
-投递时只使用已经完成的本地指标；拿到 DeepSeek 和 Qwen 实跑结果后再更新简历数字。
+投递时可使用已完成的本地与 DeepSeek 指标，但必须说明 plan validity 未达到
+95% 目标；Qwen 数字仍需等远程主机实跑。
