@@ -138,4 +138,4 @@ def _different_genre(liked_genre: str, movies: dict[int, Movie]) -> str:
 def _genre_patch(liked: str, disliked: str):
     from recagent_eval.models import PreferencePatch
 
-    return PreferencePatch(liked_genres={liked}, disliked_genres={disliked})
+    return PreferencePatch(liked_genres={liked}, excluded_genres={disliked})

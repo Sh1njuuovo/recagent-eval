@@ -226,8 +226,8 @@
       ],
       "disliked_movie_ids": [],
       "liked_genres": [
-        "Action",
-        "Comedy"
+        "Comedy",
+        "Action"
       ],
       "disliked_genres": [],
       "required_genres": [],
@@ -431,8 +431,8 @@
       ],
       "disliked_movie_ids": [],
       "liked_genres": [
-        "Drama",
-        "Thriller"
+        "Thriller",
+        "Drama"
       ],
       "disliked_genres": [],
       "required_genres": [],
@@ -726,8 +726,8 @@
       ],
       "disliked_movie_ids": [],
       "liked_genres": [
-        "Action",
-        "Comedy"
+        "Comedy",
+        "Action"
       ],
       "disliked_genres": [],
       "required_genres": [],
@@ -1083,8 +1083,8 @@
       ],
       "disliked_movie_ids": [],
       "liked_genres": [
-        "Sci-Fi",
-        "Action"
+        "Action",
+        "Sci-Fi"
       ],
       "disliked_genres": [],
       "required_genres": [],
@@ -1137,8 +1137,8 @@
       ],
       "disliked_movie_ids": [],
       "liked_genres": [
-        "Action",
-        "Comedy"
+        "Comedy",
+        "Action"
       ],
       "disliked_genres": [],
       "required_genres": [],
@@ -1225,8 +1225,8 @@
       ],
       "disliked_movie_ids": [],
       "liked_genres": [
-        "Sci-Fi",
-        "Action"
+        "Action",
+        "Sci-Fi"
       ],
       "disliked_genres": [],
       "required_genres": [],
@@ -1979,8 +1979,8 @@
       ],
       "disliked_movie_ids": [],
       "liked_genres": [
-        "Sci-Fi",
-        "Action"
+        "Action",
+        "Sci-Fi"
       ],
       "disliked_genres": [],
       "required_genres": [],
@@ -2079,11 +2079,11 @@
       "liked_genres": [
         "Comedy"
       ],
-      "disliked_genres": [
+      "disliked_genres": [],
+      "required_genres": [],
+      "excluded_genres": [
         "Action"
       ],
-      "required_genres": [],
-      "excluded_genres": [],
       "excluded_movie_ids": [],
       "year_min": null,
       "year_max": null,
@@ -2152,11 +2152,11 @@
       "liked_genres": [
         "Drama"
       ],
-      "disliked_genres": [
+      "disliked_genres": [],
+      "required_genres": [],
+      "excluded_genres": [
         "Action"
       ],
-      "required_genres": [],
-      "excluded_genres": [],
       "excluded_movie_ids": [],
       "year_min": null,
       "year_max": null,
@@ -2453,11 +2453,11 @@
       "liked_genres": [
         "Action"
       ],
-      "disliked_genres": [
+      "disliked_genres": [],
+      "required_genres": [],
+      "excluded_genres": [
         "Adventure"
       ],
-      "required_genres": [],
-      "excluded_genres": [],
       "excluded_movie_ids": [],
       "year_min": null,
       "year_max": null,
@@ -2536,11 +2536,11 @@
       "liked_genres": [
         "Action"
       ],
-      "disliked_genres": [
+      "disliked_genres": [],
+      "required_genres": [],
+      "excluded_genres": [
         "Adventure"
       ],
-      "required_genres": [],
-      "excluded_genres": [],
       "excluded_movie_ids": [],
       "year_min": null,
       "year_max": null,

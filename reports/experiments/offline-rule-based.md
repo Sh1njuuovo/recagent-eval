@@ -15,7 +15,7 @@ quality. The formal DeepSeek run is now reported separately in
 - Provider calls: 70 per variant after aggregating all multi-turn requests
 - Seed: 42
 - Stable case fingerprint:
-  `5e242d292164fee7755483b77cb66008b9e02cc06bb5e10627e363787d8cb3cf`
+  `351b1d23b05cd993287f0598ce35a3fdb8f8b03a99987c3d351ac9d145e9c836`
 
 ## Result
 

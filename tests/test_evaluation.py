@@ -68,3 +68,18 @@ def test_aggregate_metrics_reports_agent_constraints_and_latency() -> None:
     assert metrics["latency_p50_ms"] == 200
     assert metrics["latency_p95_ms"] == pytest.approx(290)
     assert metrics["total_tokens"] == 15
+
+
+def test_retention_accepts_hard_exclusion_for_soft_negative_preference() -> None:
+    result = RecommendationResult(
+        preference_state=PreferenceState(excluded_genres={"Action"}),
+    )
+    record = EvaluationRecord(
+        result=result,
+        relevant_movie_ids={1},
+        expected_preferences=PreferenceState(disliked_genres={"Action"}),
+    )
+
+    metrics = aggregate_metrics([record], {}, k=10)
+
+    assert metrics["preference_retention_rate"] == 1.0

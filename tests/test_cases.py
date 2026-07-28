@@ -32,6 +32,9 @@ def test_generate_cases_is_deterministic_and_respects_requested_mix() -> None:
     assert len(cases[0].turns) == 1
     assert len(cases[-1].turns) == 3
     assert cases[-1].relevant_movie_ids
+    assert cases[-1].expected_preferences is not None
+    assert cases[-1].expected_preferences.excluded_genres
+    assert not cases[-1].expected_preferences.disliked_genres
 
 
 def test_select_stratified_cases_keeps_single_and_multi_mix() -> None:

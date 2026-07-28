@@ -234,8 +234,7 @@ def _planning_messages(
                 'Return one JSON object with keys "preference_patch" and "steps". '
                 'Each step is {"tool": <name>, "args": {}}. Allowed tools are '
                 "lookup, hard_filter, itemcf_retrieve, semantic_retrieve, rerank, "
-                "and explain. hard_filter must precede retrieval; rerank must follow "
-                "retrieval; explain may only follow rerank. Extract only preferences "
+                f"and explain. {_plan_safety_instructions()} Extract only preferences "
                 "stated or implied by the user. Never invent tools or movie IDs."
             ),
         },
@@ -255,7 +254,10 @@ def _repair_messages(
     return [
         {
             "role": "system",
-            "content": "Repair the response into the required JSON schema. JSON only.",
+            "content": (
+                "Repair the response into one JSON object with preference_patch and "
+                f"steps. {_plan_safety_instructions()} JSON only."
+            ),
         },
         {
             "role": "user",
@@ -273,6 +275,14 @@ def _planning_schema() -> dict[str, Any]:
             "steps": {"type": "array"},
         },
     }
+
+
+def _plan_safety_instructions() -> str:
+    return (
+        "Every recommendation plan MUST include hard_filter before retrieval, "
+        "including requests that exclude watched movies. Include at least one of "
+        "itemcf_retrieve or semantic_retrieve, then rerank, and only then explain."
+    )
 
 
 def _fallback_plan(retrieval_top_k: int, result_top_k: int) -> ToolPlan:

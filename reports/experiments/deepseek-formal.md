@@ -7,6 +7,8 @@
 - Stability repeat: stratified 16 single-turn + 4 multi-turn
 - Total API calls: 255, including repair requests
 - Total tokens: 145,919
+- Original formal-case fingerprint:
+  `5e242d292164fee7755483b77cb66008b9e02cc06bb5e10627e363787d8cb3cf`
 - Raw local artifacts: `artifacts/runs/*-deepseek/`
 
 ## Results
@@ -49,10 +51,42 @@ maps it to the more appropriate hard `excluded_genres`. Several cases also
 move known watched IDs into `excluded_movie_ids`. The next evaluator revision
 must compare semantic constraint satisfaction rather than exact field choice.
 
+## Targeted multi-turn fix
+
+Root-cause reproduction showed that DeepSeek correctly extracted preferences,
+but the final “exclude watched movies” turn sometimes emitted
+`itemcf_retrieve → rerank → explain` without the mandatory `hard_filter`. The
+repair prompt did not repeat the ordering constraint and often reproduced the
+same invalid plan.
+
+The fix:
+
+- repeats `MUST include hard_filter before retrieval` in both initial and repair
+  prompts;
+- retains strict validation instead of relaxing the safety invariant;
+- stores sanitized validation/fallback diagnostics for every turn;
+- labels “avoid” as `excluded_genres` and accepts a hard exclusion as satisfying
+  a soft negative preference.
+
+The label-only case revision changed the current 50-case fingerprint to
+`351b1d23b05cd993287f0598ce35a3fdb8f8b03a99987c3d351ac9d145e9c836`.
+User turns, user histories, and held-out targets were unchanged.
+
+Only the 10 multi-turn cases were re-run:
+
+| Run | Plan valid | Fallback | Preference retention | Tool success | Constraints |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Full, before fix | 30% | 70% | unreliable | 100% | 100% |
+| Full, after fix | **100%** | **0%** | **90%** | 100% | 100% |
+
+The follow-up used 30 calls and 18,759 tokens. Ranking remained at
+Recall/NDCG@10 = 0 on this multi-turn-only subset, isolating the remaining
+problem to candidate retrieval/ranking rather than Agent plan execution.
+
 ## Next engineering experiment
 
-- Treat preference-only turns as valid state-update plans instead of requiring a
-  full retrieval/rerank chain on every turn.
-- Persist sanitized per-turn plan-validation diagnostics.
-- Make retention labels accept equivalent soft/hard negative preferences.
-- Re-run only the 10 multi-turn cases before spending on another full matrix.
+- Inspect the one retention miss (`multi-007`) without weakening constraints.
+- Add source-score calibration or a small validation-only learning-to-rank
+  model.
+- Re-run ranking on the same 10 cases; do not spend on another full LLM matrix
+  until offline ranking improves.

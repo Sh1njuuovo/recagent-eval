@@ -8,7 +8,7 @@
 2. 来源：RecAI/InteRecAgent 的工具化思想；明确本项目为独立实现。
 3. 架构：Conversation → PreferenceState/ToolPlan → Hard Filter → ItemCF + TF-IDF → Hybrid Rerank → Traces/Metrics。
 4. 数据：MovieLens-1M，用户时间切分，验证调权、测试冻结。
-5. 改造：DeepSeek/vLLM Provider、一次修复、确定性回退、50 案例、28 个测试、稳定 manifest。
+5. 改造：DeepSeek/vLLM Provider、一次修复、确定性回退、50 案例、35 个测试、稳定 manifest。
 6. 结果表：baseline `Recall/NDCG=0.06/0.0486`；full `0.08/0.0418`；约束与工具成功率 100%。
 7. 失败分析：覆盖提升但头部排序下降；零相似度候选和 set fingerprint 两个 debug 案例。
 8. 下一步：DeepSeek 正式矩阵、Qwen 4090 冒烟、分数校准/轻量 LTR。

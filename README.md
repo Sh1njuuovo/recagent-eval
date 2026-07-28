@@ -126,8 +126,10 @@ The formal DeepSeek matrix is also complete:
 The plan-validity target was not met; failures were concentrated entirely in
 multi-turn episodes. See the
 [DeepSeek report](reports/experiments/deepseek-formal.md) for token use,
-latency, metric caveats, and the next falsifiable experiment. Remote Qwen
-numbers remain pending until the RTX 4090 host is free.
+latency, metric caveats, and the targeted fix. After strengthening the initial
+and repair prompts without relaxing validation, a 10-case multi-turn rerun
+reached 100% plan validity, 0% fallback, and 90% semantic preference retention.
+Remote Qwen numbers remain pending until the RTX 4090 host is free.
 
 ## Testing and evidence
 

@@ -176,3 +176,25 @@ def test_structured_prompt_names_the_schema_and_tool_allowlist() -> None:
     assert "itemcf_retrieve" in system_prompt
     assert "semantic_retrieve" in system_prompt
     assert "hard_filter" in system_prompt
+    assert "MUST include hard_filter" in system_prompt
+
+
+def test_repair_prompt_repeats_the_safety_order_constraint() -> None:
+    invalid = LLMResponse(
+        structured={
+            "preference_patch": {},
+            "steps": [
+                {"tool": "itemcf_retrieve", "args": {}},
+                {"tool": "rerank", "args": {}},
+            ],
+        },
+        text='{"preference_patch":{},"steps":[]}',
+    )
+    provider = CapturingProvider([invalid, valid_response()])
+    agent = make_agent(provider)
+
+    agent.recommend("exclude watched movies", PreferenceState(liked_movie_ids={1}))
+
+    repair_prompt = provider.messages[1][0]["content"]
+    assert "MUST include hard_filter" in repair_prompt
+    assert "hard_filter before retrieval" in repair_prompt

@@ -106,3 +106,6 @@ def test_multi_turn_run_aggregates_calls_and_traces(tmp_path: Path) -> None:
     episode = json.loads((tmp_path / "episodes.jsonl").read_text())
     assert metrics["llm_calls"] == 2
     assert len(episode["result"]["traces"]) == 12
+    assert len(episode["turn_results"]) == 2
+    assert all("plan_valid" in turn for turn in episode["turn_results"])
+    assert all("fallback_used" in turn for turn in episode["turn_results"])

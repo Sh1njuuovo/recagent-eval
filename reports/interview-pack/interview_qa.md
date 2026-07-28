@@ -38,9 +38,10 @@ Provider 对 408/409/429/5xx 和网络错误指数退避。Agent 对非法 schem
 
 ## 10. 本地、DeepSeek 和 Qwen 的结果如何区分？
 
-rule-based 表格只验证离线链路；DeepSeek 正式矩阵已完成，完整组计划合法率
-86%、fallback 14%，且失败全部集中在多轮 episode。Qwen/vLLM 仍只用于
-10–20 条兼容性测试，不把不同 Provider 的数字合并。
+rule-based 表格只验证离线链路；DeepSeek 正式矩阵完整组最初计划合法率
+86%、fallback 14%，且失败全部集中在多轮 episode。复现发现最终轮漏掉
+`hard_filter`，强化首轮与 repair 约束后，10 个多轮案例复测达到 100%
+合法率、0% fallback。Qwen/vLLM 仍只用于 10–20 条兼容性测试。
 
 ## 11. 如何估算线上延迟和成本？
 

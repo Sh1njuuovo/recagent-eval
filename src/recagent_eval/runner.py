@@ -98,6 +98,15 @@ def run_experiment(
                 "user_id": case.user_id,
                 "recommended_movie_ids": [movie.movie_id for movie in result.movies],
                 "relevant_movie_ids": sorted(case.relevant_movie_ids),
+                "turn_results": [
+                    {
+                        "turn_index": index,
+                        "plan_valid": turn_result.plan_valid,
+                        "fallback_used": turn_result.fallback_used,
+                        "errors": turn_result.errors,
+                    }
+                    for index, turn_result in enumerate(turn_results, start=1)
+                ],
                 "result": result.model_dump(mode="json"),
             }
         )

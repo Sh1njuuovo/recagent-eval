@@ -125,11 +125,14 @@ def _movie_satisfies(movie: Movie, state: PreferenceState) -> bool:
 
 
 def _retains(actual: PreferenceState, expected: PreferenceState) -> bool:
+    actual_negative_genres = actual.disliked_genres | actual.excluded_genres
     return (
         expected.liked_movie_ids.issubset(actual.liked_movie_ids)
         and expected.disliked_movie_ids.issubset(actual.disliked_movie_ids)
         and expected.liked_genres.issubset(actual.liked_genres)
-        and expected.disliked_genres.issubset(actual.disliked_genres)
+        and expected.disliked_genres.issubset(actual_negative_genres)
+        and expected.required_genres.issubset(actual.required_genres)
+        and expected.excluded_genres.issubset(actual.excluded_genres)
         and expected.excluded_movie_ids.issubset(actual.excluded_movie_ids)
     )
 
