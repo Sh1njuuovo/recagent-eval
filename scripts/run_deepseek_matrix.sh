@@ -3,18 +3,29 @@ set -euo pipefail
 
 : "${DEEPSEEK_API_KEY:?Set DEEPSEEK_API_KEY before running formal evaluation}"
 
-for experiment_config in baseline structured_memory full; do
+experiment_configs=(
+  "configs/baseline.yaml"
+  "configs/structured_memory.yaml"
+  "configs/full_constraint_aware.yaml"
+)
+experiment_outputs=(
+  "artifacts/runs/baseline-deepseek-constraint-aware"
+  "artifacts/runs/structured-deepseek-constraint-aware"
+  "artifacts/runs/full-deepseek-constraint-aware"
+)
+
+for index in "${!experiment_configs[@]}"; do
   uv run recagent-eval evaluate \
-    --config "configs/${experiment_config}.yaml" \
+    --config "${experiment_configs[$index]}" \
     --cases cases/fixed_cases.json \
     --data-dir data/raw/ml-1m \
-    --output "artifacts/runs/${experiment_config}-deepseek" \
+    --output "${experiment_outputs[$index]}" \
     --provider deepseek
 done
 
 uv run recagent-eval evaluate \
-  --config configs/full.yaml \
+  --config configs/full_constraint_aware.yaml \
   --cases cases/stability_cases.json \
   --data-dir data/raw/ml-1m \
-  --output artifacts/runs/full-deepseek-stability-repeat \
+  --output artifacts/runs/full-deepseek-constraint-aware-stability \
   --provider deepseek
