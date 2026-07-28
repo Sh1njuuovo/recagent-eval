@@ -263,6 +263,36 @@ def test_unstructured_baseline_uses_free_text_without_memory_or_repair() -> None
     assert result.preference_state == PreferenceState()
 
 
+def test_unstructured_baseline_surfaces_provider_failure() -> None:
+    provider = SequenceProvider(
+        [
+            LLMResponse(
+                error=ProviderError(
+                    "transport_error",
+                    "ConnectError",
+                    retryable=True,
+                )
+            )
+        ]
+    )
+    agent = RecommendationAgent(
+        movies=MOVIES,
+        itemcf=ItemCFRetriever.fit(RATINGS),
+        semantic=TfidfSemanticRetriever.fit(MOVIES),
+        ranker=HybridRanker((1.0, 0.0, 0.0)),
+        provider=provider,
+        config=AgentConfig(
+            structured_planning=False,
+            enable_memory=False,
+            enable_semantic_retrieval=False,
+        ),
+    )
+
+    result = agent.recommend("recommend", PreferenceState(liked_movie_ids={1}))
+
+    assert result.errors == ["transport_error: ConnectError"]
+
+
 def test_structured_prompt_names_the_schema_and_tool_allowlist() -> None:
     provider = CapturingProvider([valid_response()])
     agent = make_agent(provider)

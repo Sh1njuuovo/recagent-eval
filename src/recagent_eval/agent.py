@@ -71,6 +71,8 @@ class RecommendationAgent:
                 timeout=self.config.provider_timeout_seconds,
             )
             responses.append(response)
+            if response.error is not None:
+                errors.append(_response_error(response, "provider request failed"))
             parsed = (
                 PreferencePatch(),
                 _fallback_plan(
