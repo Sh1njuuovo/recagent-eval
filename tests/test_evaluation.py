@@ -4,7 +4,9 @@ from recagent_eval.data import Movie
 from recagent_eval.evaluation import (
     EvaluationRecord,
     aggregate_metrics,
+    build_candidate_diagnostics,
     ndcg_at_k,
+    pipeline_compliant,
     recall_at_k,
 )
 from recagent_eval.models import (
@@ -83,3 +85,82 @@ def test_retention_accepts_hard_exclusion_for_soft_negative_preference() -> None
     metrics = aggregate_metrics([record], {}, k=10)
 
     assert metrics["preference_retention_rate"] == 1.0
+
+
+def test_candidate_diagnostic_distinguishes_retrieval_and_ranking_miss() -> None:
+    movies = {
+        7: Movie(7, "Target", ("Drama",), 2000),
+        8: Movie(8, "Other", ("Drama",), 2001),
+    }
+    traces = [
+        ToolTrace(
+            tool="itemcf_retrieve",
+            candidate_movie_ids=[8, 7],
+        ),
+        ToolTrace(
+            tool="semantic_retrieve",
+            candidate_movie_ids=[8],
+        ),
+        ToolTrace(tool="rerank", candidate_movie_ids=[8]),
+    ]
+
+    diagnostic = build_candidate_diagnostics(
+        {7},
+        movies,
+        PreferenceState(),
+        traces,
+    )[0]
+
+    assert diagnostic["eligible"] is True
+    assert diagnostic["itemcf_rank"] == 2
+    assert diagnostic["semantic_rank"] is None
+    assert diagnostic["union_member"] is True
+    assert diagnostic["final_rank"] is None
+
+
+def test_pipeline_compliance_checks_required_order() -> None:
+    traces = [
+        ToolTrace(tool="hard_filter"),
+        ToolTrace(tool="itemcf_retrieve"),
+        ToolTrace(tool="semantic_retrieve"),
+        ToolTrace(tool="rerank"),
+    ]
+
+    assert pipeline_compliant(
+        traces,
+        ("itemcf_retrieve", "semantic_retrieve"),
+    )
+    assert not pipeline_compliant(
+        traces[:-2] + [ToolTrace(tool="rerank")],
+        ("itemcf_retrieve", "semantic_retrieve"),
+    )
+
+
+def test_aggregate_metrics_reports_candidate_stage_rates() -> None:
+    record = EvaluationRecord(
+        result=RecommendationResult(),
+        relevant_movie_ids={7},
+        metadata={
+            "label_eligible": True,
+            "pipeline_compliant": True,
+            "candidate_diagnostics": [
+                {
+                    "movie_id": 7,
+                    "eligible": True,
+                    "itemcf_rank": 2,
+                    "semantic_rank": None,
+                    "union_member": True,
+                    "final_rank": None,
+                }
+            ],
+        },
+    )
+
+    metrics = aggregate_metrics([record], {}, k=10)
+
+    assert metrics["relevance_label_eligibility_rate"] == 1.0
+    assert metrics["final_state_target_eligibility_rate"] == 1.0
+    assert metrics["itemcf_candidate_recall"] == 1.0
+    assert metrics["semantic_candidate_recall"] == 0.0
+    assert metrics["union_candidate_recall"] == 1.0
+    assert metrics["pipeline_compliance_rate"] == 1.0

@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from recagent_eval.cases import EvaluationCase
 from recagent_eval.data import Movie, Rating
 from recagent_eval.models import PreferenceState
@@ -10,6 +12,34 @@ from recagent_eval.runner import (
     canonical_case_payload,
     run_experiment,
 )
+
+
+class ProviderMustNotBeCalled:
+    def chat(self, messages, response_schema=None, timeout=30):
+        raise AssertionError("provider must not be called")
+
+
+def test_run_experiment_rejects_ineligible_labels_before_provider_call(
+    tmp_path: Path,
+) -> None:
+    movies = {1: Movie(1, "Blocked", ("Action",), 2000)}
+    case = EvaluationCase(
+        case_id="invalid-label",
+        user_id=1,
+        turns=("Avoid Action.",),
+        relevant_movie_ids={1},
+        initial_state=PreferenceState(excluded_genres={"Action"}),
+    )
+
+    with pytest.raises(ValueError, match=r"invalid-label.*excluded genre Action"):
+        run_experiment(
+            movies=movies,
+            ratings=[],
+            cases=[case],
+            provider=ProviderMustNotBeCalled(),
+            config=ExperimentConfig(name="preflight"),
+            output_dir=tmp_path,
+        )
 
 
 def test_run_experiment_writes_reproducible_records_and_metrics(

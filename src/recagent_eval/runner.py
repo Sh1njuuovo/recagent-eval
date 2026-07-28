@@ -12,9 +12,14 @@ from typing import Any
 import numpy as np
 
 from recagent_eval.agent import AgentConfig, RecommendationAgent
-from recagent_eval.cases import EvaluationCase
+from recagent_eval.cases import EvaluationCase, validate_cases_relevance
 from recagent_eval.data import Movie, Rating
-from recagent_eval.evaluation import EvaluationRecord, aggregate_metrics
+from recagent_eval.evaluation import (
+    EvaluationRecord,
+    aggregate_metrics,
+    build_candidate_diagnostics,
+    pipeline_compliant,
+)
 from recagent_eval.models import ToolName
 from recagent_eval.provider import LLMProvider
 from recagent_eval.ranking import HybridRanker
@@ -43,6 +48,7 @@ def run_experiment(
     config: ExperimentConfig,
     output_dir: Path,
 ) -> dict[str, float | int]:
+    validate_cases_relevance(cases, movies)
     random.seed(config.seed)
     np.random.seed(config.seed)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -77,6 +83,17 @@ def run_experiment(
             state = result.preference_state
         if result is None:
             continue
+        final_turn_traces = turn_results[-1].traces
+        candidate_diagnostics = build_candidate_diagnostics(
+            case.relevant_movie_ids,
+            movies,
+            result.preference_state,
+            final_turn_traces,
+        )
+        is_pipeline_compliant = pipeline_compliant(
+            final_turn_traces,
+            config.required_retrieval_tools,
+        )
         result = result.model_copy(
             update={
                 "traces": [trace for turn_result in turn_results for trace in turn_result.traces],
@@ -94,7 +111,13 @@ def run_experiment(
                 result=result,
                 relevant_movie_ids=case.relevant_movie_ids,
                 expected_preferences=case.expected_preferences,
-                metadata={"case_id": case.case_id, "tags": case.tags},
+                metadata={
+                    "case_id": case.case_id,
+                    "tags": case.tags,
+                    "label_eligible": True,
+                    "candidate_diagnostics": candidate_diagnostics,
+                    "pipeline_compliant": is_pipeline_compliant,
+                },
             )
         )
         serialized.append(
@@ -103,6 +126,8 @@ def run_experiment(
                 "user_id": case.user_id,
                 "recommended_movie_ids": [movie.movie_id for movie in result.movies],
                 "relevant_movie_ids": sorted(case.relevant_movie_ids),
+                "candidate_diagnostics": candidate_diagnostics,
+                "pipeline_compliant": is_pipeline_compliant,
                 "turn_results": [
                     {
                         "turn_index": index,
