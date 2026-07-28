@@ -180,7 +180,7 @@ class RecommendationAgent:
                     history = state.liked_movie_ids
                     retrieved = self.itemcf.retrieve(
                         history,
-                        top_k=_top_k(step, self.config.retrieval_top_k),
+                        top_k=_retrieval_top_k(self.config.retrieval_top_k),
                         allowed_ids=set(allowed_movies),
                     )
                     itemcf_scores = dict(retrieved)
@@ -195,7 +195,9 @@ class RecommendationAgent:
                                 self.movies,
                                 history_cap=self.config.semantic_profile_history_cap,
                             ),
-                            top_k=_top_k(step, self.config.retrieval_top_k),
+                            top_k=_retrieval_top_k(
+                                self.config.retrieval_top_k
+                            ),
                             allowed_ids=set(allowed_movies),
                         )
                         semantic_scores = dict(retrieved)
@@ -366,6 +368,10 @@ def _response_error(response: LLMResponse, fallback: str) -> str:
 def _top_k(step: ToolStep, default: int) -> int:
     value = step.args.get("top_k", default)
     return max(1, min(int(value), 1000))
+
+
+def _retrieval_top_k(configured: int) -> int:
+    return max(1, min(configured, 1000))
 
 
 def build_semantic_profile(

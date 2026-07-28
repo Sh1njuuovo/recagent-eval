@@ -1,9 +1,9 @@
 name: structured-plan-memory
 seed: 42
-retrieval_top_k: 100
+retrieval_top_k: 500
 enable_memory: true
 enable_semantic_retrieval: false
 structured_planning: true
 required_retrieval_tools: [itemcf_retrieve]
-semantic_profile_history_cap: 20
+semantic_profile_history_cap: 50
 weights: [1.0, 0.0, 0.0]

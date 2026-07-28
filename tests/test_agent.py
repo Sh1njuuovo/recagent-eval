@@ -172,6 +172,31 @@ def test_retrieval_traces_save_ordered_candidate_ids() -> None:
     assert traces["rerank"].candidate_movie_ids == [2]
 
 
+def test_configured_retrieval_depth_cannot_be_overridden_by_plan_args() -> None:
+    response = LLMResponse(
+        structured={
+            "preference_patch": {"requested_count": 2},
+            "steps": [
+                {"tool": "hard_filter", "args": {}},
+                {"tool": "itemcf_retrieve", "args": {"top_k": 1}},
+                {"tool": "semantic_retrieve", "args": {"top_k": 1}},
+                {"tool": "rerank", "args": {"top_k": 2}},
+            ],
+        }
+    )
+    agent = make_agent(SequenceProvider([response]))
+
+    result = agent.recommend(
+        "Movie science fiction drama",
+        PreferenceState(liked_movie_ids={1}),
+    )
+
+    semantic_trace = next(
+        trace for trace in result.traces if trace.tool == "semantic_retrieve"
+    )
+    assert semantic_trace.candidate_movie_ids == [3, 2]
+
+
 def test_agent_updates_memory_executes_tools_and_respects_exclusions() -> None:
     agent = make_agent(SequenceProvider([valid_response()]))
 
