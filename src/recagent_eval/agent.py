@@ -11,6 +11,7 @@ from recagent_eval.models import (
     PreferencePatch,
     PreferenceState,
     RecommendationResult,
+    ToolName,
     ToolPlan,
     ToolStep,
     ToolTrace,
@@ -31,6 +32,8 @@ class AgentConfig:
     enable_memory: bool = True
     enable_semantic_retrieval: bool = True
     structured_planning: bool = True
+    required_retrieval_tools: tuple[ToolName, ...] = ("itemcf_retrieve",)
+    semantic_profile_history_cap: int = 20
 
 
 class RecommendationAgent:
@@ -73,28 +76,43 @@ class RecommendationAgent:
                 _fallback_plan(
                     self.config.retrieval_top_k,
                     current_state.requested_count,
+                    self.config.required_retrieval_tools,
                 ),
             )
             plan_valid = False
         else:
             response = self.provider.chat(
-                _planning_messages(message, current_state),
+                _planning_messages(
+                    message,
+                    current_state,
+                    self.config.required_retrieval_tools,
+                ),
                 response_schema=_planning_schema(),
                 timeout=self.config.provider_timeout_seconds,
             )
             responses.append(response)
-            parsed = _parse_planning_response(response)
+            parsed = _parse_planning_response(
+                response,
+                self.config.required_retrieval_tools,
+            )
             plan_valid = parsed is not None
 
             if parsed is None:
                 errors.append(_response_error(response, "invalid tool plan"))
                 repair = self.provider.chat(
-                    _repair_messages(message, response),
+                    _repair_messages(
+                        message,
+                        response,
+                        self.config.required_retrieval_tools,
+                    ),
                     response_schema=_planning_schema(),
                     timeout=self.config.provider_timeout_seconds,
                 )
                 responses.append(repair)
-                parsed = _parse_planning_response(repair)
+                parsed = _parse_planning_response(
+                    repair,
+                    self.config.required_retrieval_tools,
+                )
                 plan_valid = parsed is not None
                 if parsed is None:
                     errors.append(_response_error(repair, "tool plan repair failed"))
@@ -102,7 +120,11 @@ class RecommendationAgent:
         fallback_used = parsed is None
         if parsed is None:
             patch = PreferencePatch()
-            plan = _fallback_plan(self.config.retrieval_top_k, current_state.requested_count)
+            plan = _fallback_plan(
+                self.config.retrieval_top_k,
+                current_state.requested_count,
+                self.config.required_retrieval_tools,
+            )
         else:
             patch, plan = parsed
 
@@ -212,6 +234,7 @@ class RecommendationAgent:
 
 def _parse_planning_response(
     response: LLMResponse,
+    required_retrieval_tools: tuple[ToolName, ...],
 ) -> tuple[PreferencePatch, ToolPlan] | None:
     if response.error is not None or response.structured is None:
         return None
@@ -220,12 +243,15 @@ def _parse_planning_response(
         plan = ToolPlan.model_validate({"steps": response.structured.get("steps")})
     except (ValidationError, TypeError):
         return None
+    if not _plan_has_required_retrieval(plan, required_retrieval_tools):
+        return None
     return patch, plan
 
 
 def _planning_messages(
     message: str,
     state: PreferenceState,
+    required_retrieval_tools: tuple[ToolName, ...],
 ) -> list[dict[str, str]]:
     return [
         {
@@ -234,7 +260,8 @@ def _planning_messages(
                 'Return one JSON object with keys "preference_patch" and "steps". '
                 'Each step is {"tool": <name>, "args": {}}. Allowed tools are '
                 "lookup, hard_filter, itemcf_retrieve, semantic_retrieve, rerank, "
-                f"and explain. {_plan_safety_instructions()} Extract only preferences "
+                f"and explain. {_plan_safety_instructions(required_retrieval_tools)} "
+                "Extract only preferences "
                 "stated or implied by the user. Never invent tools or movie IDs."
             ),
         },
@@ -250,13 +277,14 @@ def _planning_messages(
 def _repair_messages(
     message: str,
     response: LLMResponse,
+    required_retrieval_tools: tuple[ToolName, ...],
 ) -> list[dict[str, str]]:
     return [
         {
             "role": "system",
             "content": (
                 "Repair the response into one JSON object with preference_patch and "
-                f"steps. {_plan_safety_instructions()} JSON only."
+                f"steps. {_plan_safety_instructions(required_retrieval_tools)} JSON only."
             ),
         },
         {
@@ -277,25 +305,44 @@ def _planning_schema() -> dict[str, Any]:
     }
 
 
-def _plan_safety_instructions() -> str:
+def _plan_safety_instructions(
+    required_retrieval_tools: tuple[ToolName, ...],
+) -> str:
+    required = ", ".join(required_retrieval_tools)
     return (
         "Every recommendation plan MUST include hard_filter before retrieval, "
-        "including requests that exclude watched movies. Include at least one of "
-        "itemcf_retrieve or semantic_retrieve, then rerank, and only then explain."
+        "including requests that exclude watched movies. "
+        f"It MUST include these configured retrieval tools: {required}. "
+        "Then include rerank, and only then explain."
     )
 
 
-def _fallback_plan(retrieval_top_k: int, result_top_k: int) -> ToolPlan:
+def _fallback_plan(
+    retrieval_top_k: int,
+    result_top_k: int,
+    required_retrieval_tools: tuple[ToolName, ...],
+) -> ToolPlan:
+    retrieval_steps = [
+        ToolStep(tool=tool, args={"top_k": retrieval_top_k})
+        for tool in required_retrieval_tools
+    ]
     return ToolPlan(
         steps=[
             ToolStep(tool="lookup"),
             ToolStep(tool="hard_filter"),
-            ToolStep(tool="itemcf_retrieve", args={"top_k": retrieval_top_k}),
-            ToolStep(tool="semantic_retrieve", args={"top_k": retrieval_top_k}),
+            *retrieval_steps,
             ToolStep(tool="rerank", args={"top_k": result_top_k}),
             ToolStep(tool="explain"),
         ]
     )
+
+
+def _plan_has_required_retrieval(
+    plan: ToolPlan,
+    required_retrieval_tools: tuple[ToolName, ...],
+) -> bool:
+    names = {step.tool for step in plan.steps}
+    return set(required_retrieval_tools).issubset(names)
 
 
 def _response_error(response: LLMResponse, fallback: str) -> str:

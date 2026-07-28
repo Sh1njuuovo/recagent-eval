@@ -73,6 +73,66 @@ def valid_response() -> LLMResponse:
     )
 
 
+def itemcf_only_response() -> LLMResponse:
+    return LLMResponse(
+        structured={
+            "preference_patch": {},
+            "steps": [
+                {"tool": "hard_filter", "args": {}},
+                {"tool": "itemcf_retrieve", "args": {"top_k": 100}},
+                {"tool": "rerank", "args": {"top_k": 2}},
+                {"tool": "explain", "args": {}},
+            ],
+        }
+    )
+
+
+def test_full_profile_repairs_plan_missing_semantic_route() -> None:
+    provider = CapturingProvider([itemcf_only_response(), valid_response()])
+    agent = RecommendationAgent(
+        movies=MOVIES,
+        itemcf=ItemCFRetriever.fit(RATINGS),
+        semantic=TfidfSemanticRetriever.fit(MOVIES),
+        ranker=HybridRanker((0.5, 0.3, 0.2)),
+        provider=provider,
+        config=AgentConfig(
+            required_retrieval_tools=(
+                "itemcf_retrieve",
+                "semantic_retrieve",
+            )
+        ),
+    )
+
+    result = agent.recommend("recommend", PreferenceState(liked_movie_ids={1}))
+
+    assert result.llm_calls == 2
+    assert result.plan_valid is True
+    assert "semantic_retrieve" in provider.messages[0][0]["content"]
+
+
+def test_full_profile_fallback_retains_both_required_routes() -> None:
+    provider = SequenceProvider([itemcf_only_response(), itemcf_only_response()])
+    agent = RecommendationAgent(
+        movies=MOVIES,
+        itemcf=ItemCFRetriever.fit(RATINGS),
+        semantic=TfidfSemanticRetriever.fit(MOVIES),
+        ranker=HybridRanker((0.5, 0.3, 0.2)),
+        provider=provider,
+        config=AgentConfig(
+            required_retrieval_tools=(
+                "itemcf_retrieve",
+                "semantic_retrieve",
+            )
+        ),
+    )
+
+    result = agent.recommend("recommend", PreferenceState(liked_movie_ids={1}))
+
+    assert result.fallback_used is True
+    assert result.plan is not None
+    assert [step.tool for step in result.plan.steps].count("semantic_retrieve") == 1
+
+
 def test_agent_updates_memory_executes_tools_and_respects_exclusions() -> None:
     agent = make_agent(SequenceProvider([valid_response()]))
 

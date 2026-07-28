@@ -4,5 +4,7 @@ retrieval_top_k: 100
 enable_memory: true
 enable_semantic_retrieval: true
 structured_planning: true
+required_retrieval_tools: [itemcf_retrieve, semantic_retrieve]
+semantic_profile_history_cap: 20
 # Frozen after validation-only grid search (step=0.1, 500 users).
 weights: [0.7, 0.3, 0.0]

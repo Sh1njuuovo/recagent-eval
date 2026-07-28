@@ -15,6 +15,7 @@ from recagent_eval.agent import AgentConfig, RecommendationAgent
 from recagent_eval.cases import EvaluationCase
 from recagent_eval.data import Movie, Rating
 from recagent_eval.evaluation import EvaluationRecord, aggregate_metrics
+from recagent_eval.models import ToolName
 from recagent_eval.provider import LLMProvider
 from recagent_eval.ranking import HybridRanker
 from recagent_eval.retrieval import ItemCFRetriever, TfidfSemanticRetriever
@@ -28,6 +29,8 @@ class ExperimentConfig:
     enable_memory: bool = True
     enable_semantic_retrieval: bool = True
     structured_planning: bool = True
+    required_retrieval_tools: tuple[ToolName, ...] = ("itemcf_retrieve",)
+    semantic_profile_history_cap: int = 20
     seed: int = 42
 
 
@@ -57,6 +60,8 @@ def run_experiment(
             enable_memory=config.enable_memory,
             enable_semantic_retrieval=config.enable_semantic_retrieval,
             structured_planning=config.structured_planning,
+            required_retrieval_tools=config.required_retrieval_tools,
+            semantic_profile_history_cap=config.semantic_profile_history_cap,
         ),
     )
 
@@ -125,6 +130,8 @@ def run_experiment(
         "enable_memory": config.enable_memory,
         "enable_semantic_retrieval": config.enable_semantic_retrieval,
         "structured_planning": config.structured_planning,
+        "required_retrieval_tools": config.required_retrieval_tools,
+        "semantic_profile_history_cap": config.semantic_profile_history_cap,
         "movie_count": len(movies),
         "rating_count": len(ratings),
         "case_count": len(cases),

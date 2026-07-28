@@ -27,3 +27,28 @@ def test_show_config_rejects_invalid_weight_sum(tmp_path) -> None:
 
     assert result.exit_code != 0
     assert "sum to 1" in result.output
+
+
+def test_show_config_includes_retrieval_policy(tmp_path) -> None:
+    config = tmp_path / "hybrid.yaml"
+    config.write_text(
+        "\n".join(
+            [
+                "name: hybrid",
+                "required_retrieval_tools: [itemcf_retrieve, semantic_retrieve]",
+                "semantic_profile_history_cap: 20",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(app, ["show-config", str(config)])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["required_retrieval_tools"] == [
+        "itemcf_retrieve",
+        "semantic_retrieve",
+    ]
+    assert payload["semantic_profile_history_cap"] == 20
