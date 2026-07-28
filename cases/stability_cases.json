@@ -3,7 +3,7 @@
     "case_id": "single-001",
     "user_id": 5447,
     "turns": [
-      "Recommend movies matching Drama, Comedy."
+      "I tend to enjoy Drama, Comedy. Please recommend ten movies based on those preferences."
     ],
     "relevant_movie_ids": [
       3675
@@ -146,7 +146,7 @@
     "case_id": "single-002",
     "user_id": 249,
     "turns": [
-      "Recommend movies matching Comedy, Action."
+      "I tend to enjoy Comedy, Action. Please recommend ten movies based on those preferences."
     ],
     "relevant_movie_ids": [
       2580
@@ -248,7 +248,7 @@
     "case_id": "single-003",
     "user_id": 4906,
     "turns": [
-      "Recommend movies matching Drama, Thriller."
+      "I tend to enjoy Drama, Thriller. Please recommend ten movies based on those preferences."
     ],
     "relevant_movie_ids": [
       1687
@@ -431,8 +431,8 @@
       ],
       "disliked_movie_ids": [],
       "liked_genres": [
-        "Thriller",
-        "Drama"
+        "Drama",
+        "Thriller"
       ],
       "disliked_genres": [],
       "required_genres": [],
@@ -453,7 +453,7 @@
     "case_id": "single-004",
     "user_id": 2745,
     "turns": [
-      "Recommend movies matching Romance, Action."
+      "I tend to enjoy Romance, Action. Please recommend ten movies based on those preferences."
     ],
     "relevant_movie_ids": [
       2002
@@ -602,8 +602,8 @@
       ],
       "disliked_movie_ids": [],
       "liked_genres": [
-        "Romance",
-        "Action"
+        "Action",
+        "Romance"
       ],
       "disliked_genres": [],
       "required_genres": [],
@@ -624,7 +624,7 @@
     "case_id": "single-005",
     "user_id": 3815,
     "turns": [
-      "Recommend movies matching Comedy, Action."
+      "I tend to enjoy Comedy, Action. Please recommend ten movies based on those preferences."
     ],
     "relevant_movie_ids": [
       89
@@ -748,7 +748,7 @@
     "case_id": "single-006",
     "user_id": 1089,
     "turns": [
-      "Recommend movies matching Thriller, Horror."
+      "I tend to enjoy Thriller, Horror. Please recommend ten movies based on those preferences."
     ],
     "relevant_movie_ids": [
       1805
@@ -813,8 +813,8 @@
       ],
       "disliked_movie_ids": [],
       "liked_genres": [
-        "Horror",
-        "Thriller"
+        "Thriller",
+        "Horror"
       ],
       "disliked_genres": [],
       "required_genres": [],
@@ -835,7 +835,7 @@
     "case_id": "single-007",
     "user_id": 214,
     "turns": [
-      "Recommend movies matching Comedy, Drama."
+      "I tend to enjoy Comedy, Drama. Please recommend ten movies based on those preferences."
     ],
     "relevant_movie_ids": [
       2606
@@ -936,7 +936,7 @@
     "case_id": "single-008",
     "user_id": 1132,
     "turns": [
-      "Recommend movies matching Action, Sci-Fi."
+      "I tend to enjoy Action, Sci-Fi. Please recommend ten movies based on those preferences."
     ],
     "relevant_movie_ids": [
       3438
@@ -1083,8 +1083,8 @@
       ],
       "disliked_movie_ids": [],
       "liked_genres": [
-        "Sci-Fi",
-        "Action"
+        "Action",
+        "Sci-Fi"
       ],
       "disliked_genres": [],
       "required_genres": [],
@@ -1105,7 +1105,7 @@
     "case_id": "single-009",
     "user_id": 4246,
     "turns": [
-      "Recommend movies matching Comedy, Action."
+      "I tend to enjoy Comedy, Action. Please recommend ten movies based on those preferences."
     ],
     "relevant_movie_ids": [
       2431
@@ -1159,7 +1159,7 @@
     "case_id": "single-010",
     "user_id": 4798,
     "turns": [
-      "Recommend movies matching Sci-Fi, Action."
+      "I tend to enjoy Sci-Fi, Action. Please recommend ten movies based on those preferences."
     ],
     "relevant_movie_ids": [
       616
@@ -1225,8 +1225,8 @@
       ],
       "disliked_movie_ids": [],
       "liked_genres": [
-        "Sci-Fi",
-        "Action"
+        "Action",
+        "Sci-Fi"
       ],
       "disliked_genres": [],
       "required_genres": [],
@@ -1247,7 +1247,7 @@
     "case_id": "single-011",
     "user_id": 958,
     "turns": [
-      "Recommend movies matching Drama, Comedy."
+      "I tend to enjoy Drama, Comedy. Please recommend ten movies based on those preferences."
     ],
     "relevant_movie_ids": [
       953
@@ -1392,7 +1392,7 @@
     "case_id": "single-012",
     "user_id": 3013,
     "turns": [
-      "Recommend movies matching Comedy, Drama."
+      "I tend to enjoy Comedy, Drama. Please recommend ten movies based on those preferences."
     ],
     "relevant_movie_ids": [
       2135
@@ -1677,7 +1677,7 @@
     "case_id": "single-013",
     "user_id": 2222,
     "turns": [
-      "Recommend movies matching Comedy, Drama."
+      "I tend to enjoy Comedy, Drama. Please recommend ten movies based on those preferences."
     ],
     "relevant_movie_ids": [
       364
@@ -1829,7 +1829,7 @@
     "case_id": "single-014",
     "user_id": 1469,
     "turns": [
-      "Recommend movies matching Comedy, Drama."
+      "I tend to enjoy Comedy, Drama. Please recommend ten movies based on those preferences."
     ],
     "relevant_movie_ids": [
       2997
@@ -1884,7 +1884,7 @@
     "case_id": "single-015",
     "user_id": 3218,
     "turns": [
-      "Recommend movies matching Drama, Comedy."
+      "I tend to enjoy Drama, Comedy. Please recommend ten movies based on those preferences."
     ],
     "relevant_movie_ids": [
       3114
@@ -1941,7 +1941,7 @@
     "case_id": "single-016",
     "user_id": 742,
     "turns": [
-      "Recommend movies matching Sci-Fi, Action."
+      "I tend to enjoy Sci-Fi, Action. Please recommend ten movies based on those preferences."
     ],
     "relevant_movie_ids": [
       3745
@@ -1979,8 +1979,8 @@
       ],
       "disliked_movie_ids": [],
       "liked_genres": [
-        "Sci-Fi",
-        "Action"
+        "Action",
+        "Sci-Fi"
       ],
       "disliked_genres": [],
       "required_genres": [],
