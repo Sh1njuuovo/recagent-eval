@@ -61,7 +61,11 @@ def run_experiment(
         movies=movies,
         itemcf=itemcf,
         semantic=semantic,
-        ranker=HybridRanker(config.weights),
+        ranker=HybridRanker(
+            config.weights,
+            kind=config.ranker_kind,
+            rrf_k=config.rrf_k,
+        ),
         provider=provider,
         config=AgentConfig(
             retrieval_top_k=config.retrieval_top_k,
