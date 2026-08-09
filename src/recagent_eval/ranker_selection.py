@@ -10,11 +10,16 @@ from typing import Any
 from pydantic import BaseModel
 
 from recagent_eval.agent import build_semantic_profile
-from recagent_eval.data import DatasetSplit, Movie
+from recagent_eval.cases import EvaluationCase
+from recagent_eval.data import DatasetSplit, Movie, Rating
 from recagent_eval.evaluation import hit_rate_at_k, ndcg_at_k, recall_at_k
 from recagent_eval.models import PreferenceState
 from recagent_eval.ranking import HybridRanker, RankerKind
-from recagent_eval.retrieval import ItemCFRetriever, TfidfSemanticRetriever
+from recagent_eval.retrieval import (
+    ItemCFRetriever,
+    TfidfSemanticRetriever,
+    hard_filter,
+)
 
 SELECTABLE_METHOD_PRIORITY = {
     "itemcf": 0,
@@ -202,6 +207,78 @@ def ranker_dataset_fingerprint(
     }
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def evaluate_frozen_cases(
+    movies: dict[int, Movie],
+    ratings: list[Rating] | tuple[Rating, ...],
+    cases: list[EvaluationCase],
+    *,
+    ranker: HybridRanker,
+    retrieval_top_k: int,
+    history_cap: int,
+) -> dict[str, float | int | str]:
+    itemcf = ItemCFRetriever.fit(ratings)
+    semantic = TfidfSemanticRetriever.fit(movies)
+    recalls: list[float] = []
+    ndcgs: list[float] = []
+    hits: list[float] = []
+    itemcf_hits: list[float] = []
+    semantic_hits: list[float] = []
+    union_hits: list[float] = []
+    for case in cases:
+        state = case.expected_preferences or case.initial_state
+        allowed_movies = {
+            movie.movie_id: movie for movie in hard_filter(movies.values(), state)
+        }
+        allowed_ids = set(allowed_movies)
+        history = set(state.liked_movie_ids)
+        itemcf_scores = dict(
+            itemcf.retrieve(
+                history,
+                top_k=retrieval_top_k,
+                allowed_ids=allowed_ids,
+            )
+        )
+        semantic_scores = dict(
+            semantic.retrieve(
+                build_semantic_profile(
+                    "",
+                    state,
+                    movies,
+                    history_cap=history_cap,
+                ),
+                top_k=retrieval_top_k,
+                allowed_ids=allowed_ids,
+            )
+        )
+        ranked = ranker.rank(
+            allowed_movies,
+            itemcf_scores=itemcf_scores,
+            semantic_scores=semantic_scores,
+            state=state,
+            top_k=10,
+        )
+        ranked_ids = [movie.movie_id for movie in ranked]
+        relevant = case.relevant_movie_ids
+        recalls.append(recall_at_k(ranked_ids, relevant, 10))
+        ndcgs.append(ndcg_at_k(ranked_ids, relevant, 10))
+        hits.append(hit_rate_at_k(ranked_ids, relevant, 10))
+        itemcf_hits.append(float(bool(set(itemcf_scores) & relevant)))
+        semantic_hits.append(float(bool(set(semantic_scores) & relevant)))
+        union_hits.append(
+            float(bool((set(itemcf_scores) | set(semantic_scores)) & relevant))
+        )
+    return {
+        "cases": len(cases),
+        "ranker_kind": ranker.kind,
+        "recall_at_10": _mean(recalls),
+        "ndcg_at_10": _mean(ndcgs),
+        "hit_rate_at_10": _mean(hits),
+        "itemcf_candidate_recall": _mean(itemcf_hits),
+        "semantic_candidate_recall": _mean(semantic_hits),
+        "union_candidate_recall": _mean(union_hits),
+    }
 
 
 def _build_validation_examples(

@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import pytest
 
+from recagent_eval.cases import EvaluationCase
 from recagent_eval.data import Movie, Rating, chronological_split
+from recagent_eval.models import PreferenceState
 from recagent_eval.ranker_selection import (
     RankerSelectionEvidence,
     build_ranker_ablation,
+    evaluate_frozen_cases,
     ranker_dataset_fingerprint,
     select_ranker,
     validate_test_gate,
 )
+from recagent_eval.ranking import HybridRanker
 
 
 def _row(kind: str, ndcg: float, recall: float = 0.1, **parameters):
@@ -155,3 +159,51 @@ def test_retrieval_ablation_has_all_rankers_and_stable_fingerprint() -> None:
     assert all(row["users"] == 1 for row in rows)
     assert all(0.0 <= row["ndcg_at_10"] <= 1.0 for row in rows)
     assert fingerprint == second_fingerprint
+
+
+def test_frozen_case_evaluation_uses_expected_multi_turn_preferences(
+    monkeypatch,
+) -> None:
+    movies = {
+        1: Movie(1, "History", ("Drama",), 2000),
+        2: Movie(2, "Target", ("Comedy",), 2001),
+        3: Movie(3, "Blocked", ("Horror",), 2002),
+    }
+    ratings = [
+        Rating(1, 1, 5, 1),
+        Rating(2, 1, 5, 1),
+        Rating(2, 2, 5, 2),
+    ]
+    initial = PreferenceState(liked_movie_ids={1})
+    expected = PreferenceState(liked_movie_ids={1}, excluded_genres={"Horror"})
+    cases = [
+        EvaluationCase(
+            case_id="multi-001",
+            user_id=1,
+            turns=("I like drama", "Avoid horror"),
+            relevant_movie_ids={2},
+            initial_state=initial,
+            expected_preferences=expected,
+        )
+    ]
+    seen_states = []
+
+    def capture_filter(catalog, state):
+        seen_states.append(state)
+        return list(catalog)
+
+    monkeypatch.setattr("recagent_eval.ranker_selection.hard_filter", capture_filter)
+
+    metrics = evaluate_frozen_cases(
+        movies,
+        ratings,
+        cases,
+        ranker=HybridRanker(kind="itemcf"),
+        retrieval_top_k=10,
+        history_cap=10,
+    )
+
+    assert seen_states == [expected]
+    assert metrics["cases"] == 1
+    assert metrics["ranker_kind"] == "itemcf"
+    assert metrics["recall_at_10"] == 1.0

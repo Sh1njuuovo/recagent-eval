@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -27,12 +28,16 @@ from recagent_eval.dataset import download_movielens_1m
 from recagent_eval.models import PreferenceState
 from recagent_eval.provider import OpenAICompatibleProvider, RuleBasedProvider
 from recagent_eval.ranker_selection import (
+    RankerSelectionEvidence,
     build_ranker_ablation,
+    evaluate_frozen_cases,
     ranker_dataset_fingerprint,
+    validate_test_gate,
 )
 from recagent_eval.ranker_selection import (
     select_ranker as select_ranker_evidence,
 )
+from recagent_eval.ranking import HybridRanker
 from recagent_eval.runner import ExperimentConfig, run_experiment
 from recagent_eval.tuning import (
     build_retrieval_ablation,
@@ -252,6 +257,91 @@ def select_ranker_command(
         "Frozen test unlocked: selected "
         f"{selected_kind} with validation margin {evidence.margin:.6f}"
     )
+
+
+@app.command("evaluate-ranker")
+def evaluate_ranker(
+    config_path: Annotated[Path, typer.Option("--config")],
+    evidence_path: Annotated[Path, typer.Option("--evidence")],
+    cases_path: Annotated[Path, typer.Option("--cases")],
+    data_dir: Annotated[Path, typer.Option()] = Path("data/raw/ml-1m"),
+    output: Annotated[Path, typer.Option()] = Path(
+        "artifacts/runs/offline-ranker-test/metrics.json"
+    ),
+) -> None:
+    config = _validated_config(config_path)
+    try:
+        evidence = RankerSelectionEvidence.model_validate_json(
+            evidence_path.read_text()
+        )
+    except (OSError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    movies, ratings = _load_dataset(data_dir)
+    split = chronological_split(ratings)
+    dataset_fingerprint = ranker_dataset_fingerprint(
+        movies,
+        split,
+        max_users=evidence.max_users,
+        retrieval_top_k=config.retrieval_top_k,
+        history_cap=config.semantic_profile_history_cap,
+    )
+    parameters = _ranker_parameters(config)
+    try:
+        validate_test_gate(
+            evidence,
+            dataset_fingerprint=dataset_fingerprint,
+            retrieval_top_k=config.retrieval_top_k,
+            semantic_profile_history_cap=config.semantic_profile_history_cap,
+            ranker_kind=config.ranker_kind,
+            ranker_parameters=parameters,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    cases = load_cases(cases_path)
+    metrics = evaluate_frozen_cases(
+        movies,
+        split.train,
+        cases,
+        ranker=HybridRanker(
+            config.weights,
+            kind=config.ranker_kind,
+            rrf_k=config.rrf_k,
+        ),
+        retrieval_top_k=config.retrieval_top_k,
+        history_cap=config.semantic_profile_history_cap,
+    )
+    metrics.update(
+        {
+            "selection_margin": evidence.margin,
+            "selection_evidence_fingerprint": hashlib.sha256(
+                evidence_path.read_bytes()
+            ).hexdigest(),
+            "case_fingerprint": hashlib.sha256(
+                json.dumps(
+                    [case.model_dump(mode="json") for case in cases],
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ).encode()
+            ).hexdigest(),
+            "retrieval_top_k": config.retrieval_top_k,
+            "semantic_profile_history_cap": config.semantic_profile_history_cap,
+        }
+    )
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(
+        json.dumps(metrics, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    typer.echo(f"Frozen ranker test metrics written to {output}")
+
+
+def _ranker_parameters(config: ExperimentConfig) -> dict[str, object]:
+    if config.ranker_kind == "rrf":
+        return {"rrf_k": config.rrf_k}
+    if config.ranker_kind == "percentile_linear":
+        return {"weights": [config.weights[0], config.weights[1]]}
+    return {}
 
 
 @app.command("subset-cases")
