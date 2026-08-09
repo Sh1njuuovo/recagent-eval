@@ -141,3 +141,131 @@ def test_tune_updates_a_frozen_config_with_validation_weights(
     assert result.exit_code == 0, result.output
     assert json.loads(weights_output.read_text())["weights"] == [0.7, 0.3, 0.0]
     assert yaml.safe_load(config_output.read_text())["weights"] == [0.7, 0.3, 0.0]
+
+
+def _ranker_source_config(path) -> None:
+    path.write_text(
+        "\n".join(
+            [
+                "name: full",
+                "retrieval_top_k: 500",
+                "semantic_profile_history_cap: 50",
+                "enable_semantic_retrieval: true",
+                "required_retrieval_tools: [itemcf_retrieve, semantic_retrieve]",
+                "weights: [0.7, 0.3, 0.0]",
+            ]
+        )
+        + "\n"
+    )
+
+
+def test_select_ranker_writes_unlocked_evidence_and_config(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    rows = [
+        {
+            "kind": "itemcf",
+            "parameters": {},
+            "ndcg_at_10": 0.1,
+            "recall_at_10": 0.1,
+            "hit_rate_at_10": 0.1,
+            "users": 10,
+        },
+        {
+            "kind": "rrf",
+            "parameters": {"rrf_k": 30},
+            "ndcg_at_10": 0.2,
+            "recall_at_10": 0.2,
+            "hit_rate_at_10": 0.2,
+            "users": 10,
+        },
+    ]
+    monkeypatch.setattr("recagent_eval.cli._load_dataset", lambda path: ({}, []))
+    monkeypatch.setattr(
+        "recagent_eval.cli.build_ranker_ablation",
+        lambda *args, **kwargs: rows,
+    )
+    monkeypatch.setattr(
+        "recagent_eval.cli.ranker_dataset_fingerprint",
+        lambda *args, **kwargs: "abc",
+    )
+    source = tmp_path / "source.yaml"
+    _ranker_source_config(source)
+    evidence = tmp_path / "ablation.json"
+    config = tmp_path / "selected.yaml"
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "select-ranker",
+            "--config",
+            str(source),
+            "--evidence-output",
+            str(evidence),
+            "--config-output",
+            str(config),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(evidence.read_text())["test_unlocked"] is True
+    selected = yaml.safe_load(config.read_text())
+    assert selected["ranker"] == {"kind": "rrf", "rrf_k": 30}
+    assert selected["retrieval_top_k"] == 500
+    assert "Frozen test unlocked" in result.output
+
+
+def test_select_ranker_keeps_test_locked_without_improvement(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    rows = [
+        {
+            "kind": "itemcf",
+            "parameters": {},
+            "ndcg_at_10": 0.2,
+            "recall_at_10": 0.2,
+            "hit_rate_at_10": 0.2,
+            "users": 10,
+        },
+        {
+            "kind": "rrf",
+            "parameters": {"rrf_k": 30},
+            "ndcg_at_10": 0.1,
+            "recall_at_10": 0.1,
+            "hit_rate_at_10": 0.1,
+            "users": 10,
+        },
+    ]
+    monkeypatch.setattr("recagent_eval.cli._load_dataset", lambda path: ({}, []))
+    monkeypatch.setattr(
+        "recagent_eval.cli.build_ranker_ablation",
+        lambda *args, **kwargs: rows,
+    )
+    monkeypatch.setattr(
+        "recagent_eval.cli.ranker_dataset_fingerprint",
+        lambda *args, **kwargs: "abc",
+    )
+    source = tmp_path / "source.yaml"
+    _ranker_source_config(source)
+    evidence = tmp_path / "ablation.json"
+    config = tmp_path / "selected.yaml"
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "select-ranker",
+            "--config",
+            str(source),
+            "--evidence-output",
+            str(evidence),
+            "--config-output",
+            str(config),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(evidence.read_text())["test_unlocked"] is False
+    assert not config.exists()
+    assert "Frozen test remains locked" in result.output

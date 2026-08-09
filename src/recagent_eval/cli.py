@@ -26,6 +26,13 @@ from recagent_eval.data import (
 from recagent_eval.dataset import download_movielens_1m
 from recagent_eval.models import PreferenceState
 from recagent_eval.provider import OpenAICompatibleProvider, RuleBasedProvider
+from recagent_eval.ranker_selection import (
+    build_ranker_ablation,
+    ranker_dataset_fingerprint,
+)
+from recagent_eval.ranker_selection import (
+    select_ranker as select_ranker_evidence,
+)
 from recagent_eval.runner import ExperimentConfig, run_experiment
 from recagent_eval.tuning import (
     build_retrieval_ablation,
@@ -168,6 +175,82 @@ def select_retrieval(
         "Selected retrieval_top_k="
         f"{selection['retrieval_top_k']}, semantic_profile_history_cap="
         f"{selection['semantic_profile_history_cap']}"
+    )
+
+
+@app.command("select-ranker")
+def select_ranker_command(
+    config_path: Annotated[Path, typer.Option("--config")],
+    data_dir: Annotated[Path, typer.Option()] = Path("data/raw/ml-1m"),
+    evidence_output: Annotated[Path, typer.Option()] = Path(
+        "artifacts/ranker_ablation.json"
+    ),
+    config_output: Annotated[Path, typer.Option()] = Path(
+        "configs/full_ranker_selected.yaml"
+    ),
+    max_users: int = 500,
+) -> None:
+    config = _validated_config(config_path)
+    if not config.enable_semantic_retrieval or config.required_retrieval_tools != (
+        "itemcf_retrieve",
+        "semantic_retrieve",
+    ):
+        raise typer.BadParameter(
+            "ranker selection requires enabled ItemCF and semantic retrieval routes"
+        )
+    movies, ratings = _load_dataset(data_dir)
+    split = chronological_split(ratings)
+    rows = build_ranker_ablation(
+        movies,
+        split,
+        max_users=max_users,
+        retrieval_top_k=config.retrieval_top_k,
+        history_cap=config.semantic_profile_history_cap,
+    )
+    fingerprint = ranker_dataset_fingerprint(
+        movies,
+        split,
+        max_users=max_users,
+        retrieval_top_k=config.retrieval_top_k,
+        history_cap=config.semantic_profile_history_cap,
+    )
+    evidence = select_ranker_evidence(
+        rows,
+        dataset_fingerprint=fingerprint,
+        retrieval_top_k=config.retrieval_top_k,
+        history_cap=config.semantic_profile_history_cap,
+        max_users=max_users,
+    )
+    evidence_output.parent.mkdir(parents=True, exist_ok=True)
+    evidence_output.write_text(
+        json.dumps(evidence.model_dump(mode="json"), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    if not evidence.test_unlocked:
+        typer.echo(
+            "Frozen test remains locked: selected validation NDCG@10="
+            f"{evidence.selected_ndcg_at_10:.6f}, ItemCF="
+            f"{evidence.itemcf_ndcg_at_10:.6f}"
+        )
+        return
+
+    payload = yaml.safe_load(config_path.read_text()) or {}
+    selected_kind = str(evidence.selected["kind"])
+    parameters = dict(evidence.selected.get("parameters", {}))
+    ranker_payload: dict[str, object] = {"kind": selected_kind}
+    if selected_kind == "rrf":
+        ranker_payload["rrf_k"] = int(parameters["rrf_k"])
+    elif selected_kind == "percentile_linear":
+        ranker_payload["weights"] = list(parameters["weights"])
+    payload["ranker"] = ranker_payload
+    config_output.parent.mkdir(parents=True, exist_ok=True)
+    config_output.write_text(
+        yaml.safe_dump(payload, sort_keys=False),
+        encoding="utf-8",
+    )
+    typer.echo(
+        "Frozen test unlocked: selected "
+        f"{selected_kind} with validation margin {evidence.margin:.6f}"
     )
 
 
