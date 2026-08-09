@@ -1,7 +1,19 @@
 # RecAgent-Eval
 
-An evaluation-first conversational movie recommendation agent for the
-search/recommendation × LLM setting.
+![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB)
+![License](https://img.shields.io/badge/License-MIT-green)
+![Tests](https://img.shields.io/badge/tests-79%20passed-brightgreen)
+![Coverage](https://img.shields.io/badge/coverage-90%25-brightgreen)
+
+An evaluation-first conversational movie recommendation Agent that separates
+LLM preference understanding from deterministic filtering, retrieval, ranking,
+and frozen-test evaluation.
+
+**Verified evidence:** structured Agent reliability and hard-constraint metrics
+reach 100%; hybrid retrieval raises candidate union recall from 78% to 88%, but
+the retained full-system NDCG@10 is 0.0149. A validation-only RRF/percentile
+follow-up did not pass the preregistered ItemCF gate, so the frozen test was not
+rerun.
 
 RecAgent-Eval makes one separation explicit:
 
@@ -12,6 +24,14 @@ RecAgent-Eval makes one separation explicit:
 The project is independently implemented and inspired by the tool-oriented
 workflow of [Microsoft RecAI / InteRecAgent](https://github.com/microsoft/RecAI/tree/main/InteRecAgent).
 See [NOTICE](NOTICE) for attribution.
+
+## Start here
+
+- [Formal DeepSeek evaluation](reports/experiments/deepseek-constraint-aware.md)
+- [Offline ranker gate](reports/experiments/offline-ranker-selection.md)
+- [Ten-minute demo script](docs/demo-script.md)
+- [Core code walkthrough](docs/core-code-walkthrough.md)
+- [Interview pack](reports/interview-pack/interview-pack.md)
 
 ## Architecture
 
