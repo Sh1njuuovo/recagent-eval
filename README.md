@@ -63,6 +63,12 @@ uv run recagent-eval tune \
   --config configs/full_constraint_aware.yaml \
   --config-output configs/full_constraint_aware.yaml \
   --output artifacts/tuned_weights_constraint_aware.json
+uv run recagent-eval select-ranker \
+  --config configs/full_constraint_aware.yaml \
+  --data-dir data/raw/ml-1m \
+  --evidence-output artifacts/ranker_ablation.json \
+  --config-output configs/full_ranker_selected.yaml \
+  --max-users 500
 uv run recagent-eval evaluate \
   --config configs/full_constraint_aware.yaml \
   --cases cases/fixed_cases.json \
@@ -125,6 +131,22 @@ for validation ablations, fingerprints, latency, token usage, and failure
 analysis. A
 [machine-readable summary](reports/experiments/deepseek-constraint-aware.json)
 contains the same frozen aggregate metrics.
+
+### Offline ranker gate
+
+The validation-only follow-up compared ItemCF, the existing min-max control,
+four RRF settings, and eleven percentile-fusion weights on identical Top-500
+candidates. RRF and genuine two-route percentile fusion did not strictly beat
+ItemCF validation NDCG@10, so the frozen test remained locked and no additional
+DeepSeek run was made. The existing min-max row remained an informative control
+only because its previously selected formal hybrid had already failed on the
+frozen test.
+
+See the
+[offline ranker selection report](reports/experiments/offline-ranker-selection.md)
+and [machine-readable ablation](artifacts/ranker_ablation.json). The CLI writes
+`configs/full_ranker_selected.yaml` only when a newly eligible ranker passes the
+strict validation gate.
 
 The [archived first DeepSeek report](reports/experiments/deepseek-formal.md)
 documents the invalid-label and policy-drift failures that motivated the revised
