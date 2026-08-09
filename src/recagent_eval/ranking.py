@@ -47,10 +47,12 @@ class HybridRanker:
             candidate_ids = set(itemcf_scores) | set(semantic_scores)
             cf_contributions = percentile_scores(itemcf_scores)
             semantic_contributions = percentile_scores(semantic_scores)
-        else:
+        elif self.kind == "minmax_linear":
             candidate_ids = set(itemcf_scores) | set(semantic_scores)
             cf_contributions = normalize_scores(itemcf_scores)
             semantic_contributions = normalize_scores(semantic_scores)
+        else:
+            raise ValueError(f"unknown ranker kind: {self.kind}")
         preference_scores = {
             movie_id: _preference_affinity(movies[movie_id], state)
             for movie_id in candidate_ids

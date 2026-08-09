@@ -1,4 +1,5 @@
 {
+  "case_fingerprint": "bc2f622cd9311bca8509a46f0ee516355bc64db7d91f809273a35d97ce304d88",
   "dataset_fingerprint": "4c7b82853d31f6518ac2c6abe094ff5cd29d5e956405a7e32afec5197a22bc31",
   "itemcf_ndcg_at_10": 0.033388484023395205,
   "margin": 0.0,
@@ -9,7 +10,7 @@
       "hit_rate_at_10": 0.064,
       "itemcf_candidate_recall": 0.696,
       "kind": "itemcf",
-      "latency_ms_per_user": 0.9674637499265373,
+      "latency_ms_per_user": 0.9426952498033643,
       "ndcg_at_10": 0.033388484023395205,
       "parameters": {},
       "recall_at_10": 0.064,
@@ -21,7 +22,7 @@
       "hit_rate_at_10": 0.072,
       "itemcf_candidate_recall": 0.696,
       "kind": "minmax_linear",
-      "latency_ms_per_user": 1.9379772499669343,
+      "latency_ms_per_user": 1.8991476679220796,
       "ndcg_at_10": 0.03660049211342688,
       "parameters": {
         "weights": [
@@ -38,7 +39,7 @@
       "hit_rate_at_10": 0.046,
       "itemcf_candidate_recall": 0.696,
       "kind": "rrf",
-      "latency_ms_per_user": 1.964684581849724,
+      "latency_ms_per_user": 1.9523422501515597,
       "ndcg_at_10": 0.027274704789576564,
       "parameters": {
         "rrf_k": 10
@@ -52,7 +53,7 @@
       "hit_rate_at_10": 0.056,
       "itemcf_candidate_recall": 0.696,
       "kind": "rrf",
-      "latency_ms_per_user": 1.985345584107563,
+      "latency_ms_per_user": 1.9942520819604397,
       "ndcg_at_10": 0.031144835669157024,
       "parameters": {
         "rrf_k": 30
@@ -66,7 +67,7 @@
       "hit_rate_at_10": 0.06,
       "itemcf_candidate_recall": 0.696,
       "kind": "rrf",
-      "latency_ms_per_user": 2.017590249888599,
+      "latency_ms_per_user": 1.9427716659847647,
       "ndcg_at_10": 0.031147537507962297,
       "parameters": {
         "rrf_k": 60
@@ -80,7 +81,7 @@
       "hit_rate_at_10": 0.054,
       "itemcf_candidate_recall": 0.696,
       "kind": "rrf",
-      "latency_ms_per_user": 2.0145388341043144,
+      "latency_ms_per_user": 1.9473170000128448,
       "ndcg_at_10": 0.02913781439892307,
       "parameters": {
         "rrf_k": 100
@@ -94,7 +95,7 @@
       "hit_rate_at_10": 0.064,
       "itemcf_candidate_recall": 0.696,
       "kind": "percentile_linear",
-      "latency_ms_per_user": 2.0547400820069015,
+      "latency_ms_per_user": 2.0440154999960214,
       "ndcg_at_10": 0.033388484023395205,
       "parameters": {
         "weights": [
@@ -111,7 +112,7 @@
       "hit_rate_at_10": 0.058,
       "itemcf_candidate_recall": 0.696,
       "kind": "percentile_linear",
-      "latency_ms_per_user": 2.1846335839945823,
+      "latency_ms_per_user": 2.1734832499641925,
       "ndcg_at_10": 0.029542322265339968,
       "parameters": {
         "weights": [
@@ -128,7 +129,7 @@
       "hit_rate_at_10": 0.066,
       "itemcf_candidate_recall": 0.696,
       "kind": "percentile_linear",
-      "latency_ms_per_user": 2.0539695841725916,
+      "latency_ms_per_user": 2.033781500067562,
       "ndcg_at_10": 0.0323924180406616,
       "parameters": {
         "weights": [
@@ -145,7 +146,7 @@
       "hit_rate_at_10": 0.06,
       "itemcf_candidate_recall": 0.696,
       "kind": "percentile_linear",
-      "latency_ms_per_user": 2.0725269159302115,
+      "latency_ms_per_user": 2.056293332017958,
       "ndcg_at_10": 0.028361122355685622,
       "parameters": {
         "weights": [
@@ -162,7 +163,7 @@
       "hit_rate_at_10": 0.06,
       "itemcf_candidate_recall": 0.696,
       "kind": "percentile_linear",
-      "latency_ms_per_user": 2.096266250126064,
+      "latency_ms_per_user": 2.0819064180832356,
       "ndcg_at_10": 0.029485396282811722,
       "parameters": {
         "weights": [
@@ -179,7 +180,7 @@
       "hit_rate_at_10": 0.06,
       "itemcf_candidate_recall": 0.696,
       "kind": "percentile_linear",
-      "latency_ms_per_user": 2.0772989159449935,
+      "latency_ms_per_user": 2.0871329999063164,
       "ndcg_at_10": 0.02971740069426919,
       "parameters": {
         "weights": [
@@ -196,7 +197,7 @@
       "hit_rate_at_10": 0.054,
       "itemcf_candidate_recall": 0.696,
       "kind": "percentile_linear",
-      "latency_ms_per_user": 2.103835165966302,
+      "latency_ms_per_user": 2.0788209999445826,
       "ndcg_at_10": 0.02831870353427329,
       "parameters": {
         "weights": [
@@ -213,7 +214,7 @@
       "hit_rate_at_10": 0.052,
       "itemcf_candidate_recall": 0.696,
       "kind": "percentile_linear",
-      "latency_ms_per_user": 2.0597129999659956,
+      "latency_ms_per_user": 2.0860030001495034,
       "ndcg_at_10": 0.027458023500493638,
       "parameters": {
         "weights": [
@@ -230,7 +231,7 @@
       "hit_rate_at_10": 0.05,
       "itemcf_candidate_recall": 0.696,
       "kind": "percentile_linear",
-      "latency_ms_per_user": 2.082315166015178,
+      "latency_ms_per_user": 2.1060872501693666,
       "ndcg_at_10": 0.027578939052950564,
       "parameters": {
         "weights": [
@@ -247,7 +248,7 @@
       "hit_rate_at_10": 0.052,
       "itemcf_candidate_recall": 0.696,
       "kind": "percentile_linear",
-      "latency_ms_per_user": 2.082394665805623,
+      "latency_ms_per_user": 2.100897500058636,
       "ndcg_at_10": 0.02668608345967955,
       "parameters": {
         "weights": [
@@ -264,7 +265,7 @@
       "hit_rate_at_10": 0.028,
       "itemcf_candidate_recall": 0.696,
       "kind": "percentile_linear",
-      "latency_ms_per_user": 2.0562261659651995,
+      "latency_ms_per_user": 2.0818958340678364,
       "ndcg_at_10": 0.012204515814613275,
       "parameters": {
         "weights": [
@@ -282,7 +283,7 @@
     "hit_rate_at_10": 0.064,
     "itemcf_candidate_recall": 0.696,
     "kind": "itemcf",
-    "latency_ms_per_user": 0.9674637499265373,
+    "latency_ms_per_user": 0.9426952498033643,
     "ndcg_at_10": 0.033388484023395205,
     "parameters": {},
     "recall_at_10": 0.064,

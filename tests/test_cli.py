@@ -1,3 +1,4 @@
+import hashlib
 import json
 
 import yaml
@@ -273,7 +274,7 @@ def test_select_ranker_keeps_test_locked_without_improvement(
 
 def _selection_evidence(path, *, unlocked: bool) -> None:
     selected_ndcg = 0.21 if unlocked else 0.19
-    selected = {
+    rrf = {
         "kind": "rrf",
         "parameters": {"rrf_k": 30},
         "ndcg_at_10": selected_ndcg,
@@ -281,24 +282,26 @@ def _selection_evidence(path, *, unlocked: bool) -> None:
         "hit_rate_at_10": 0.2,
         "users": 10,
     }
+    itemcf = {
+        "kind": "itemcf",
+        "parameters": {},
+        "ndcg_at_10": 0.2,
+        "recall_at_10": 0.2,
+        "hit_rate_at_10": 0.2,
+        "users": 10,
+    }
+    selected = rrf if unlocked else itemcf
     payload = {
-        "rows": [
-            {
-                "kind": "itemcf",
-                "parameters": {},
-                "ndcg_at_10": 0.2,
-                "recall_at_10": 0.2,
-                "hit_rate_at_10": 0.2,
-                "users": 10,
-            },
-            selected,
-        ],
+        "rows": [itemcf, rrf],
         "selected": selected,
         "itemcf_ndcg_at_10": 0.2,
-        "selected_ndcg_at_10": selected_ndcg,
-        "margin": selected_ndcg - 0.2,
+        "selected_ndcg_at_10": selected["ndcg_at_10"],
+        "margin": selected["ndcg_at_10"] - 0.2,
         "test_unlocked": unlocked,
         "dataset_fingerprint": "abc",
+        "case_fingerprint": hashlib.sha256(
+            json.dumps([], ensure_ascii=False, sort_keys=True).encode()
+        ).hexdigest(),
         "retrieval_top_k": 500,
         "semantic_profile_history_cap": 50,
         "max_users": 10,
@@ -387,3 +390,57 @@ def test_evaluate_ranker_writes_unlocked_metrics(
     metrics = json.loads(output.read_text())
     assert metrics["ranker_kind"] == "rrf"
     assert metrics["selection_evidence_fingerprint"]
+
+
+def test_evaluate_ranker_rejects_unregistered_case_fingerprint(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    config = tmp_path / "selected.yaml"
+    _ranker_source_config(config)
+    with config.open("a") as stream:
+        stream.write("ranker:\n  kind: rrf\n  rrf_k: 30\n")
+    evidence = tmp_path / "unlocked.json"
+    _selection_evidence(evidence, unlocked=True)
+    cases = tmp_path / "changed-cases.json"
+    cases.write_text(
+        json.dumps(
+            [
+                {
+                    "case_id": "changed",
+                    "user_id": 1,
+                    "turns": ["recommend"],
+                    "relevant_movie_ids": [1],
+                }
+            ]
+        )
+    )
+    output = tmp_path / "result" / "metrics.json"
+    monkeypatch.setattr("recagent_eval.cli._load_dataset", lambda path: ({}, []))
+    monkeypatch.setattr(
+        "recagent_eval.cli.ranker_dataset_fingerprint",
+        lambda *args, **kwargs: "abc",
+    )
+    monkeypatch.setattr(
+        "recagent_eval.cli.evaluate_frozen_cases",
+        lambda *args, **kwargs: {"cases": 1, "ranker_kind": "rrf"},
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "evaluate-ranker",
+            "--config",
+            str(config),
+            "--evidence",
+            str(evidence),
+            "--cases",
+            str(cases),
+            "--output",
+            str(output),
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "case_fingerprint" in result.output
+    assert not output.exists()

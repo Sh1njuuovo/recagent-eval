@@ -171,13 +171,13 @@ def run_experiment(
         "movie_count": len(movies),
         "rating_count": len(ratings),
         "case_count": len(cases),
-        "case_fingerprint": _case_fingerprint(cases),
+        "case_fingerprint": case_fingerprint(cases),
     }
     _write_json(output_dir / "run_manifest.json", manifest)
     return metrics
 
 
-def _case_fingerprint(cases: list[EvaluationCase]) -> str:
+def case_fingerprint(cases: list[EvaluationCase]) -> str:
     canonical = json.dumps(
         canonical_case_payload(cases),
         ensure_ascii=False,

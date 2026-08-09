@@ -12,6 +12,8 @@ validation NDCG@10.
 - Semantic profile history cap: 50
 - Data/config fingerprint:
   `4c7b82853d31f6518ac2c6abe094ff5cd29d5e956405a7e32afec5197a22bc31`
+- Preregistered formal-case fingerprint:
+  `bc2f622cd9311bca8509a46f0ee516355bc64db7d91f809273a35d97ce304d88`
 - Selection metric: validation NDCG@10, then Recall@10
 - Gate: strict improvement over ItemCF by more than `1e-12`
 - Frozen-case evaluation: not run

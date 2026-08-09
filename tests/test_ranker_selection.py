@@ -34,6 +34,7 @@ def test_tie_with_itemcf_never_unlocks_test() -> None:
             _row("rrf", 0.2, rrf_k=30),
         ],
         dataset_fingerprint="abc",
+        case_fingerprint="cases",
         retrieval_top_k=500,
         history_cap=50,
         max_users=10,
@@ -52,6 +53,7 @@ def test_strict_improvement_unlocks_exact_selected_ranker() -> None:
             _row("percentile_linear", 0.205, weights=[0.8, 0.2]),
         ],
         dataset_fingerprint="abc",
+        case_fingerprint="cases",
         retrieval_top_k=500,
         history_cap=50,
         max_users=10,
@@ -70,6 +72,7 @@ def test_minmax_control_cannot_unlock_test() -> None:
             _row("rrf", 0.19, rrf_k=30),
         ],
         dataset_fingerprint="abc",
+        case_fingerprint="cases",
         retrieval_top_k=500,
         history_cap=50,
         max_users=10,
@@ -89,6 +92,7 @@ def test_gate_reports_all_evidence_mismatches() -> None:
             "margin": 0.01,
             "test_unlocked": True,
             "dataset_fingerprint": "abc",
+            "case_fingerprint": "cases",
             "retrieval_top_k": 500,
             "semantic_profile_history_cap": 50,
             "max_users": 10,
@@ -99,7 +103,37 @@ def test_gate_reports_all_evidence_mismatches() -> None:
         validate_test_gate(
             evidence,
             dataset_fingerprint="different",
+            case_fingerprint="cases",
             retrieval_top_k=200,
+            semantic_profile_history_cap=50,
+            ranker_kind="rrf",
+            ranker_parameters={"rrf_k": 30},
+        )
+
+
+def test_gate_recomputes_and_rejects_contradictory_evidence() -> None:
+    evidence = RankerSelectionEvidence.model_validate(
+        {
+            "rows": [_row("itemcf", 0.2), _row("rrf", 0.19, rrf_k=30)],
+            "selected": _row("rrf", 0.19, rrf_k=30),
+            "itemcf_ndcg_at_10": 0.2,
+            "selected_ndcg_at_10": 0.19,
+            "margin": -0.01,
+            "test_unlocked": True,
+            "dataset_fingerprint": "abc",
+            "case_fingerprint": "cases",
+            "retrieval_top_k": 500,
+            "semantic_profile_history_cap": 50,
+            "max_users": 10,
+        }
+    )
+
+    with pytest.raises(ValueError, match="inconsistent"):
+        validate_test_gate(
+            evidence,
+            dataset_fingerprint="abc",
+            case_fingerprint="cases",
+            retrieval_top_k=500,
             semantic_profile_history_cap=50,
             ranker_kind="rrf",
             ranker_parameters={"rrf_k": 30},
@@ -159,6 +193,43 @@ def test_retrieval_ablation_has_all_rankers_and_stable_fingerprint() -> None:
     assert all(row["users"] == 1 for row in rows)
     assert all(0.0 <= row["ndcg_at_10"] <= 1.0 for row in rows)
     assert fingerprint == second_fingerprint
+
+
+def test_repeated_ablation_has_deterministic_ranking_metrics() -> None:
+    movies = {
+        movie_id: Movie(movie_id, f"Movie {movie_id}", ("Drama",), 2000)
+        for movie_id in range(1, 5)
+    }
+    split = chronological_split(
+        [Rating(1, movie_id, 5, movie_id) for movie_id in range(1, 5)]
+    )
+
+    first = build_ranker_ablation(
+        movies,
+        split,
+        rrf_ks=(10,),
+        weight_step=1.0,
+        max_users=1,
+        retrieval_top_k=2,
+        history_cap=1,
+    )
+    second = build_ranker_ablation(
+        movies,
+        split,
+        rrf_ks=(10,),
+        weight_step=1.0,
+        max_users=1,
+        retrieval_top_k=2,
+        history_cap=1,
+    )
+
+    def deterministic_fields(rows):
+        return [
+            {key: value for key, value in row.items() if key != "latency_ms_per_user"}
+            for row in rows
+        ]
+
+    assert deterministic_fields(first) == deterministic_fields(second)
 
 
 def test_frozen_case_evaluation_uses_expected_multi_turn_preferences(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import time
 from collections import Counter, defaultdict
 from dataclasses import dataclass
@@ -36,6 +37,7 @@ class RankerSelectionEvidence(BaseModel):
     margin: float
     test_unlocked: bool
     dataset_fingerprint: str
+    case_fingerprint: str
     retrieval_top_k: int
     semantic_profile_history_cap: int
     max_users: int
@@ -93,6 +95,7 @@ def select_ranker(
     rows: list[dict[str, Any]],
     *,
     dataset_fingerprint: str,
+    case_fingerprint: str,
     retrieval_top_k: int,
     history_cap: int,
     max_users: int,
@@ -127,6 +130,7 @@ def select_ranker(
         margin=margin,
         test_unlocked=unlocked,
         dataset_fingerprint=dataset_fingerprint,
+        case_fingerprint=case_fingerprint,
         retrieval_top_k=retrieval_top_k,
         semantic_profile_history_cap=history_cap,
         max_users=max_users,
@@ -137,16 +141,45 @@ def validate_test_gate(
     evidence: RankerSelectionEvidence,
     *,
     dataset_fingerprint: str,
+    case_fingerprint: str,
     retrieval_top_k: int,
     semantic_profile_history_cap: int,
     ranker_kind: RankerKind,
     ranker_parameters: dict[str, Any],
 ) -> None:
+    try:
+        derived = select_ranker(
+            evidence.rows,
+            dataset_fingerprint=evidence.dataset_fingerprint,
+            case_fingerprint=evidence.case_fingerprint,
+            retrieval_top_k=evidence.retrieval_top_k,
+            history_cap=evidence.semantic_profile_history_cap,
+            max_users=evidence.max_users,
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(f"ranker selection evidence is inconsistent: {exc}") from exc
+    invariant_fields = (
+        "selected",
+        "itemcf_ndcg_at_10",
+        "selected_ndcg_at_10",
+        "margin",
+        "test_unlocked",
+    )
+    inconsistent = [
+        name
+        for name in invariant_fields
+        if not _invariant_equal(getattr(evidence, name), getattr(derived, name))
+    ]
+    if inconsistent:
+        raise ValueError(
+            "ranker selection evidence is inconsistent: " + ", ".join(inconsistent)
+        )
     if not evidence.test_unlocked:
         raise ValueError("frozen test is locked: validation did not beat ItemCF")
     expected_parameters = evidence.selected.get("parameters", {})
     comparisons = [
         ("dataset_fingerprint", evidence.dataset_fingerprint, dataset_fingerprint),
+        ("case_fingerprint", evidence.case_fingerprint, case_fingerprint),
         ("retrieval_top_k", evidence.retrieval_top_k, retrieval_top_k),
         (
             "semantic_profile_history_cap",
@@ -408,3 +441,9 @@ def _evaluate_ranker(
 
 def _mean(values: list[float]) -> float:
     return sum(values) / len(values) if values else 0.0
+
+
+def _invariant_equal(left: object, right: object) -> bool:
+    if isinstance(left, float) and isinstance(right, float):
+        return math.isclose(left, right, abs_tol=1e-12)
+    return left == right

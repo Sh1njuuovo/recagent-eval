@@ -30,6 +30,8 @@ def load_experiment_config(path: Path) -> ExperimentConfig:
         raise ValueError("ranker.rrf_k must be positive")
     if "weights" in ranker_payload:
         route_weights = tuple(float(value) for value in ranker_payload["weights"])
+        if any(value < 0 for value in route_weights):
+            raise ValueError("ranker.weights must be non-negative")
         if len(route_weights) != 2 or not math.isclose(
             sum(route_weights), 1.0, abs_tol=1e-8
         ):

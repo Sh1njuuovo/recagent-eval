@@ -160,11 +160,12 @@ uv run pytest
 uv run ruff check .
 ```
 
-The 54-test suite covers schemas, memory updates, invalid plans, one-shot repair,
+The 79-test suite covers schemas, memory updates, invalid plans, one-shot repair,
 provider retries, chronological splitting, case-label preflight, frozen
 retrieval policy, hard constraints, route-level diagnostics, retrieval
 selection, ranking, weight tuning, metrics, CLI smoke tests, scripts, and
-deterministic manifests. Current line coverage is 89%.
+deterministic manifests, rank-fusion calibration, evidence invariants, and the
+frozen-case gate. Current line coverage is 90%.
 
 - Upstream audit: [reports/audit/overview.md](reports/audit/overview.md)
 - Candidate ranking: [reports/ranking/candidate_score.md](reports/ranking/candidate_score.md)

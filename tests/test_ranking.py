@@ -99,3 +99,13 @@ def test_ranker_rejects_non_finite_route_scores() -> None:
             semantic_scores={},
             state=PreferenceState(),
         )
+
+
+def test_ranker_rejects_unknown_kind() -> None:
+    with pytest.raises(ValueError, match="unknown ranker kind"):
+        HybridRanker(kind="unknown").rank(  # type: ignore[arg-type]
+            MOVIES,
+            itemcf_scores={1: 1.0},
+            semantic_scores={},
+            state=PreferenceState(),
+        )

@@ -38,7 +38,7 @@ from recagent_eval.ranker_selection import (
     select_ranker as select_ranker_evidence,
 )
 from recagent_eval.ranking import HybridRanker
-from recagent_eval.runner import ExperimentConfig, run_experiment
+from recagent_eval.runner import ExperimentConfig, case_fingerprint, run_experiment
 from recagent_eval.tuning import (
     build_retrieval_ablation,
     select_retrieval_parameters,
@@ -186,6 +186,9 @@ def select_retrieval(
 @app.command("select-ranker")
 def select_ranker_command(
     config_path: Annotated[Path, typer.Option("--config")],
+    cases_path: Annotated[Path, typer.Option("--cases")] = Path(
+        "cases/fixed_cases.json"
+    ),
     data_dir: Annotated[Path, typer.Option()] = Path("data/raw/ml-1m"),
     evidence_output: Annotated[Path, typer.Option()] = Path(
         "artifacts/ranker_ablation.json"
@@ -219,9 +222,11 @@ def select_ranker_command(
         retrieval_top_k=config.retrieval_top_k,
         history_cap=config.semantic_profile_history_cap,
     )
+    fixed_case_fingerprint = case_fingerprint(load_cases(cases_path))
     evidence = select_ranker_evidence(
         rows,
         dataset_fingerprint=fingerprint,
+        case_fingerprint=fixed_case_fingerprint,
         retrieval_top_k=config.retrieval_top_k,
         history_cap=config.semantic_profile_history_cap,
         max_users=max_users,
@@ -286,10 +291,13 @@ def evaluate_ranker(
         history_cap=config.semantic_profile_history_cap,
     )
     parameters = _ranker_parameters(config)
+    cases = load_cases(cases_path)
+    fixed_case_fingerprint = case_fingerprint(cases)
     try:
         validate_test_gate(
             evidence,
             dataset_fingerprint=dataset_fingerprint,
+            case_fingerprint=fixed_case_fingerprint,
             retrieval_top_k=config.retrieval_top_k,
             semantic_profile_history_cap=config.semantic_profile_history_cap,
             ranker_kind=config.ranker_kind,
@@ -298,7 +306,6 @@ def evaluate_ranker(
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
 
-    cases = load_cases(cases_path)
     metrics = evaluate_frozen_cases(
         movies,
         split.train,
@@ -317,13 +324,7 @@ def evaluate_ranker(
             "selection_evidence_fingerprint": hashlib.sha256(
                 evidence_path.read_bytes()
             ).hexdigest(),
-            "case_fingerprint": hashlib.sha256(
-                json.dumps(
-                    [case.model_dump(mode="json") for case in cases],
-                    ensure_ascii=False,
-                    sort_keys=True,
-                ).encode()
-            ).hexdigest(),
+            "case_fingerprint": fixed_case_fingerprint,
             "retrieval_top_k": config.retrieval_top_k,
             "semantic_profile_history_cap": config.semantic_profile_history_cap,
         }

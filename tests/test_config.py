@@ -35,6 +35,10 @@ def test_nested_rrf_config_is_validated(tmp_path: Path) -> None:
             "ranker:\n  kind: percentile_linear\n  weights: [0.2, 0.2]\n",
             "sum to 1",
         ),
+        (
+            "ranker:\n  kind: percentile_linear\n  weights: [2.0, -1.0]\n",
+            "non-negative",
+        ),
     ],
 )
 def test_invalid_nested_ranker_is_rejected(
