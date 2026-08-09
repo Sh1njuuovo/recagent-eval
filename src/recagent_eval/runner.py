@@ -22,7 +22,7 @@ from recagent_eval.evaluation import (
 )
 from recagent_eval.models import ToolName
 from recagent_eval.provider import LLMProvider
-from recagent_eval.ranking import HybridRanker
+from recagent_eval.ranking import HybridRanker, RankerKind
 from recagent_eval.retrieval import ItemCFRetriever, TfidfSemanticRetriever
 
 
@@ -30,6 +30,8 @@ from recagent_eval.retrieval import ItemCFRetriever, TfidfSemanticRetriever
 class ExperimentConfig:
     name: str
     weights: tuple[float, float, float] = (0.5, 0.3, 0.2)
+    ranker_kind: RankerKind = "minmax_linear"
+    rrf_k: int = 60
     retrieval_top_k: int = 100
     enable_memory: bool = True
     enable_semantic_retrieval: bool = True
@@ -151,6 +153,11 @@ def run_experiment(
         "platform": platform.platform(),
         "seed": config.seed,
         "weights": config.weights,
+        "ranker": {
+            "kind": config.ranker_kind,
+            "rrf_k": config.rrf_k,
+            "weights": config.weights,
+        },
         "retrieval_top_k": config.retrieval_top_k,
         "enable_memory": config.enable_memory,
         "enable_semantic_retrieval": config.enable_semantic_retrieval,

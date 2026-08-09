@@ -85,7 +85,12 @@ def test_run_experiment_writes_reproducible_records_and_metrics(
     assert record["recommended_movie_ids"] == [2]
     assert metrics == saved_metrics
     assert metrics["hit_rate_at_10"] == 1.0
-    assert (tmp_path / "run_manifest.json").exists()
+    manifest = json.loads((tmp_path / "run_manifest.json").read_text())
+    assert manifest["ranker"] == {
+        "kind": "minmax_linear",
+        "rrf_k": 60,
+        "weights": [0.5, 0.3, 0.2],
+    }
 
 
 def test_case_fingerprint_payload_sorts_set_like_fields() -> None:

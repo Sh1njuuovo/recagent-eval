@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from itertools import product
+from typing import Literal
 
 from recagent_eval.data import Movie
 from recagent_eval.models import (
@@ -10,6 +11,8 @@ from recagent_eval.models import (
     RecommendedMovie,
     ScoreBreakdown,
 )
+
+RankerKind = Literal["itemcf", "minmax_linear", "rrf", "percentile_linear"]
 
 
 @dataclass(frozen=True)
