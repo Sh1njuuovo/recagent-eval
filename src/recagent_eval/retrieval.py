@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import math
 import os
 import platform
 import re
-import secrets
 import stat
 import tempfile
 import time
@@ -25,9 +25,15 @@ import numpy as np
 from recagent_eval.data import Movie, Rating
 from recagent_eval.models import PreferenceState
 
-# Compatibility hook for tests that simulate platforms without fcntl. Locking below
-# intentionally uses portable exclusive file creation instead.
-fcntl = None
+try:  # pragma: no cover - the alternate backend is exercised on Windows
+    import fcntl as _fcntl
+except ImportError:  # pragma: no cover - platform dependent
+    _fcntl = None
+
+try:  # pragma: no cover - the alternate backend is exercised on POSIX
+    import msvcrt as _msvcrt
+except ImportError:  # pragma: no cover - platform dependent
+    _msvcrt = None
 
 DEFAULT_DENSE_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 DENSE_CACHE_SCHEMA_VERSION = 3
@@ -502,93 +508,86 @@ def _embedding_checksum(embeddings: np.ndarray) -> str:
 @contextmanager
 def _cache_lock(cache_path: Path):
     lock_path = Path(f"{cache_path}.lock")
-    token = secrets.token_hex(32)
-    deadline = time.monotonic() + CACHE_LOCK_TIMEOUT_SECONDS
-    descriptor = -1
-    created_stat: os.stat_result | None = None
-    token_ready = False
-    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
-    while descriptor < 0:
+    flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(lock_path, flags, 0o600)
+    except OSError as exc:
+        raise ValueError("unsafe dense cache lock path") from exc
+    locked = False
+    backend: str | None = None
+    try:
+        opened_stat = os.fstat(descriptor)
         try:
-            descriptor = os.open(lock_path, flags, 0o600)
-        except FileExistsError as exc:
-            try:
-                existing_stat = os.lstat(lock_path)
-            except FileNotFoundError:
-                continue
-            if not stat.S_ISREG(existing_stat.st_mode):
-                raise ValueError("unsafe dense cache lock path") from exc
+            path_stat = os.lstat(lock_path)
+        except OSError as exc:
+            raise ValueError("unsafe dense cache lock path") from exc
+        if (
+            not stat.S_ISREG(opened_stat.st_mode)
+            or not stat.S_ISREG(path_stat.st_mode)
+            or (opened_stat.st_dev, opened_stat.st_ino) != (path_stat.st_dev, path_stat.st_ino)
+        ):
+            raise ValueError("unsafe dense cache lock path")
+        if _fcntl is not None:
+            backend = "fcntl"
+            _acquire_advisory_lock(descriptor, lock_path, backend)
+        elif _msvcrt is not None:
+            backend = "msvcrt"
+            _ensure_windows_lock_byte(descriptor, opened_stat)
+            _acquire_advisory_lock(descriptor, lock_path, backend)
+        else:
+            raise RuntimeError(
+                "no supported OS advisory lock backend is available "
+                "(requires fcntl on POSIX or msvcrt on Windows)"
+            )
+        locked = True
+        yield
+    finally:
+        if locked:
+            _release_advisory_lock(descriptor, backend)
+        os.close(descriptor)
+
+
+def _acquire_advisory_lock(descriptor: int, lock_path: Path, backend: str) -> None:
+    deadline = time.monotonic() + CACHE_LOCK_TIMEOUT_SECONDS
+    while True:
+        try:
+            if backend == "fcntl":
+                assert _fcntl is not None
+                _fcntl.flock(descriptor, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+            else:
+                assert _msvcrt is not None
+                os.lseek(descriptor, 0, os.SEEK_SET)
+                _msvcrt.locking(descriptor, _msvcrt.LK_NBLCK, 1)
+            return
+        except OSError as exc:
+            if exc.errno not in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}:
+                raise
             if time.monotonic() >= deadline:
                 raise TimeoutError(f"timed out waiting for dense cache lock {lock_path}") from exc
             time.sleep(CACHE_LOCK_POLL_SECONDS)
-        except OSError as exc:
-            raise ValueError("unsafe dense cache lock path") from exc
-    try:
-        created_stat = os.fstat(descriptor)
-        token_bytes = token.encode("ascii")
-        written = os.write(descriptor, token_bytes)
-        if written != len(token_bytes):
-            raise OSError("short write while creating dense cache lock")
-        os.fsync(descriptor)
-        token_ready = True
-        os.close(descriptor)
-        descriptor = -1
-        yield
-    finally:
-        if descriptor >= 0:
-            os.close(descriptor)
-        if created_stat is not None:
-            _release_cache_lock(
-                lock_path,
-                token if token_ready else None,
-                created_stat,
-            )
 
 
-def _release_cache_lock(
-    lock_path: Path,
-    token: str | None,
-    created_stat: os.stat_result,
-) -> None:
-    if token is None:
-        try:
-            path_stat = os.lstat(lock_path)
-            if (path_stat.st_dev, path_stat.st_ino) == (
-                created_stat.st_dev,
-                created_stat.st_ino,
-            ):
-                os.unlink(lock_path)
-        except OSError:
-            return
+def _ensure_windows_lock_byte(descriptor: int, opened_stat: os.stat_result) -> None:
+    if opened_stat.st_size:
         return
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    if os.write(descriptor, b"\0") != 1:
+        raise OSError("short write while initializing dense cache lock")
+    os.fsync(descriptor)
+
+
+def _release_advisory_lock(descriptor: int, backend: str | None) -> None:
     try:
-        descriptor = os.open(
-            lock_path,
-            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
-        )
+        if backend == "fcntl":
+            assert _fcntl is not None
+            _fcntl.flock(descriptor, _fcntl.LOCK_UN)
+        elif backend == "msvcrt":
+            assert _msvcrt is not None
+            os.lseek(descriptor, 0, os.SEEK_SET)
+            _msvcrt.locking(descriptor, _msvcrt.LK_UNLCK, 1)
     except OSError:
-        return
-    try:
-        current_stat = os.fstat(descriptor)
-        contents = os.read(descriptor, 256).decode("ascii", errors="ignore")
-    finally:
-        os.close(descriptor)
-    if (
-        not stat.S_ISREG(current_stat.st_mode)
-        or (current_stat.st_dev, current_stat.st_ino)
-        != (created_stat.st_dev, created_stat.st_ino)
-        or contents != token
-    ):
-        return
-    try:
-        path_stat = os.lstat(lock_path)
-        if (path_stat.st_dev, path_stat.st_ino) == (
-            created_stat.st_dev,
-            created_stat.st_ino,
-        ):
-            os.unlink(lock_path)
-    except OSError:
-        return
+        # Closing the descriptor below is the final, crash-safe release mechanism.
+        pass
 
 
 def _fsync_directory(directory: Path) -> None:

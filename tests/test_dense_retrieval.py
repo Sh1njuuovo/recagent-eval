@@ -413,17 +413,53 @@ def test_dense_cache_cleans_first_temp_if_second_creation_fails(tmp_path, monkey
     assert list(tmp_path.glob(".*.tmp")) == []
 
 
-def test_portable_lock_cleans_owned_file_if_token_write_fails(tmp_path, monkeypatch) -> None:
+def test_advisory_lock_reuses_preexisting_stale_regular_file(tmp_path) -> None:
     cache = tmp_path / "movies.npz"
     retriever = DenseSemanticRetriever.fit(MOVIES, encoder=FakeEncoder(), model_name="fake")
-    monkeypatch.setattr(
-        "recagent_eval.retrieval.os.write",
-        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("token write failed")),
-    )
+    lock_path = Path(f"{cache}.lock")
+    lock_path.write_text("left behind by a crashed process", encoding="utf-8")
 
-    with pytest.raises(OSError, match="token write failed"):
-        retriever.save(cache)
-    assert not Path(f"{cache}.lock").exists()
+    retriever.save(cache)
+
+    assert cache.exists()
+    assert lock_path.exists()
+
+
+def test_advisory_lock_is_released_when_previous_descriptor_closes(tmp_path) -> None:
+    from recagent_eval import retrieval
+
+    if retrieval._fcntl is None:
+        pytest.skip("POSIX advisory locking is unavailable")
+    cache = tmp_path / "movies.npz"
+    lock_path = Path(f"{cache}.lock")
+    descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    retrieval._fcntl.flock(descriptor, retrieval._fcntl.LOCK_EX | retrieval._fcntl.LOCK_NB)
+    os.close(descriptor)  # simulates a process crash releasing its OS-owned lock
+
+    DenseSemanticRetriever.fit(MOVIES, encoder=FakeEncoder(), model_name="fake").save(cache)
+
+    assert cache.exists()
+
+
+def test_advisory_lock_rejects_symlink(tmp_path) -> None:
+    cache = tmp_path / "movies.npz"
+    target = tmp_path / "lock-target"
+    target.touch()
+    Path(f"{cache}.lock").symlink_to(target)
+
+    with pytest.raises(ValueError, match="unsafe dense cache lock path"):
+        DenseSemanticRetriever.fit(MOVIES, encoder=FakeEncoder(), model_name="fake").save(cache)
+
+
+def test_advisory_lock_rejects_when_no_backend_is_available(tmp_path, monkeypatch) -> None:
+    from recagent_eval import retrieval
+
+    cache = tmp_path / "movies.npz"
+    monkeypatch.setattr(retrieval, "_fcntl", None, raising=False)
+    monkeypatch.setattr(retrieval, "_msvcrt", None, raising=False)
+
+    with pytest.raises(RuntimeError, match="advisory lock backend"):
+        DenseSemanticRetriever.fit(MOVIES, encoder=FakeEncoder(), model_name="fake").save(cache)
 
 
 def test_dense_cache_rejects_oversized_files_before_numpy_load(tmp_path, monkeypatch) -> None:
@@ -513,7 +549,7 @@ def test_dense_cache_load_uses_stable_open_archive_if_path_is_swapped(
     np.testing.assert_array_equal(loaded.embeddings, original.embeddings)
 
 
-def test_portable_lock_pairs_concurrent_read_and_write_without_fcntl(
+def test_advisory_lock_pairs_concurrent_read_and_write(
     tmp_path,
     monkeypatch,
 ) -> None:
@@ -532,7 +568,6 @@ def test_portable_lock_pairs_concurrent_read_and_write_without_fcntl(
             data_published.set()
             continue_publish.wait(timeout=2)
 
-    monkeypatch.setattr("recagent_eval.retrieval.fcntl", None)
     monkeypatch.setattr("recagent_eval.retrieval.os.replace", paused_replace)
     with ThreadPoolExecutor(max_workers=2) as pool:
         write_future = pool.submit(writer.save, cache)
