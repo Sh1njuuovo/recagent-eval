@@ -31,9 +31,9 @@
         "external prepared resources"
       ],
       "source_notes": [
-        "official GitHub URL above",
+        "official project README: https://github.com/microsoft/RecAI/tree/main/InteRecAgent",
         "repository structure and runnable signals: reports/audit/audit.json",
-        "stars, last_commit, license and explicit score fields: archived 2026-08-20 pre-v2 candidate snapshot; not refreshed live in this task"
+        "community and activity metadata are a dated audit snapshot; the official repository URL is the refresh authority"
       ],
       "score": 87.5,
       "raw_score": 91,
@@ -95,8 +95,9 @@
         "weak native agent integration"
       ],
       "source_notes": [
-        "official GitHub URL above",
-        "stars, last_commit, license, runnable/resource judgments and explicit scores: archived 2026-08-20 pre-v2 candidate snapshot; not refreshed live in this task"
+        "official repository and README: https://github.com/RUCAIBox/RecBole",
+        "official documentation: https://recbole.io/docs/",
+        "community and activity metadata are a dated audit snapshot; no execution was repeated in this task"
       ],
       "score": 82.69,
       "raw_score": 86,
@@ -125,7 +126,7 @@
         "active within 2 years",
         "strong community signal",
         "4 modification ideas",
-        "1 risk notes"
+        "1 risk note"
       ]
     },
     {
@@ -156,8 +157,9 @@
         "documentation incomplete"
       ],
       "source_notes": [
-        "official GitHub URL above",
-        "stars, last_commit, license, runnable/resource judgments and explicit scores: archived 2026-08-20 pre-v2 candidate snapshot; not refreshed live in this task"
+        "official repository and README: https://github.com/Kuaishou-OneRec/OpenOneRec",
+        "resource and documentation risks were recorded from the official repository during the shortlist audit",
+        "community and activity metadata are a dated audit snapshot; no execution was repeated in this task"
       ],
       "score": 44.23,
       "raw_score": 46,
