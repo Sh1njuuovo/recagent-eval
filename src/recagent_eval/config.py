@@ -51,7 +51,7 @@ def load_experiment_config(path: Path) -> ExperimentConfig:
             "required_retrieval_tools must contain itemcf_retrieve "
             "and/or semantic_retrieve"
         )
-    semantic_payload = payload.get("semantic") or {}
+    semantic_payload = payload.get("semantic", {})
     if not isinstance(semantic_payload, dict):
         raise ValueError("semantic must be a mapping")
     semantic_kind = str(semantic_payload.get("kind", "tfidf"))
@@ -72,7 +72,9 @@ def load_experiment_config(path: Path) -> ExperimentConfig:
     if revision_value is not None and not semantic_model_revision:
         raise ValueError("semantic.model_revision must not be empty")
     cache_value = semantic_payload.get("cache_path")
-    semantic_cache_path = str(cache_value) if cache_value is not None else None
+    semantic_cache_path = str(cache_value).strip() if cache_value is not None else None
+    if cache_value is not None and not semantic_cache_path:
+        raise ValueError("semantic.cache_path must not be empty")
     semantic_device = str(semantic_payload.get("device", "cpu"))
     if semantic_device not in {"cpu", "cuda"}:
         raise ValueError("semantic.device must be cpu or cuda")

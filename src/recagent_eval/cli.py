@@ -89,7 +89,7 @@ def build_embeddings(
             )
             typer.echo(
                 f"Reused {len(movies)} embeddings from {output} "
-                f"at revision {manifest['model_revision']}"
+                f"at revision {manifest['resolved_revision']}"
             )
             return
         retriever = DenseSemanticRetriever.fit(

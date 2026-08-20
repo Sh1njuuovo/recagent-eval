@@ -68,6 +68,11 @@ def test_nested_rrf_config_is_validated(tmp_path: Path) -> None:
         ("semantic:\n  kind: bm25\n", "semantic.kind"),
         ("semantic:\n  kind: dense\n  device: mps\n", "semantic.device"),
         ("semantic:\n  kind: dense\n  model_name: ''\n", "model_name"),
+        ("semantic: false\n", "semantic must be a mapping"),
+        ("semantic: []\n", "semantic must be a mapping"),
+        ("semantic: ''\n", "semantic must be a mapping"),
+        ("semantic: null\n", "semantic must be a mapping"),
+        ("semantic:\n  kind: dense\n  cache_path: ''\n", "cache_path"),
     ],
 )
 def test_invalid_nested_ranker_is_rejected(

@@ -1,5 +1,9 @@
 import hashlib
+import io
 import json
+import tempfile
+import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import numpy as np
@@ -67,6 +71,7 @@ def test_dense_fit_records_encoder_resolved_revision_over_requested_alias() -> N
     )
 
     assert retriever.model_revision == "fake-revision"
+    assert retriever.requested_revision == "release-tag"
 
 
 def test_dense_fit_normalizes_finite_extreme_float32_vectors() -> None:
@@ -98,7 +103,8 @@ def test_dense_retrieve_filters_allowed_ids_and_handles_empty_inputs() -> None:
     call_count = len(encoder.calls)
     assert retriever.retrieve("   ") == []
     assert retriever.retrieve("space", allowed_ids=set()) == []
-    assert retriever.retrieve("space", top_k=0) == []
+    with pytest.raises(ValueError, match="top_k"):
+        retriever.retrieve("space", top_k=0)
     assert len(encoder.calls) == call_count
 
 
@@ -148,7 +154,8 @@ def test_dense_cache_round_trip_has_inspectable_manifest(tmp_path) -> None:
     assert manifest.keys() == {
         "schema_version",
         "model_name",
-        "model_revision",
+        "requested_revision",
+        "resolved_revision",
         "dataset_fingerprint",
         "dimension",
         "generated_at",
@@ -177,7 +184,6 @@ def test_dense_cache_round_trip_has_inspectable_manifest(tmp_path) -> None:
         movies=MOVIES,
         encoder=FakeEncoder(),
         model_name="fake",
-        model_revision="fake-revision",
     )
     assert loaded.retrieve("space") == retriever.retrieve("space")
 
@@ -227,12 +233,45 @@ def test_dense_cache_rejects_model_metadata_mismatch(tmp_path, field: str, value
         "movies": MOVIES,
         "encoder": FakeEncoder(),
         "model_name": "fake",
-        "model_revision": "fake-revision",
+        "model_revision": None,
     }
     kwargs[field] = value
 
     with pytest.raises(ValueError, match=field):
         DenseSemanticRetriever.load(cache, **kwargs)
+
+
+def test_dense_cache_reuses_requested_alias_and_preserves_resolved_sha(tmp_path) -> None:
+    resolved_sha = "a" * 40
+
+    class AliasEncoder(FakeEncoder):
+        model_revision = resolved_sha
+
+    cache = tmp_path / "alias.npz"
+    DenseSemanticRetriever.fit(
+        MOVIES,
+        encoder=AliasEncoder(),
+        model_name="fake",
+        model_revision="main",
+    ).save(cache)
+
+    by_alias = DenseSemanticRetriever.validate_cache(
+        cache,
+        movies=MOVIES,
+        model_name="fake",
+        model_revision="main",
+        encoder_type=AliasEncoder,
+    )
+    by_sha = DenseSemanticRetriever.validate_cache(
+        cache,
+        movies=MOVIES,
+        model_name="fake",
+        model_revision=resolved_sha,
+        encoder_type=AliasEncoder,
+    )
+    assert by_alias["requested_revision"] == "main"
+    assert by_alias["resolved_revision"] == resolved_sha
+    assert by_sha == by_alias
 
 
 def test_dense_cache_rejects_dataset_dimension_checksum_and_duplicate_ids(tmp_path) -> None:
@@ -313,4 +352,116 @@ def test_dense_cache_rejects_zero_or_non_unit_stored_rows(
     manifest_path.write_text(json.dumps(manifest))
 
     with pytest.raises(ValueError, match="normalized"):
+        DenseSemanticRetriever.load(cache, movies=MOVIES, encoder=FakeEncoder(), model_name="fake")
+
+
+def test_dense_cache_save_does_not_follow_predictable_temp_symlink(tmp_path) -> None:
+    cache = tmp_path / "movies.npz"
+    victim = tmp_path / "victim.txt"
+    victim.write_text("untouched")
+    (tmp_path / ".movies.npz.tmp").symlink_to(victim)
+
+    DenseSemanticRetriever.fit(MOVIES, encoder=FakeEncoder(), model_name="fake").save(cache)
+
+    assert victim.read_text() == "untouched"
+
+
+def test_dense_cache_concurrent_saves_use_distinct_secure_tempfiles(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    cache = tmp_path / "movies.npz"
+    retriever = DenseSemanticRetriever.fit(MOVIES, encoder=FakeEncoder(), model_name="fake")
+    seen: list[str] = []
+    real_mkstemp = tempfile.mkstemp
+
+    def recording_mkstemp(*args, **kwargs):
+        descriptor, path = real_mkstemp(*args, **kwargs)
+        seen.append(path)
+        return descriptor, path
+
+    monkeypatch.setattr("recagent_eval.retrieval.tempfile.mkstemp", recording_mkstemp)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        list(pool.map(lambda _: retriever.save(cache), range(2)))
+
+    assert len(seen) == 4
+    assert len(set(seen)) == 4
+    DenseSemanticRetriever.load(cache, movies=MOVIES, encoder=FakeEncoder(), model_name="fake")
+
+
+def test_dense_cache_cleans_first_temp_if_second_creation_fails(tmp_path, monkeypatch) -> None:
+    cache = tmp_path / "movies.npz"
+    retriever = DenseSemanticRetriever.fit(MOVIES, encoder=FakeEncoder(), model_name="fake")
+    real_mkstemp = tempfile.mkstemp
+    calls = 0
+
+    def fail_second_mkstemp(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("injected tempfile failure")
+        return real_mkstemp(*args, **kwargs)
+
+    monkeypatch.setattr("recagent_eval.retrieval.tempfile.mkstemp", fail_second_mkstemp)
+
+    with pytest.raises(OSError, match="injected"):
+        retriever.save(cache)
+    assert list(tmp_path.glob(".*.tmp")) == []
+
+
+def test_dense_cache_rejects_oversized_files_before_numpy_load(tmp_path, monkeypatch) -> None:
+    cache = tmp_path / "movies.npz"
+    DenseSemanticRetriever.fit(MOVIES, encoder=FakeEncoder(), model_name="fake").save(cache)
+
+    monkeypatch.setattr("recagent_eval.retrieval.MAX_MANIFEST_BYTES", 1)
+    with pytest.raises(ValueError, match="manifest.*large"):
+        DenseSemanticRetriever.load(cache, movies=MOVIES, encoder=FakeEncoder(), model_name="fake")
+
+    monkeypatch.setattr("recagent_eval.retrieval.MAX_MANIFEST_BYTES", 1024 * 1024)
+    monkeypatch.setattr("recagent_eval.retrieval.MAX_CACHE_ARCHIVE_BYTES", 1)
+    with pytest.raises(ValueError, match="archive.*large"):
+        DenseSemanticRetriever.load(cache, movies=MOVIES, encoder=FakeEncoder(), model_name="fake")
+
+    monkeypatch.setattr("recagent_eval.retrieval.MAX_CACHE_ARCHIVE_BYTES", 512 * 1024 * 1024)
+    monkeypatch.setattr("recagent_eval.retrieval.MAX_CACHE_UNCOMPRESSED_BYTES", 1)
+    with pytest.raises(ValueError, match="uncompressed.*large"):
+        DenseSemanticRetriever.load(cache, movies=MOVIES, encoder=FakeEncoder(), model_name="fake")
+
+
+def test_dense_cache_rejects_dimension_limit_before_numpy_load(tmp_path, monkeypatch) -> None:
+    cache = tmp_path / "movies.npz"
+    DenseSemanticRetriever.fit(MOVIES, encoder=FakeEncoder(), model_name="fake").save(cache)
+    monkeypatch.setattr("recagent_eval.retrieval.MAX_EMBEDDING_DIMENSION", 1)
+
+    with pytest.raises(ValueError, match="dimension.*large"):
+        DenseSemanticRetriever.load(cache, movies=MOVIES, encoder=FakeEncoder(), model_name="fake")
+
+
+def test_dense_cache_rejects_malicious_npy_shape_before_numpy_load(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    cache = tmp_path / "movies.npz"
+    DenseSemanticRetriever.fit(MOVIES, encoder=FakeEncoder(), model_name="fake").save(cache)
+
+    def header(shape: tuple[int, ...], dtype: np.dtype) -> bytes:
+        stream = io.BytesIO()
+        np.lib.format.write_array_header_1_0(
+            stream,
+            {"descr": np.lib.format.dtype_to_descr(dtype), "fortran_order": False, "shape": shape},
+        )
+        return stream.getvalue()
+
+    with zipfile.ZipFile(cache, "w") as archive:
+        archive.writestr("movie_ids.npy", header((3,), np.dtype(np.int64)))
+        archive.writestr(
+            "embeddings.npy",
+            header((1_000_001, 2), np.dtype(np.float32)),
+        )
+    monkeypatch.setattr(
+        "recagent_eval.retrieval.np.load",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("np.load called")),
+    )
+
+    with pytest.raises(ValueError, match="array header"):
         DenseSemanticRetriever.load(cache, movies=MOVIES, encoder=FakeEncoder(), model_name="fake")

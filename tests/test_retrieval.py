@@ -1,3 +1,5 @@
+import pytest
+
 from recagent_eval.data import Movie, Rating
 from recagent_eval.models import PreferenceState
 from recagent_eval.retrieval import (
@@ -43,6 +45,9 @@ def test_itemcf_retrieves_items_co_liked_with_history() -> None:
     assert scores[0][0] == 2
     assert {movie_id for movie_id, _ in scores} == {2, 3}
 
+    with pytest.raises(ValueError, match="top_k"):
+        retriever.retrieve({1}, top_k=0)
+
 
 def test_tfidf_retrieval_uses_title_and_genre_text() -> None:
     retriever = TfidfSemanticRetriever.fit(MOVIES)
@@ -51,3 +56,6 @@ def test_tfidf_retrieval_uses_title_and_genre_text() -> None:
 
     assert scores[0][0] == 1
     assert 3 not in {movie_id for movie_id, _ in scores}
+
+    with pytest.raises(ValueError, match="top_k"):
+        retriever.retrieve("space", top_k=0)

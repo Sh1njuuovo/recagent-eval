@@ -65,14 +65,14 @@ def test_build_embeddings_uses_injected_sentence_encoder(tmp_path, monkeypatch) 
         encoding="latin-1",
     )
     class FakeSentenceEncoder:
-        model_revision = "requested-revision"
+        model_revision = "a" * 40
         initializations = 0
         encodes = 0
 
         def __init__(self, model_name: str, *, revision: str | None, device: str) -> None:
             type(self).initializations += 1
             assert model_name == "fake/model"
-            assert revision == "requested-revision"
+            assert revision == "main"
             assert device == "cpu"
 
         def encode(self, texts: list[str]) -> np.ndarray:
@@ -93,7 +93,7 @@ def test_build_embeddings_uses_injected_sentence_encoder(tmp_path, monkeypatch) 
             "--model-name",
             "fake/model",
             "--model-revision",
-            "requested-revision",
+            "main",
         ],
     )
 
@@ -115,7 +115,7 @@ def test_build_embeddings_uses_injected_sentence_encoder(tmp_path, monkeypatch) 
             "--model-name",
             "fake/model",
             "--model-revision",
-            "requested-revision",
+            "main",
         ],
     )
     assert reused.exit_code == 0, reused.output
@@ -134,7 +134,7 @@ def test_build_embeddings_uses_injected_sentence_encoder(tmp_path, monkeypatch) 
             "--model-name",
             "different/model",
             "--model-revision",
-            "requested-revision",
+            "main",
         ],
     )
     assert mismatch.exit_code != 0
@@ -152,7 +152,7 @@ def test_build_embeddings_uses_injected_sentence_encoder(tmp_path, monkeypatch) 
             "--model-name",
             "fake/model",
             "--model-revision",
-            "requested-revision",
+            "main",
             "--force",
         ],
     )

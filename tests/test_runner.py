@@ -112,6 +112,45 @@ def test_case_fingerprint_payload_sorts_set_like_fields() -> None:
     assert payload[0]["initial_state"]["liked_genres"] == ["Action", "Sci-Fi"]
 
 
+def test_disabled_semantic_retrieval_never_builds_or_loads_dense(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "recagent_eval.runner.DenseSemanticRetriever.fit",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("dense fit called")),
+    )
+    monkeypatch.setattr(
+        "recagent_eval.runner.DenseSemanticRetriever.load",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("dense load called")),
+    )
+    movies = {
+        1: Movie(1, "One", ("Drama",), 2000),
+        2: Movie(2, "Two", ("Drama",), 2001),
+    }
+    case = EvaluationCase(
+        case_id="disabled-dense",
+        user_id=1,
+        turns=("recommend drama",),
+        relevant_movie_ids={2},
+        initial_state=PreferenceState(liked_movie_ids={1}),
+    )
+
+    run_experiment(
+        movies=movies,
+        ratings=[Rating(1, 1, 5, 1), Rating(1, 2, 5, 2)],
+        cases=[case],
+        provider=RuleBasedProvider(),
+        config=ExperimentConfig(
+            name="disabled-dense",
+            semantic_kind="dense",
+            semantic_cache_path="missing.npz",
+            enable_semantic_retrieval=False,
+        ),
+        output_dir=tmp_path,
+    )
+
+
 def test_multi_turn_run_aggregates_calls_and_traces(tmp_path: Path) -> None:
     movies = {
         1: Movie(1, "One", ("Drama",), 2000),

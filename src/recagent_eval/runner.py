@@ -68,7 +68,9 @@ def run_experiment(
 
     itemcf = ItemCFRetriever.fit(ratings)
     semantic: SemanticRetriever
-    if config.semantic_kind == "dense":
+    if not config.enable_semantic_retrieval:
+        semantic = TfidfSemanticRetriever.fit(movies)
+    elif config.semantic_kind == "dense":
         dense_options = {
             "movies": movies,
             "model_name": config.semantic_model_name,

@@ -6,8 +6,11 @@ import math
 import os
 import platform
 import re
+import tempfile
+import zipfile
 from collections import Counter, defaultdict
 from collections.abc import Iterable
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
@@ -16,12 +19,24 @@ from typing import Protocol, runtime_checkable
 
 import numpy as np
 
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows fallback keeps temp creation safe.
+    fcntl = None  # type: ignore[assignment]
+
 from recagent_eval.data import Movie, Rating
 from recagent_eval.models import PreferenceState
 
 DEFAULT_DENSE_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-DENSE_CACHE_SCHEMA_VERSION = 2
+DENSE_CACHE_SCHEMA_VERSION = 3
 DENSE_ITEM_TEXT_SCHEMA = "v1-movie-text-title-genres"
+MAX_MANIFEST_BYTES = 1024 * 1024
+MAX_CACHE_ARCHIVE_BYTES = 512 * 1024 * 1024
+MAX_CACHE_UNCOMPRESSED_BYTES = 512 * 1024 * 1024
+MAX_CACHE_ROWS = 1_000_000
+MAX_EMBEDDING_DIMENSION = 16_384
+MAX_EMBEDDING_BYTES = 512 * 1024 * 1024
+MAX_NPY_HEADER_BYTES = 4096
 
 
 @runtime_checkable
@@ -101,6 +116,8 @@ class ItemCFRetriever:
         top_k: int = 100,
         allowed_ids: set[int] | None = None,
     ) -> list[tuple[int, float]]:
+        if top_k <= 0:
+            raise ValueError("top_k must be positive")
         scores: Counter[int] = Counter()
         for source in history:
             for movie_id, similarity in self.similarities.get(source, {}).items():
@@ -145,6 +162,8 @@ class TfidfSemanticRetriever:
         top_k: int = 100,
         allowed_ids: set[int] | None = None,
     ) -> list[tuple[int, float]]:
+        if top_k <= 0:
+            raise ValueError("top_k must be positive")
         query_vector = _tfidf_vector(_tokens(query), self.idf)
         scores = []
         for movie_id, vector in self.vectors.items():
@@ -175,8 +194,10 @@ class SentenceTransformerEncoder:
             ) from exc
         self._model = SentenceTransformer(model_name, revision=revision, device=device)
         resolved = _sentence_transformer_revision(self._model)
-        self.model_revision = resolved or revision
-        if not self.model_revision:
+        self.requested_revision = revision
+        self.resolved_revision = resolved or revision
+        self.model_revision = self.resolved_revision
+        if not self.resolved_revision:
             raise RuntimeError(
                 "Could not resolve the model revision; pass an immutable --model-revision."
             )
@@ -201,6 +222,7 @@ class DenseSemanticRetriever:
     model_revision: str
     dataset_fingerprint: str
     device: str
+    requested_revision: str | None
 
     @classmethod
     def fit(
@@ -234,6 +256,7 @@ class DenseSemanticRetriever:
             model_revision=resolved_revision,
             dataset_fingerprint=movie_catalog_fingerprint(movies),
             device=device,
+            requested_revision=model_revision,
         )
 
     def retrieve(
@@ -243,7 +266,9 @@ class DenseSemanticRetriever:
         top_k: int = 100,
         allowed_ids: set[int] | None = None,
     ) -> list[tuple[int, float]]:
-        if top_k <= 0 or not query.strip() or not self.movie_ids.size:
+        if top_k <= 0:
+            raise ValueError("top_k must be positive")
+        if not query.strip() or not self.movie_ids.size:
             return []
         if allowed_ids is not None:
             if not allowed_ids:
@@ -276,7 +301,8 @@ class DenseSemanticRetriever:
         manifest = {
             "schema_version": DENSE_CACHE_SCHEMA_VERSION,
             "model_name": self.model_name,
-            "model_revision": self.model_revision,
+            "requested_revision": self.requested_revision,
+            "resolved_revision": self.model_revision,
             "dataset_fingerprint": self.dataset_fingerprint,
             "dimension": int(embeddings.shape[1]),
             "generated_at": datetime.now(UTC).isoformat(),
@@ -291,20 +317,51 @@ class DenseSemanticRetriever:
             "embedding_shape": list(embeddings.shape),
             "embedding_dtype": str(embeddings.dtype),
         }
-        data_temp = cache_path.with_name(f".{cache_path.name}.tmp")
-        manifest_temp = manifest_path.with_name(f".{manifest_path.name}.tmp")
-        try:
-            with data_temp.open("wb") as stream:
-                np.savez(stream, movie_ids=self.movie_ids, embeddings=embeddings)
-            manifest_temp.write_text(
-                json.dumps(manifest, indent=2, sort_keys=True) + "\n",
-                encoding="utf-8",
-            )
-            os.replace(data_temp, cache_path)
-            os.replace(manifest_temp, manifest_path)
-        finally:
-            data_temp.unlink(missing_ok=True)
-            manifest_temp.unlink(missing_ok=True)
+        _validate_manifest(manifest)
+        with _cache_write_lock(cache_path):
+            data_fd = -1
+            manifest_fd = -1
+            data_temp: Path | None = None
+            manifest_temp: Path | None = None
+            try:
+                data_fd, data_name = tempfile.mkstemp(
+                    prefix=f".{cache_path.name}.", suffix=".tmp", dir=cache_path.parent
+                )
+                data_temp = Path(data_name)
+                manifest_fd, manifest_name = tempfile.mkstemp(
+                    prefix=f".{manifest_path.name}.", suffix=".tmp", dir=cache_path.parent
+                )
+                manifest_temp = Path(manifest_name)
+                with os.fdopen(data_fd, "wb") as stream:
+                    data_fd = -1
+                    np.savez(stream, movie_ids=self.movie_ids, embeddings=embeddings)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                if data_temp.stat().st_size > MAX_CACHE_ARCHIVE_BYTES:
+                    raise ValueError("dense cache archive is too large")
+                _inspect_npz_archive(data_temp, manifest)
+                manifest_bytes = (
+                    json.dumps(manifest, indent=2, sort_keys=True) + "\n"
+                ).encode("utf-8")
+                if len(manifest_bytes) > MAX_MANIFEST_BYTES:
+                    raise ValueError("dense cache manifest is too large")
+                with os.fdopen(manifest_fd, "wb") as stream:
+                    manifest_fd = -1
+                    stream.write(manifest_bytes)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.replace(data_temp, cache_path)
+                os.replace(manifest_temp, manifest_path)
+                _fsync_directory(cache_path.parent)
+            finally:
+                if data_fd >= 0:
+                    os.close(data_fd)
+                if manifest_fd >= 0:
+                    os.close(manifest_fd)
+                if data_temp is not None:
+                    data_temp.unlink(missing_ok=True)
+                if manifest_temp is not None:
+                    manifest_temp.unlink(missing_ok=True)
 
     @classmethod
     def load(
@@ -324,7 +381,7 @@ class DenseSemanticRetriever:
             model_revision=model_revision,
             device=device,
         )
-        revision_to_load = model_revision or str(manifest["model_revision"])
+        revision_to_load = model_revision or str(manifest["resolved_revision"])
         active_device = device or str(manifest["device"])
         active_encoder = encoder or SentenceTransformerEncoder(
             model_name,
@@ -332,7 +389,7 @@ class DenseSemanticRetriever:
             device=active_device,
         )
         expected_revision = _encoder_revision(active_encoder, revision_to_load)
-        if manifest["model_revision"] != expected_revision:
+        if manifest["resolved_revision"] != expected_revision:
             raise ValueError("dense cache model_revision mismatch")
         if manifest["encoder_metadata"] != {"class": _encoder_identifier(active_encoder)}:
             raise ValueError("dense cache encoder metadata mismatch")
@@ -344,6 +401,7 @@ class DenseSemanticRetriever:
             model_revision=expected_revision,
             dataset_fingerprint=movie_catalog_fingerprint(movies),
             device=active_device,
+            requested_revision=manifest["requested_revision"],  # type: ignore[arg-type]
         )
 
     @classmethod
@@ -355,6 +413,7 @@ class DenseSemanticRetriever:
         model_name: str = DEFAULT_DENSE_MODEL,
         model_revision: str | None = None,
         device: str | None = None,
+        encoder_type: type[object] | None = None,
     ) -> dict[str, object]:
         """Validate a SentenceTransformer cache without loading model weights."""
         manifest, _, _ = _read_dense_cache(
@@ -364,7 +423,9 @@ class DenseSemanticRetriever:
             model_revision=model_revision,
             device=device,
         )
-        expected_encoder = {"class": _encoder_identifier(SentenceTransformerEncoder)}
+        expected_encoder = {
+            "class": _encoder_identifier(encoder_type or SentenceTransformerEncoder)
+        }
         if manifest["encoder_metadata"] != expected_encoder:
             raise ValueError("dense cache encoder metadata mismatch")
         return manifest
@@ -426,6 +487,35 @@ def _embedding_checksum(embeddings: np.ndarray) -> str:
     return hashlib.sha256(np.ascontiguousarray(embeddings).tobytes()).hexdigest()
 
 
+@contextmanager
+def _cache_write_lock(cache_path: Path):
+    lock_path = Path(f"{cache_path}.lock")
+    flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(lock_path, flags, 0o600)
+    except OSError as exc:
+        raise ValueError("unsafe dense cache lock path") from exc
+    try:
+        if fcntl is not None:
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        if fcntl is not None:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+
+
+def _fsync_directory(directory: Path) -> None:
+    try:
+        descriptor = os.open(directory, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 def _encoder_identifier(encoder: object) -> str:
     encoder_type = encoder if isinstance(encoder, type) else type(encoder)
     return f"{encoder_type.__module__}.{encoder_type.__qualname__}"
@@ -453,7 +543,8 @@ def _validate_manifest(manifest: object) -> None:
     required = {
         "schema_version",
         "model_name",
-        "model_revision",
+        "requested_revision",
+        "resolved_revision",
         "dataset_fingerprint",
         "dimension",
         "generated_at",
@@ -476,6 +567,8 @@ def _validate_manifest(manifest: object) -> None:
         raise ValueError("dense cache normalized flag mismatch")
     if not isinstance(manifest["dimension"], int) or manifest["dimension"] < 0:
         raise ValueError("dense cache dimension is invalid")
+    if manifest["dimension"] > MAX_EMBEDDING_DIMENSION:
+        raise ValueError("dense cache dimension is too large")
     if manifest["device"] not in {"cpu", "cuda"}:
         raise ValueError("dense cache device is invalid")
     if manifest["item_text_schema"] != DENSE_ITEM_TEXT_SCHEMA:
@@ -520,15 +613,26 @@ def _validate_manifest(manifest: object) -> None:
         raise ValueError("dense cache movie_ids are invalid")
     if len(manifest["movie_ids"]) != len(set(manifest["movie_ids"])):
         raise ValueError("dense cache contains duplicate movie IDs")
+    if len(manifest["movie_ids"]) > MAX_CACHE_ROWS:
+        raise ValueError("dense cache row count is too large")
+    if shape != [len(manifest["movie_ids"]), manifest["dimension"]]:
+        raise ValueError("dense cache embedding shape/dimension mismatch")
+    if len(manifest["movie_ids"]) * manifest["dimension"] * 4 > MAX_EMBEDDING_BYTES:
+        raise ValueError("dense cache expected embedding bytes are too large")
     try:
         generated_at = datetime.fromisoformat(str(manifest["generated_at"]))
     except ValueError as exc:
         raise ValueError("dense cache generated_at is invalid") from exc
     if generated_at.tzinfo is None or generated_at.utcoffset() != UTC.utcoffset(None):
         raise ValueError("dense cache generated_at must be UTC")
-    for field in ("model_name", "model_revision", "dataset_fingerprint"):
+    for field in ("model_name", "resolved_revision", "dataset_fingerprint"):
         if not isinstance(manifest[field], str) or not manifest[field]:
             raise ValueError(f"dense cache {field} is invalid")
+    requested_revision = manifest["requested_revision"]
+    if requested_revision is not None and (
+        not isinstance(requested_revision, str) or not requested_revision
+    ):
+        raise ValueError("dense cache requested_revision is invalid")
     checksum = manifest["embedding_checksum"]
     if not isinstance(checksum, str) or not re.fullmatch(r"[0-9a-f]{64}", checksum):
         raise ValueError("dense cache embedding checksum is invalid")
@@ -584,6 +688,10 @@ def _read_dense_cache(
         raise ValueError("dense embedding cache files are missing or unsafe")
     if cache_path.is_symlink() or manifest_path.is_symlink():
         raise ValueError("unsafe dense embedding cache path")
+    if manifest_path.stat().st_size > MAX_MANIFEST_BYTES:
+        raise ValueError("dense cache manifest is too large")
+    if cache_path.stat().st_size > MAX_CACHE_ARCHIVE_BYTES:
+        raise ValueError("dense cache archive is too large")
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
@@ -591,8 +699,7 @@ def _read_dense_cache(
     _validate_manifest(manifest)
     if manifest["model_name"] != model_name:
         raise ValueError("dense cache model_name mismatch")
-    if model_revision is not None and manifest["model_revision"] != model_revision:
-        raise ValueError("dense cache model_revision mismatch")
+    _validate_revision_request(manifest, model_revision)
     if device is not None and manifest["device"] != device:
         raise ValueError("dense cache device mismatch")
     if manifest["runtime_metadata"] != _runtime_metadata():
@@ -604,6 +711,7 @@ def _read_dense_cache(
         raise ValueError("dense cache dataset_fingerprint mismatch")
     if manifest["movie_ids"] != sorted(movies):
         raise ValueError("dense cache movie IDs do not match the dataset catalog")
+    _inspect_npz_archive(cache_path, manifest)
     try:
         with np.load(cache_path, allow_pickle=False) as payload:
             if set(payload.files) != {"movie_ids", "embeddings"}:
@@ -616,6 +724,91 @@ def _read_dense_cache(
         raise ValueError("unsafe dense embedding cache data") from exc
     _validate_cached_arrays(movie_ids, embeddings, manifest)
     return manifest, movie_ids, embeddings
+
+
+def _validate_revision_request(
+    manifest: dict[str, object],
+    requested: str | None,
+) -> None:
+    if requested is None:
+        return
+    if re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", requested):
+        if manifest["resolved_revision"] != requested:
+            raise ValueError("dense cache model_revision mismatch")
+    elif manifest["requested_revision"] != requested:
+        raise ValueError("dense cache model_revision mismatch")
+
+
+def _inspect_npz_archive(cache_path: Path, manifest: dict[str, object]) -> None:
+    try:
+        with zipfile.ZipFile(cache_path) as archive:
+            infos = archive.infolist()
+            movie_shape, movie_fortran, movie_dtype = _read_npy_header(
+                archive, "movie_ids.npy"
+            )
+            embedding_shape, embedding_fortran, embedding_dtype = _read_npy_header(
+                archive, "embeddings.npy"
+            )
+    except (OSError, zipfile.BadZipFile) as exc:
+        raise ValueError("unsafe dense embedding cache archive") from exc
+    if len(infos) != 2 or {info.filename for info in infos} != {
+        "movie_ids.npy",
+        "embeddings.npy",
+    }:
+        raise ValueError("unsafe dense embedding cache archive names")
+    if any(info.flag_bits & 1 for info in infos):
+        raise ValueError("unsafe encrypted dense embedding cache archive")
+    if any(
+        info.compress_type not in {zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED}
+        for info in infos
+    ):
+        raise ValueError("unsafe dense embedding cache compression")
+    total_uncompressed = sum(info.file_size for info in infos)
+    if total_uncompressed > MAX_CACHE_UNCOMPRESSED_BYTES:
+        raise ValueError("dense cache uncompressed data is too large")
+    rows = len(manifest["movie_ids"])  # type: ignore[arg-type]
+    dimension = int(manifest["dimension"])
+    expected_array_bytes = rows * 8 + rows * dimension * 4
+    info_by_name = {info.filename: info for info in infos}
+    expected_member_bytes = {
+        "movie_ids.npy": rows * 8,
+        "embeddings.npy": rows * dimension * 4,
+    }
+    for name, expected_bytes in expected_member_bytes.items():
+        file_size = info_by_name[name].file_size
+        if not expected_bytes <= file_size <= expected_bytes + MAX_NPY_HEADER_BYTES:
+            raise ValueError("dense cache uncompressed member size mismatch")
+    if total_uncompressed > expected_array_bytes + 2 * MAX_NPY_HEADER_BYTES:
+        raise ValueError("dense cache uncompressed array headers are too large")
+    if (
+        movie_shape != (rows,)
+        or movie_fortran
+        or movie_dtype != np.dtype(np.int64)
+        or embedding_shape != (rows, dimension)
+        or embedding_fortran
+        or embedding_dtype != np.dtype(np.float32)
+    ):
+        raise ValueError("dense cache array header shape/dtype mismatch")
+
+
+def _read_npy_header(
+    archive: zipfile.ZipFile,
+    name: str,
+) -> tuple[tuple[int, ...], bool, np.dtype]:
+    try:
+        with archive.open(name) as stream:
+            version_number = np.lib.format.read_magic(stream)
+            if version_number == (1, 0):
+                return np.lib.format.read_array_header_1_0(
+                    stream, max_header_size=MAX_NPY_HEADER_BYTES
+                )
+            if version_number == (2, 0):
+                return np.lib.format.read_array_header_2_0(
+                    stream, max_header_size=MAX_NPY_HEADER_BYTES
+                )
+    except (EOFError, OSError, ValueError, KeyError) as exc:
+        raise ValueError("unsafe dense cache array header") from exc
+    raise ValueError("unsafe dense cache array header version")
 
 
 def _tokens(text: str) -> list[str]:
