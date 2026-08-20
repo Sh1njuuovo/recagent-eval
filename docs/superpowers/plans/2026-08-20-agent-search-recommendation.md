@@ -53,10 +53,10 @@ Steps:
 5. Rebuild exactly three official GitHub candidates: RecAI/InteRecAgent,
    RecBole, and OpenOneRec. Use audited facts and explicit candidate-score
    fields; record source and risk notes. Do not add taste fields.
-6. Run `candidate_score` without `--taste`, remove the inactive
-   `score_breakdown.user_preference` compatibility field from the no-taste JSON,
-   and assert that no active ranking/profile file contains Taste Fit,
-   `taste_matches`, `taste_mismatches`, or `user_preference`.
+6. Run the repository-local `scripts/candidate_score.py` with the dated
+   `--as-of` argument. The script has no `--taste` option and directly emits
+   final artifacts; assert that no active ranking/profile file contains Taste
+   Fit, `taste_matches`, `taste_mismatches`, or `user_preference`.
 7. Run full pytest and Ruff, inspect the diff, and commit the focused baseline
    profile change.
 

@@ -9,7 +9,7 @@
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | 1 | RecAI/InteRecAgent | 87.50 | 91 | 104 | MIT | 1200 | 2026-01-27 | README, app.py and run.sh were found in the checked-in audit; external prepared resources remain required | local refactor/smoke path is plausible; upstream dependencies and prepared resources require validation | LLM Agent, query, retrieval, ranking, recommendation, evaluation | legacy dependencies; external prepared resources |
 | 2 | RecBole | 82.69 | 86 | 104 | MIT with academic-use notice | 4500 | 2025-02-23 | historical shortlist audit rated the recommendation baseline and evaluation path highly; no run was repeated in this task | historical shortlist audit marked the baseline as CPU/single-GPU friendly | recommendation, ranking, datasets, evaluation | weak native agent integration |
-| 3 | OpenOneRec | 44.23 | 46 | 104 | not declared during audit | 885 | 2026-05-18 | historical shortlist audit found no bounded two-week full-run path | historical shortlist audit identified distributed pretraining and a 100M-interaction dataset | generative recommendation, LLM, ranking | license unclear; distributed pretraining; 100M interaction dataset; documentation incomplete |
+| 3 | OpenOneRec | 50.96 | 53 | 104 | Apache-2.0 | 885 | 2026-05-18 | historical shortlist audit found no bounded two-week full-run path | historical shortlist audit identified distributed pretraining and a 100M-interaction dataset | generative recommendation, LLM, ranking | distributed pretraining; 100M interaction dataset; documentation incomplete |
 
 ## 使用说明
 

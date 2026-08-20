@@ -5,68 +5,44 @@
 - Generated at: 2026-08-20 (Asia/Shanghai).
 - Taste: disabled. No `taste.json` or `--taste` argument was used.
 - Normalization denominator: 104 points.
-- Python: 3.13.11; jq: 1.7.1-apple.
-- Candidate scoring implementation: the bundled `shushu-internship-tool`
-  module at
-  `/Users/shinjuu/.codex/skills/shushu-internship-tool/scripts/shushu_internship_tool/candidate_score.py`.
-- `candidate_score.py` SHA-256:
-  `230237218e3becd2b449196dd696f139fd37ee41174102a77daeec6be43802bc`.
-- Imported rendering/common helper SHA-256:
-  `89476ad8504cabdc726e92ce107d37a2ca065053e089a492f7b72fae4ca4eaaf`.
+- Python: 3.13.11; the generator uses only the Python standard library.
+- Candidate scoring implementation: repository-local
+  `scripts/candidate_score.py`.
+- Generator SHA-256:
+  `edd9ccabdcb73770df92273b405ecffb28e4f737fe0637e31e0bc83cfba4c536`.
 
-The scoring CLI derives activity points from the system date. Reproducing this
-exact snapshot requires the 2026-08-20 date. A run on a later date is a new
-snapshot and may move a candidate into a different activity bucket.
+The required `--as-of 2026-08-20` argument freezes activity scoring. The result
+does not depend on the machine's current date or on a user-local skill install.
 
 ## Inputs and outputs
 
 | File | Role | SHA-256 |
 | --- | --- | --- |
 | `reports/profile/jd.txt` | active proxy JD | `2cceeba154e3d164312352b95245403afcc98e4acf038ac2eae5e27e8391d220` |
-| `reports/profile/candidates.json` | explicit candidate facts and scores | `42ec95dbe8eb06ad62953ce97279780c158710e9595198c653e2b9757cea9d86` |
-| `reports/ranking/candidate_score.json` | postprocessed machine-readable ranking | `c17dc0595426ccf5bedceeda3528e9cc6a081ca6546b2bfd1b67eccbde348a57` |
-| `reports/ranking/candidate_score.md` | postprocessed human-readable ranking | `8656bb2cd54afe720abb1fe8e4111d9941da715f1ad095f56ae39285ced58d14` |
+| `reports/profile/candidates.json` | explicit candidate facts and scores | `268c6c3706e08419e1e94ce80e33c5c8696e7b10244ab563d4e360a52fdbfd23` |
+| `reports/ranking/candidate_score.json` | generated machine-readable ranking | `037b8aa403f807a87d65ef0117ca97d6c254e2872a2584fb75b87698566f7442` |
+| `reports/ranking/candidate_score.md` | generated human-readable ranking | `04d8193109f2a33e35ecfa7c08dcb78520d6f4a8b8e4a0bcc855a6c47b482d6e` |
 
 ## Exact generation command
 
-Run from the repository root on the snapshot date:
+Run from any clean checkout's repository root:
 
 ```bash
-PYTHONPATH=/Users/shinjuu/.codex/skills/shushu-internship-tool/scripts \
-  .venv/bin/python -m shushu_internship_tool.candidate_score \
+.venv/bin/python scripts/candidate_score.py \
   --jd reports/profile/jd.txt \
   --candidates reports/profile/candidates.json \
-  --out reports/ranking
+  --out reports/ranking \
+  --as-of 2026-08-20
 ```
 
-The command intentionally has no `--taste` argument.
+The repo-local command has no `--taste` option and writes final JSON and
+Markdown directly.
 
 ## Deterministic postprocessing
 
-The external generator currently emits a zero-valued
-`score_breakdown.user_preference` even on the no-taste path, writes the phrase
-`1 risk notes`, and limits Markdown risk display to three entries. The active
-contract forbids the inactive preference field and requires every scored risk
-to remain visible. Apply these deterministic steps after generation:
-
-```bash
-jq '(.candidates[]) |= ((.score_breakdown |= del(.user_preference)) | del(.taste_matches, .taste_mismatches, .user_preference_notes) | (.score_reasons |= map(if . == "1 risk notes" then "1 risk note" else . end)))' \
-  reports/ranking/candidate_score.json \
-  > /private/tmp/candidate-score-postprocessed.json
-mv /private/tmp/candidate-score-postprocessed.json \
-  reports/ranking/candidate_score.json
-```
-
-Then expand the unique OpenOneRec Markdown risk cell:
-
-```bash
-perl -0pi -e 's/license unclear; distributed pretraining; 100M interaction dataset \|/license unclear; distributed pretraining; 100M interaction dataset; documentation incomplete |/' \
-  reports/ranking/candidate_score.md
-```
-
-The source text must occur exactly once before applying the command. This
-changes display completeness only; all numerical scores continue to come from
-`candidate_score`.
+None. `scripts/candidate_score.py` omits Taste/preference fields, uses correct
+singular/plural risk grammar, and renders every scored risk. A generated file
+must not be edited after the command.
 
 ## Scoring fields
 
@@ -139,8 +115,9 @@ new dated snapshot.
 - JD 25/30: generative recommendation, LLM, and ranking are direct matches;
   the audited shortlist did not establish the same bounded interactive-Agent
   path as InteRecAgent.
-- License 0/4: no license was declared during the recorded audit. This is an
-  audit-time risk statement, not a claim about future repository state.
+- License 4/4: the official repository currently declares Apache-2.0 in
+  <https://github.com/Kuaishou-OneRec/OpenOneRec/blob/main/LICENSE>, an
+  unambiguous OSI-approved license scored consistently with RecAI's MIT license.
 - Runnable 4/20: the recorded path centers on distributed pretraining and a
   100M-interaction dataset, outside the two-week bounded full-run path.
 - Resource fit 1/10: the same distributed/data requirements conflict with the
@@ -148,17 +125,17 @@ new dated snapshot.
 - Activity 10/10 and stars 8/10: the dated snapshot records 2026-05-18 and 885
   stars.
 - Modification 10/20: two bounded extraction/smoke ideas are recorded.
-- Risk -12: license uncertainty, distributed pretraining, the 100M-interaction
-  dataset, and incomplete documentation are four separately scored risks.
-- Arithmetic: `25 + 0 + 4 + 1 + 10 + 8 + 10 - 12 = 46`.
+- Risk -9: distributed pretraining, the 100M-interaction dataset, and incomplete
+  documentation are three separately scored risks.
+- Arithmetic: `25 + 4 + 4 + 1 + 10 + 8 + 10 - 9 = 53`.
 
 ## Reproduction acceptance
 
 A reproduction is accepted only if:
 
-- input and external-script hashes match this file;
-- the generator command is run without `--taste` on the snapshot date;
-- deterministic postprocessing is applied exactly once;
+- input and repository-local generator hashes match this file;
+- the generator command is run with `--as-of 2026-08-20`;
+- no postprocessing is applied;
 - output hashes match this file;
 - each JSON candidate has `max_raw_score: 104` and no Taste fields or
   `user_preference`; and

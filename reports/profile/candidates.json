@@ -72,8 +72,8 @@
     {
       "name": "OpenOneRec",
       "repo_url": "https://github.com/Kuaishou-OneRec/OpenOneRec",
-      "license": "not declared during audit",
-      "license_score": 0,
+      "license": "Apache-2.0",
+      "license_score": 4,
       "stars": 885,
       "last_commit": "2026-05-18",
       "matched_jd_terms": [
@@ -91,13 +91,13 @@
         "evaluation extraction"
       ],
       "risk_notes": [
-        "license unclear",
         "distributed pretraining",
         "100M interaction dataset",
         "documentation incomplete"
       ],
       "source_notes": [
         "official repository and README: https://github.com/Kuaishou-OneRec/OpenOneRec",
+        "official license: https://github.com/Kuaishou-OneRec/OpenOneRec/blob/main/LICENSE",
         "resource and documentation risks were recorded from the official repository during the shortlist audit",
         "community and activity metadata are a dated audit snapshot; no execution was repeated in this task"
       ]
