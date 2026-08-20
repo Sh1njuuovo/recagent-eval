@@ -20,7 +20,7 @@ from recagent_eval.provider import LLMProvider, LLMResponse
 from recagent_eval.ranking import HybridRanker
 from recagent_eval.retrieval import (
     ItemCFRetriever,
-    TfidfSemanticRetriever,
+    SemanticRetriever,
     hard_filter,
 )
 
@@ -42,7 +42,7 @@ class RecommendationAgent:
         *,
         movies: dict[int, Movie],
         itemcf: ItemCFRetriever,
-        semantic: TfidfSemanticRetriever,
+        semantic: SemanticRetriever,
         ranker: HybridRanker,
         provider: LLMProvider,
         config: AgentConfig | None = None,

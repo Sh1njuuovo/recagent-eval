@@ -38,6 +38,7 @@ from recagent_eval.ranker_selection import (
     select_ranker as select_ranker_evidence,
 )
 from recagent_eval.ranking import HybridRanker
+from recagent_eval.retrieval import DEFAULT_DENSE_MODEL, DenseSemanticRetriever
 from recagent_eval.runner import ExperimentConfig, case_fingerprint, run_experiment
 from recagent_eval.tuning import (
     build_retrieval_ablation,
@@ -54,6 +55,42 @@ def download_data(
 ) -> None:
     path = download_movielens_1m(output)
     typer.echo(f"MovieLens 1M ready at {path}")
+
+
+@app.command("build-embeddings")
+def build_embeddings(
+    data_dir: Annotated[Path, typer.Option(help="MovieLens 1M directory")] = Path(
+        "data/raw/ml-1m"
+    ),
+    output: Annotated[Path, typer.Option(help="Dense embedding NPZ cache")] = Path(
+        "artifacts/embeddings/movielens.npz"
+    ),
+    model_name: Annotated[str, typer.Option()] = DEFAULT_DENSE_MODEL,
+    model_revision: Annotated[str | None, typer.Option()] = None,
+    device: Annotated[str, typer.Option(help="cpu or cuda")] = "cpu",
+) -> None:
+    if device not in {"cpu", "cuda"}:
+        raise typer.BadParameter("device must be cpu or cuda")
+    movies_path = data_dir / "movies.dat"
+    if not movies_path.exists():
+        raise typer.BadParameter(
+            f"MovieLens movies.dat missing under {data_dir}; run download-data first"
+        )
+    movies = load_movielens_movies(movies_path)
+    try:
+        retriever = DenseSemanticRetriever.fit(
+            movies,
+            model_name=model_name,
+            model_revision=model_revision,
+            device=device,
+        )
+        retriever.save(output)
+    except (RuntimeError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(
+        f"Wrote {len(movies)} embeddings to {output} "
+        f"at revision {retriever.model_revision}"
+    )
 
 
 @app.command("prepare-cases")

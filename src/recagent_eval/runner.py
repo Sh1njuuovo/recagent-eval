@@ -23,7 +23,13 @@ from recagent_eval.evaluation import (
 from recagent_eval.models import ToolName
 from recagent_eval.provider import LLMProvider
 from recagent_eval.ranking import HybridRanker, RankerKind
-from recagent_eval.retrieval import ItemCFRetriever, TfidfSemanticRetriever
+from recagent_eval.retrieval import (
+    DEFAULT_DENSE_MODEL,
+    DenseSemanticRetriever,
+    ItemCFRetriever,
+    SemanticRetriever,
+    TfidfSemanticRetriever,
+)
 
 
 @dataclass(frozen=True)
@@ -38,6 +44,11 @@ class ExperimentConfig:
     structured_planning: bool = True
     required_retrieval_tools: tuple[ToolName, ...] = ("itemcf_retrieve",)
     semantic_profile_history_cap: int = 20
+    semantic_kind: str = "tfidf"
+    semantic_model_name: str = DEFAULT_DENSE_MODEL
+    semantic_model_revision: str | None = None
+    semantic_cache_path: str | None = None
+    semantic_device: str = "cpu"
     seed: int = 42
 
 
@@ -56,7 +67,23 @@ def run_experiment(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     itemcf = ItemCFRetriever.fit(ratings)
-    semantic = TfidfSemanticRetriever.fit(movies)
+    semantic: SemanticRetriever
+    if config.semantic_kind == "dense":
+        dense_options = {
+            "movies": movies,
+            "model_name": config.semantic_model_name,
+            "model_revision": config.semantic_model_revision,
+            "device": config.semantic_device,
+        }
+        if config.semantic_cache_path is not None:
+            semantic = DenseSemanticRetriever.load(
+                Path(config.semantic_cache_path),
+                **dense_options,
+            )
+        else:
+            semantic = DenseSemanticRetriever.fit(**dense_options)
+    else:
+        semantic = TfidfSemanticRetriever.fit(movies)
     agent = RecommendationAgent(
         movies=movies,
         itemcf=itemcf,
@@ -168,6 +195,13 @@ def run_experiment(
         "structured_planning": config.structured_planning,
         "required_retrieval_tools": config.required_retrieval_tools,
         "semantic_profile_history_cap": config.semantic_profile_history_cap,
+        "semantic": {
+            "kind": config.semantic_kind,
+            "model_name": config.semantic_model_name,
+            "model_revision": config.semantic_model_revision,
+            "cache_path": config.semantic_cache_path,
+            "device": config.semantic_device,
+        },
         "movie_count": len(movies),
         "rating_count": len(ratings),
         "case_count": len(cases),

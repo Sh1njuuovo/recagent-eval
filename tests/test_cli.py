@@ -1,10 +1,13 @@
 import hashlib
 import json
 
+import numpy as np
 import yaml
 from typer.testing import CliRunner
 
 from recagent_eval.cli import app
+from recagent_eval.data import Movie
+from recagent_eval.retrieval import DenseSemanticRetriever
 
 
 def test_smoke_command_runs_offline_end_to_end(tmp_path) -> None:
@@ -54,6 +57,59 @@ def test_show_config_includes_retrieval_policy(tmp_path) -> None:
         "semantic_retrieve",
     ]
     assert payload["semantic_profile_history_cap"] == 20
+
+
+def test_build_embeddings_uses_injected_sentence_encoder(tmp_path, monkeypatch) -> None:
+    data_dir = tmp_path / "ml-1m"
+    data_dir.mkdir()
+    (data_dir / "movies.dat").write_text(
+        "1::Space One (2000)::Sci-Fi\n2::Comedy (2001)::Comedy\n",
+        encoding="latin-1",
+    )
+    class FakeSentenceEncoder:
+        model_revision = "requested-revision"
+
+        def __init__(self, model_name: str, *, revision: str | None, device: str) -> None:
+            assert model_name == "fake/model"
+            assert revision == "requested-revision"
+            assert device == "cpu"
+
+        def encode(self, texts: list[str]) -> np.ndarray:
+            return np.eye(len(texts), dtype=np.float32)
+
+    monkeypatch.setattr("recagent_eval.retrieval.SentenceTransformerEncoder", FakeSentenceEncoder)
+    output = tmp_path / "embeddings.npz"
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "build-embeddings",
+            "--data-dir",
+            str(data_dir),
+            "--output",
+            str(output),
+            "--model-name",
+            "fake/model",
+            "--model-revision",
+            "requested-revision",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert output.exists()
+    loaded = DenseSemanticRetriever.load(
+        output,
+        movies={
+            1: Movie(1, "Space One (2000)", ("Sci-Fi",), 2000),
+            2: Movie(2, "Comedy (2001)", ("Comedy",), 2001),
+        },
+        encoder=FakeSentenceEncoder(
+            "fake/model", revision="requested-revision", device="cpu"
+        ),
+        model_name="fake/model",
+        model_revision="requested-revision",
+    )
+    assert loaded.embeddings.shape == (2, 2)
 
 
 def test_select_retrieval_writes_evidence_and_frozen_config(

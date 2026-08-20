@@ -51,6 +51,31 @@ def load_experiment_config(path: Path) -> ExperimentConfig:
             "required_retrieval_tools must contain itemcf_retrieve "
             "and/or semantic_retrieve"
         )
+    semantic_payload = payload.get("semantic") or {}
+    if not isinstance(semantic_payload, dict):
+        raise ValueError("semantic must be a mapping")
+    semantic_kind = str(semantic_payload.get("kind", "tfidf"))
+    if semantic_kind not in {"tfidf", "dense"}:
+        raise ValueError("semantic.kind must be tfidf or dense")
+    semantic_model_name = str(
+        semantic_payload.get(
+            "model_name",
+            "sentence-transformers/all-MiniLM-L6-v2",
+        )
+    ).strip()
+    if not semantic_model_name:
+        raise ValueError("semantic.model_name must not be empty")
+    revision_value = semantic_payload.get("model_revision")
+    semantic_model_revision = (
+        str(revision_value).strip() if revision_value is not None else None
+    )
+    if revision_value is not None and not semantic_model_revision:
+        raise ValueError("semantic.model_revision must not be empty")
+    cache_value = semantic_payload.get("cache_path")
+    semantic_cache_path = str(cache_value) if cache_value is not None else None
+    semantic_device = str(semantic_payload.get("device", "cpu"))
+    if semantic_device not in {"cpu", "cuda"}:
+        raise ValueError("semantic.device must be cpu or cuda")
     return ExperimentConfig(
         name=str(payload.get("name") or path.stem),
         weights=weights,
@@ -64,5 +89,10 @@ def load_experiment_config(path: Path) -> ExperimentConfig:
         semantic_profile_history_cap=int(
             payload.get("semantic_profile_history_cap", 20)
         ),
+        semantic_kind=semantic_kind,
+        semantic_model_name=semantic_model_name,
+        semantic_model_revision=semantic_model_revision,
+        semantic_cache_path=semantic_cache_path,
+        semantic_device=semantic_device,
         seed=int(payload.get("seed", 42)),
     )
