@@ -1,16 +1,15 @@
 # 候选项目排序
 
 - JD 来源：`reports/profile/jd.txt`
-- 主项目推荐：`RecAI / InteRecAgent`，score=88.60
-- 备选项目：`RecBole`，score=82.46
+- 主项目推荐：`RecAI/InteRecAgent`，score=87.50
+- 备选项目：`RecBole`，score=82.69
 - 分数说明：先计算 raw_score，再按 max_raw_score 归一化到 0-100。
-- 用户偏好：已启用 Taste Fit 小权重；它只用于近分排序辅助，不覆盖 JD 匹配、可运行性和风险。
 
-| Rank | Name | Score | Raw | Max Raw | License | Stars | Last Commit | Runnable | Resources | Matched | Taste Fit | Risks |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | RecAI / InteRecAgent | 88.60 | 101 | 114 | MIT | 1200 | 2026-01-27 |  |  | LLM Agent, query, retrieval, ranking, recommendation, evaluation | 10/10; match: independent-project, interview-friendly, llm-agent, remote-4090 | legacy dependencies; external prepared resources |
-| 2 | RecBole | 82.46 | 94 | 114 | MIT with academic-use notice | 4500 | 2025-02-23 |  |  | recommendation, ranking, datasets, evaluation | 8/10; match: interview-friendly, remote-4090, retrieval-ranking, search-recommendation | weak native agent integration |
-| 3 | OpenOneRec | 42.11 | 48 | 114 | not declared during audit | 885 | 2026-05-18 |  |  | generative recommendation, LLM, ranking | 2/10; match: llm-agent, retrieval-ranking, search-recommendation; avoid: full-pretraining, multi-gpu | license unclear; distributed pretraining; 100M interaction dataset |
+| Rank | Name | Score | Raw | Max Raw | License | Stars | Last Commit | Runnable | Resources | Matched | Risks |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | RecAI/InteRecAgent | 87.50 | 91 | 104 | MIT | 1200 | 2026-01-27 | README, app.py and run.sh were found in the checked-in audit; external prepared resources remain required | local refactor/smoke path is plausible; upstream dependencies and prepared resources require validation | LLM Agent, query, retrieval, ranking, recommendation, evaluation | legacy dependencies; external prepared resources |
+| 2 | RecBole | 82.69 | 86 | 104 | MIT with academic-use notice | 4500 | 2025-02-23 | historical shortlist audit rated the recommendation baseline and evaluation path highly; no run was repeated in this task | historical shortlist audit marked the baseline as CPU/single-GPU friendly | recommendation, ranking, datasets, evaluation | weak native agent integration |
+| 3 | OpenOneRec | 44.23 | 46 | 104 | not declared during audit | 885 | 2026-05-18 | historical shortlist audit found no bounded two-week full-run path | historical shortlist audit identified distributed pretraining and a 100M-interaction dataset | generative recommendation, LLM, ranking | license unclear; distributed pretraining; 100M interaction dataset |
 
 ## 使用说明
 

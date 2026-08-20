@@ -1,7 +1,7 @@
 {
   "candidates": [
     {
-      "name": "RecAI/InteRecAgent",
+      "name": "RecAI / InteRecAgent",
       "repo_url": "https://github.com/microsoft/RecAI/tree/main/InteRecAgent",
       "license": "MIT",
       "license_score": 4,
@@ -16,24 +16,27 @@
         "evaluation"
       ],
       "jd_match_score": 30,
-      "runnable": "README, app.py and run.sh were found in the checked-in audit; external prepared resources remain required",
       "runnable_score": 17,
-      "resources": "local refactor/smoke path is plausible; upstream dependencies and prepared resources require validation",
       "resource_fit_score": 9,
+      "taste_tags": [
+        "search-recommendation",
+        "llm-agent",
+        "retrieval-ranking",
+        "remote-4090",
+        "interview-friendly",
+        "independent-project"
+      ],
+      "avoid_tags": [],
+      "project_taste_notes": "工具化推荐 Agent 与搜推交叉最直接，旧依赖需要定向重构。",
       "mod_ideas": [
         "provider abstraction",
         "structured preference memory",
-        "dense semantic retrieval and LambdaMART",
-        "leakage-safe offline evaluation"
+        "hybrid reranking",
+        "offline evaluation"
       ],
       "risk_notes": [
         "legacy dependencies",
         "external prepared resources"
-      ],
-      "source_notes": [
-        "official GitHub URL above",
-        "repository structure and runnable signals: reports/audit/audit.json",
-        "stars, last_commit, license and explicit score fields: archived 2026-08-20 pre-v2 candidate snapshot; not refreshed live in this task"
       ]
     },
     {
@@ -50,22 +53,24 @@
         "evaluation"
       ],
       "jd_match_score": 24,
-      "runnable": "historical shortlist audit rated the recommendation baseline and evaluation path highly; no run was repeated in this task",
       "runnable_score": 18,
-      "resources": "historical shortlist audit marked the baseline as CPU/single-GPU friendly",
       "resource_fit_score": 10,
+      "taste_tags": [
+        "search-recommendation",
+        "retrieval-ranking",
+        "remote-4090",
+        "interview-friendly"
+      ],
+      "avoid_tags": [],
+      "project_taste_notes": "推荐基线和评测成熟，但 LLM Agent 关联需要额外搭建。",
       "mod_ideas": [
         "agent integration",
         "MovieLens baseline",
-        "dense retrieval and LambdaMART",
+        "hybrid reranking",
         "evaluation table"
       ],
       "risk_notes": [
         "weak native agent integration"
-      ],
-      "source_notes": [
-        "official GitHub URL above",
-        "stars, last_commit, license, runnable/resource judgments and explicit scores: archived 2026-08-20 pre-v2 candidate snapshot; not refreshed live in this task"
       ]
     },
     {
@@ -81,10 +86,18 @@
         "ranking"
       ],
       "jd_match_score": 25,
-      "runnable": "historical shortlist audit found no bounded two-week full-run path",
       "runnable_score": 4,
-      "resources": "historical shortlist audit identified distributed pretraining and a 100M-interaction dataset",
       "resource_fit_score": 1,
+      "taste_tags": [
+        "search-recommendation",
+        "llm-agent",
+        "retrieval-ranking"
+      ],
+      "avoid_tags": [
+        "full-pretraining",
+        "multi-gpu"
+      ],
+      "project_taste_notes": "方向匹配，但资源与一周单卡约束冲突。",
       "mod_ideas": [
         "small-data smoke test",
         "evaluation extraction"
@@ -94,10 +107,6 @@
         "distributed pretraining",
         "100M interaction dataset",
         "documentation incomplete"
-      ],
-      "source_notes": [
-        "official GitHub URL above",
-        "stars, last_commit, license, runnable/resource judgments and explicit scores: archived 2026-08-20 pre-v2 candidate snapshot; not refreshed live in this task"
       ]
     }
   ]
