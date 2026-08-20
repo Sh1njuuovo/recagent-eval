@@ -69,6 +69,27 @@ def test_dense_fit_records_encoder_resolved_revision_over_requested_alias() -> N
     assert retriever.model_revision == "fake-revision"
 
 
+def test_dense_fit_normalizes_finite_extreme_float32_vectors() -> None:
+    class ExtremeEncoder:
+        model_revision = "extreme-revision"
+
+        def encode(self, texts: list[str]) -> np.ndarray:
+            return np.asarray([[3e38, 0.0] for _ in texts], dtype=np.float32)
+
+    retriever = DenseSemanticRetriever.fit(
+        MOVIES,
+        encoder=ExtremeEncoder(),
+        model_name="extreme",
+    )
+
+    assert np.isfinite(retriever.embeddings).all()
+    np.testing.assert_allclose(
+        np.linalg.norm(retriever.embeddings.astype(np.float64), axis=1),
+        1.0,
+        atol=1e-6,
+    )
+
+
 def test_dense_retrieve_filters_allowed_ids_and_handles_empty_inputs() -> None:
     encoder = FakeEncoder()
     retriever = DenseSemanticRetriever.fit(MOVIES, encoder=encoder, model_name="fake")
@@ -134,9 +155,23 @@ def test_dense_cache_round_trip_has_inspectable_manifest(tmp_path) -> None:
         "normalized",
         "movie_ids",
         "embedding_checksum",
+        "device",
+        "encoder_metadata",
+        "runtime_metadata",
+        "library_versions",
+        "item_text_schema",
+        "embedding_shape",
+        "embedding_dtype",
     }
     assert manifest["movie_ids"] == [10, 20, 30]
     assert manifest["normalized"] is True
+    assert manifest["device"] == "cpu"
+    assert manifest["item_text_schema"] == "v1-movie-text-title-genres"
+    assert manifest["embedding_shape"] == [3, 2]
+    assert manifest["embedding_dtype"] == "float32"
+    assert manifest["encoder_metadata"]["class"].endswith("FakeEncoder")
+    assert manifest["runtime_metadata"]["python_version"]
+    assert manifest["library_versions"]["numpy"] == np.__version__
     loaded = DenseSemanticRetriever.load(
         cache,
         movies=MOVIES,
@@ -145,6 +180,43 @@ def test_dense_cache_round_trip_has_inspectable_manifest(tmp_path) -> None:
         model_revision="fake-revision",
     )
     assert loaded.retrieve("space") == retriever.retrieve("space")
+
+
+def test_dense_cache_rejects_old_manifest_and_provenance_mismatch(tmp_path) -> None:
+    cache = tmp_path / "movies.npz"
+    DenseSemanticRetriever.fit(MOVIES, encoder=FakeEncoder(), model_name="fake").save(cache)
+    manifest_path = tmp_path / "movies.npz.json"
+    original = json.loads(manifest_path.read_text())
+
+    old_manifest = dict(original)
+    old_manifest.pop("item_text_schema")
+    manifest_path.write_text(json.dumps(old_manifest))
+    with pytest.raises(ValueError, match="manifest fields"):
+        DenseSemanticRetriever.load(cache, movies=MOVIES, encoder=FakeEncoder(), model_name="fake")
+
+    for field, replacement, message in (
+        ("device", "cuda", "device"),
+        ("encoder_metadata", {"class": "tampered.Encoder"}, "encoder"),
+        (
+            "runtime_metadata",
+            {**original["runtime_metadata"], "python_version": "0.0"},
+            "runtime",
+        ),
+        (
+            "library_versions",
+            {**original["library_versions"], "numpy": "0.0"},
+            "library",
+        ),
+    ):
+        manifest_path.write_text(json.dumps({**original, field: replacement}))
+        with pytest.raises(ValueError, match=message):
+            DenseSemanticRetriever.load(
+                cache,
+                movies=MOVIES,
+                encoder=FakeEncoder(),
+                model_name="fake",
+                device="cpu",
+            )
 
 
 @pytest.mark.parametrize("field,value", [("model_name", "other"), ("model_revision", "other")])
@@ -220,4 +292,25 @@ def test_dense_cache_rejects_movie_ids_that_do_not_match_catalog(tmp_path) -> No
     manifest_path.write_text(json.dumps(manifest))
 
     with pytest.raises(ValueError, match="movie IDs"):
+        DenseSemanticRetriever.load(cache, movies=MOVIES, encoder=FakeEncoder(), model_name="fake")
+
+
+@pytest.mark.parametrize("replacement", [[0.0, 0.0], [0.5, 0.0]])
+def test_dense_cache_rejects_zero_or_non_unit_stored_rows(
+    tmp_path,
+    replacement: list[float],
+) -> None:
+    cache = tmp_path / "movies.npz"
+    DenseSemanticRetriever.fit(MOVIES, encoder=FakeEncoder(), model_name="fake").save(cache)
+    manifest_path = tmp_path / "movies.npz.json"
+    manifest = json.loads(manifest_path.read_text())
+    with np.load(cache, allow_pickle=False) as payload:
+        movie_ids = payload["movie_ids"]
+        embeddings = payload["embeddings"]
+    embeddings[0] = replacement
+    np.savez(cache, movie_ids=movie_ids, embeddings=embeddings)
+    manifest["embedding_checksum"] = hashlib.sha256(embeddings.tobytes()).hexdigest()
+    manifest_path.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="normalized"):
         DenseSemanticRetriever.load(cache, movies=MOVIES, encoder=FakeEncoder(), model_name="fake")

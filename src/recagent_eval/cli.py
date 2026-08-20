@@ -68,6 +68,7 @@ def build_embeddings(
     model_name: Annotated[str, typer.Option()] = DEFAULT_DENSE_MODEL,
     model_revision: Annotated[str | None, typer.Option()] = None,
     device: Annotated[str, typer.Option(help="cpu or cuda")] = "cpu",
+    force: Annotated[bool, typer.Option("--force", help="Rebuild a matching cache")] = False,
 ) -> None:
     if device not in {"cpu", "cuda"}:
         raise typer.BadParameter("device must be cpu or cuda")
@@ -78,6 +79,19 @@ def build_embeddings(
         )
     movies = load_movielens_movies(movies_path)
     try:
+        if (output.exists() or Path(f"{output}.json").exists()) and not force:
+            manifest = DenseSemanticRetriever.validate_cache(
+                output,
+                movies=movies,
+                model_name=model_name,
+                model_revision=model_revision,
+                device=device,
+            )
+            typer.echo(
+                f"Reused {len(movies)} embeddings from {output} "
+                f"at revision {manifest['model_revision']}"
+            )
+            return
         retriever = DenseSemanticRetriever.fit(
             movies,
             model_name=model_name,

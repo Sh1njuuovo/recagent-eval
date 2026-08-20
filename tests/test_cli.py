@@ -6,8 +6,6 @@ import yaml
 from typer.testing import CliRunner
 
 from recagent_eval.cli import app
-from recagent_eval.data import Movie
-from recagent_eval.retrieval import DenseSemanticRetriever
 
 
 def test_smoke_command_runs_offline_end_to_end(tmp_path) -> None:
@@ -68,13 +66,17 @@ def test_build_embeddings_uses_injected_sentence_encoder(tmp_path, monkeypatch) 
     )
     class FakeSentenceEncoder:
         model_revision = "requested-revision"
+        initializations = 0
+        encodes = 0
 
         def __init__(self, model_name: str, *, revision: str | None, device: str) -> None:
+            type(self).initializations += 1
             assert model_name == "fake/model"
             assert revision == "requested-revision"
             assert device == "cpu"
 
         def encode(self, texts: list[str]) -> np.ndarray:
+            type(self).encodes += 1
             return np.eye(len(texts), dtype=np.float32)
 
     monkeypatch.setattr("recagent_eval.retrieval.SentenceTransformerEncoder", FakeSentenceEncoder)
@@ -97,19 +99,66 @@ def test_build_embeddings_uses_injected_sentence_encoder(tmp_path, monkeypatch) 
 
     assert result.exit_code == 0, result.output
     assert output.exists()
-    loaded = DenseSemanticRetriever.load(
-        output,
-        movies={
-            1: Movie(1, "Space One (2000)", ("Sci-Fi",), 2000),
-            2: Movie(2, "Comedy (2001)", ("Comedy",), 2001),
-        },
-        encoder=FakeSentenceEncoder(
-            "fake/model", revision="requested-revision", device="cpu"
-        ),
-        model_name="fake/model",
-        model_revision="requested-revision",
+    assert FakeSentenceEncoder.initializations == 1
+    assert FakeSentenceEncoder.encodes == 1
+    with np.load(output, allow_pickle=False) as payload:
+        assert payload["embeddings"].shape == (2, 2)
+
+    reused = CliRunner().invoke(
+        app,
+        [
+            "build-embeddings",
+            "--data-dir",
+            str(data_dir),
+            "--output",
+            str(output),
+            "--model-name",
+            "fake/model",
+            "--model-revision",
+            "requested-revision",
+        ],
     )
-    assert loaded.embeddings.shape == (2, 2)
+    assert reused.exit_code == 0, reused.output
+    assert "Reused" in reused.output
+    assert FakeSentenceEncoder.initializations == 1
+    assert FakeSentenceEncoder.encodes == 1
+
+    mismatch = CliRunner().invoke(
+        app,
+        [
+            "build-embeddings",
+            "--data-dir",
+            str(data_dir),
+            "--output",
+            str(output),
+            "--model-name",
+            "different/model",
+            "--model-revision",
+            "requested-revision",
+        ],
+    )
+    assert mismatch.exit_code != 0
+    assert "model_name mismatch" in mismatch.output
+    assert FakeSentenceEncoder.initializations == 1
+
+    rebuilt = CliRunner().invoke(
+        app,
+        [
+            "build-embeddings",
+            "--data-dir",
+            str(data_dir),
+            "--output",
+            str(output),
+            "--model-name",
+            "fake/model",
+            "--model-revision",
+            "requested-revision",
+            "--force",
+        ],
+    )
+    assert rebuilt.exit_code == 0, rebuilt.output
+    assert FakeSentenceEncoder.initializations == 2
+    assert FakeSentenceEncoder.encodes == 2
 
 
 def test_select_retrieval_writes_evidence_and_frozen_config(
