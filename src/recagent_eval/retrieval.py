@@ -6,7 +6,10 @@ import math
 import os
 import platform
 import re
+import secrets
+import stat
 import tempfile
+import time
 import zipfile
 from collections import Counter, defaultdict
 from collections.abc import Iterable
@@ -15,17 +18,16 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import BinaryIO, Protocol, runtime_checkable
 
 import numpy as np
 
-try:
-    import fcntl
-except ImportError:  # pragma: no cover - Windows fallback keeps temp creation safe.
-    fcntl = None  # type: ignore[assignment]
-
 from recagent_eval.data import Movie, Rating
 from recagent_eval.models import PreferenceState
+
+# Compatibility hook for tests that simulate platforms without fcntl. Locking below
+# intentionally uses portable exclusive file creation instead.
+fcntl = None
 
 DEFAULT_DENSE_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 DENSE_CACHE_SCHEMA_VERSION = 3
@@ -37,6 +39,8 @@ MAX_CACHE_ROWS = 1_000_000
 MAX_EMBEDDING_DIMENSION = 16_384
 MAX_EMBEDDING_BYTES = 512 * 1024 * 1024
 MAX_NPY_HEADER_BYTES = 4096
+CACHE_LOCK_TIMEOUT_SECONDS = 5.0
+CACHE_LOCK_POLL_SECONDS = 0.01
 
 
 @runtime_checkable
@@ -318,7 +322,7 @@ class DenseSemanticRetriever:
             "embedding_dtype": str(embeddings.dtype),
         }
         _validate_manifest(manifest)
-        with _cache_write_lock(cache_path):
+        with _cache_lock(cache_path):
             data_fd = -1
             manifest_fd = -1
             data_temp: Path | None = None
@@ -339,7 +343,13 @@ class DenseSemanticRetriever:
                     os.fsync(stream.fileno())
                 if data_temp.stat().st_size > MAX_CACHE_ARCHIVE_BYTES:
                     raise ValueError("dense cache archive is too large")
-                _inspect_npz_archive(data_temp, manifest)
+                inspection_fd = _open_regular_file(
+                    data_temp,
+                    max_bytes=MAX_CACHE_ARCHIVE_BYTES,
+                    too_large_message="dense cache archive is too large",
+                )
+                with os.fdopen(inspection_fd, "rb") as inspection_stream:
+                    _inspect_npz_archive(inspection_stream, manifest)
                 manifest_bytes = (
                     json.dumps(manifest, indent=2, sort_keys=True) + "\n"
                 ).encode("utf-8")
@@ -381,7 +391,9 @@ class DenseSemanticRetriever:
             model_revision=model_revision,
             device=device,
         )
-        revision_to_load = model_revision or str(manifest["resolved_revision"])
+        # An alias is only used to validate requested provenance. Actual loading is
+        # pinned to the already-resolved immutable revision stored in the cache.
+        revision_to_load = str(manifest["resolved_revision"])
         active_device = device or str(manifest["device"])
         active_encoder = encoder or SentenceTransformerEncoder(
             model_name,
@@ -488,21 +500,95 @@ def _embedding_checksum(embeddings: np.ndarray) -> str:
 
 
 @contextmanager
-def _cache_write_lock(cache_path: Path):
+def _cache_lock(cache_path: Path):
     lock_path = Path(f"{cache_path}.lock")
-    flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+    token = secrets.token_hex(32)
+    deadline = time.monotonic() + CACHE_LOCK_TIMEOUT_SECONDS
+    descriptor = -1
+    created_stat: os.stat_result | None = None
+    token_ready = False
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
+    while descriptor < 0:
+        try:
+            descriptor = os.open(lock_path, flags, 0o600)
+        except FileExistsError as exc:
+            try:
+                existing_stat = os.lstat(lock_path)
+            except FileNotFoundError:
+                continue
+            if not stat.S_ISREG(existing_stat.st_mode):
+                raise ValueError("unsafe dense cache lock path") from exc
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"timed out waiting for dense cache lock {lock_path}") from exc
+            time.sleep(CACHE_LOCK_POLL_SECONDS)
+        except OSError as exc:
+            raise ValueError("unsafe dense cache lock path") from exc
     try:
-        descriptor = os.open(lock_path, flags, 0o600)
-    except OSError as exc:
-        raise ValueError("unsafe dense cache lock path") from exc
-    try:
-        if fcntl is not None:
-            fcntl.flock(descriptor, fcntl.LOCK_EX)
+        created_stat = os.fstat(descriptor)
+        token_bytes = token.encode("ascii")
+        written = os.write(descriptor, token_bytes)
+        if written != len(token_bytes):
+            raise OSError("short write while creating dense cache lock")
+        os.fsync(descriptor)
+        token_ready = True
+        os.close(descriptor)
+        descriptor = -1
         yield
     finally:
-        if fcntl is not None:
-            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        if descriptor >= 0:
+            os.close(descriptor)
+        if created_stat is not None:
+            _release_cache_lock(
+                lock_path,
+                token if token_ready else None,
+                created_stat,
+            )
+
+
+def _release_cache_lock(
+    lock_path: Path,
+    token: str | None,
+    created_stat: os.stat_result,
+) -> None:
+    if token is None:
+        try:
+            path_stat = os.lstat(lock_path)
+            if (path_stat.st_dev, path_stat.st_ino) == (
+                created_stat.st_dev,
+                created_stat.st_ino,
+            ):
+                os.unlink(lock_path)
+        except OSError:
+            return
+        return
+    try:
+        descriptor = os.open(
+            lock_path,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+        )
+    except OSError:
+        return
+    try:
+        current_stat = os.fstat(descriptor)
+        contents = os.read(descriptor, 256).decode("ascii", errors="ignore")
+    finally:
         os.close(descriptor)
+    if (
+        not stat.S_ISREG(current_stat.st_mode)
+        or (current_stat.st_dev, current_stat.st_ino)
+        != (created_stat.st_dev, created_stat.st_ino)
+        or contents != token
+    ):
+        return
+    try:
+        path_stat = os.lstat(lock_path)
+        if (path_stat.st_dev, path_stat.st_ino) == (
+            created_stat.st_dev,
+            created_stat.st_ino,
+        ):
+            os.unlink(lock_path)
+    except OSError:
+        return
 
 
 def _fsync_directory(directory: Path) -> None:
@@ -682,48 +768,105 @@ def _read_dense_cache(
     device: str | None,
 ) -> tuple[dict[str, object], np.ndarray, np.ndarray]:
     manifest_path = _manifest_path(cache_path)
-    if cache_path.exists() != manifest_path.exists():
-        raise ValueError("partial dense embedding cache")
-    if not cache_path.is_file() or not manifest_path.is_file():
-        raise ValueError("dense embedding cache files are missing or unsafe")
-    if cache_path.is_symlink() or manifest_path.is_symlink():
-        raise ValueError("unsafe dense embedding cache path")
-    if manifest_path.stat().st_size > MAX_MANIFEST_BYTES:
-        raise ValueError("dense cache manifest is too large")
-    if cache_path.stat().st_size > MAX_CACHE_ARCHIVE_BYTES:
-        raise ValueError("dense cache archive is too large")
+    with _cache_lock(cache_path):
+        manifest_fd = _try_open_regular_file(
+            manifest_path,
+            max_bytes=MAX_MANIFEST_BYTES,
+            too_large_message="dense cache manifest is too large",
+        )
+        cache_fd = _try_open_regular_file(
+            cache_path,
+            max_bytes=MAX_CACHE_ARCHIVE_BYTES,
+            too_large_message="dense cache archive is too large",
+        )
+        if (manifest_fd is None) != (cache_fd is None):
+            _close_optional_fd(manifest_fd)
+            _close_optional_fd(cache_fd)
+            raise ValueError("partial dense embedding cache")
+        if manifest_fd is None or cache_fd is None:
+            raise ValueError("dense embedding cache files are missing or unsafe")
+        with (
+            os.fdopen(manifest_fd, "rb") as manifest_stream,
+            os.fdopen(cache_fd, "rb") as cache_stream,
+        ):
+            try:
+                manifest = json.loads(manifest_stream.read(MAX_MANIFEST_BYTES + 1))
+            except (UnicodeError, json.JSONDecodeError) as exc:
+                raise ValueError("unsafe dense embedding cache manifest") from exc
+            _validate_manifest(manifest)
+            if manifest["model_name"] != model_name:
+                raise ValueError("dense cache model_name mismatch")
+            _validate_revision_request(manifest, model_revision)
+            if device is not None and manifest["device"] != device:
+                raise ValueError("dense cache device mismatch")
+            if manifest["runtime_metadata"] != _runtime_metadata():
+                raise ValueError("dense cache runtime metadata mismatch")
+            if manifest["library_versions"] != _library_versions():
+                raise ValueError("dense cache library metadata mismatch")
+            expected_dataset = movie_catalog_fingerprint(movies)
+            if manifest["dataset_fingerprint"] != expected_dataset:
+                raise ValueError("dense cache dataset_fingerprint mismatch")
+            if manifest["movie_ids"] != sorted(movies):
+                raise ValueError("dense cache movie IDs do not match the dataset catalog")
+            _inspect_npz_archive(cache_stream, manifest)
+            cache_stream.seek(0)
+            try:
+                with np.load(
+                    cache_stream,
+                    allow_pickle=False,
+                    max_header_size=MAX_NPY_HEADER_BYTES,
+                ) as payload:
+                    if set(payload.files) != {"movie_ids", "embeddings"}:
+                        raise ValueError("unsafe dense embedding cache contents")
+                    movie_ids = payload["movie_ids"]
+                    embeddings = payload["embeddings"]
+            except (OSError, ValueError, TypeError) as exc:
+                if isinstance(exc, ValueError) and "unsafe" in str(exc):
+                    raise
+                raise ValueError("unsafe dense embedding cache data") from exc
+            _validate_cached_arrays(movie_ids, embeddings, manifest)
+            return manifest, movie_ids, embeddings
+
+
+def _close_optional_fd(descriptor: int | None) -> None:
+    if descriptor is not None:
+        os.close(descriptor)
+
+
+def _try_open_regular_file(
+    path: Path,
+    *,
+    max_bytes: int,
+    too_large_message: str,
+) -> int | None:
     try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        raise ValueError("unsafe dense embedding cache manifest") from exc
-    _validate_manifest(manifest)
-    if manifest["model_name"] != model_name:
-        raise ValueError("dense cache model_name mismatch")
-    _validate_revision_request(manifest, model_revision)
-    if device is not None and manifest["device"] != device:
-        raise ValueError("dense cache device mismatch")
-    if manifest["runtime_metadata"] != _runtime_metadata():
-        raise ValueError("dense cache runtime metadata mismatch")
-    if manifest["library_versions"] != _library_versions():
-        raise ValueError("dense cache library metadata mismatch")
-    expected_dataset = movie_catalog_fingerprint(movies)
-    if manifest["dataset_fingerprint"] != expected_dataset:
-        raise ValueError("dense cache dataset_fingerprint mismatch")
-    if manifest["movie_ids"] != sorted(movies):
-        raise ValueError("dense cache movie IDs do not match the dataset catalog")
-    _inspect_npz_archive(cache_path, manifest)
+        return _open_regular_file(
+            path,
+            max_bytes=max_bytes,
+            too_large_message=too_large_message,
+        )
+    except FileNotFoundError:
+        return None
+
+
+def _open_regular_file(
+    path: Path,
+    *,
+    max_bytes: int,
+    too_large_message: str,
+) -> int:
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags)
     try:
-        with np.load(cache_path, allow_pickle=False) as payload:
-            if set(payload.files) != {"movie_ids", "embeddings"}:
-                raise ValueError("unsafe dense embedding cache contents")
-            movie_ids = payload["movie_ids"]
-            embeddings = payload["embeddings"]
-    except (OSError, ValueError, TypeError) as exc:
-        if isinstance(exc, ValueError) and "unsafe" in str(exc):
-            raise
-        raise ValueError("unsafe dense embedding cache data") from exc
-    _validate_cached_arrays(movie_ids, embeddings, manifest)
-    return manifest, movie_ids, embeddings
+        file_stat = os.fstat(descriptor)
+        if not stat.S_ISREG(file_stat.st_mode):
+            raise ValueError("unsafe dense embedding cache file type")
+        if file_stat.st_size > max_bytes:
+            raise ValueError(too_large_message)
+        return descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
 
 
 def _validate_revision_request(
@@ -739,9 +882,10 @@ def _validate_revision_request(
         raise ValueError("dense cache model_revision mismatch")
 
 
-def _inspect_npz_archive(cache_path: Path, manifest: dict[str, object]) -> None:
+def _inspect_npz_archive(cache_stream: BinaryIO, manifest: dict[str, object]) -> None:
     try:
-        with zipfile.ZipFile(cache_path) as archive:
+        cache_stream.seek(0)
+        with zipfile.ZipFile(cache_stream) as archive:
             infos = archive.infolist()
             movie_shape, movie_fortran, movie_dtype = _read_npy_header(
                 archive, "movie_ids.npy"

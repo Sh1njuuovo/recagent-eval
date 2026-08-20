@@ -1,9 +1,13 @@
 import hashlib
 import io
 import json
+import os
 import tempfile
+import threading
+import time
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -409,6 +413,19 @@ def test_dense_cache_cleans_first_temp_if_second_creation_fails(tmp_path, monkey
     assert list(tmp_path.glob(".*.tmp")) == []
 
 
+def test_portable_lock_cleans_owned_file_if_token_write_fails(tmp_path, monkeypatch) -> None:
+    cache = tmp_path / "movies.npz"
+    retriever = DenseSemanticRetriever.fit(MOVIES, encoder=FakeEncoder(), model_name="fake")
+    monkeypatch.setattr(
+        "recagent_eval.retrieval.os.write",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("token write failed")),
+    )
+
+    with pytest.raises(OSError, match="token write failed"):
+        retriever.save(cache)
+    assert not Path(f"{cache}.lock").exists()
+
+
 def test_dense_cache_rejects_oversized_files_before_numpy_load(tmp_path, monkeypatch) -> None:
     cache = tmp_path / "movies.npz"
     DenseSemanticRetriever.fit(MOVIES, encoder=FakeEncoder(), model_name="fake").save(cache)
@@ -465,3 +482,108 @@ def test_dense_cache_rejects_malicious_npy_shape_before_numpy_load(
 
     with pytest.raises(ValueError, match="array header"):
         DenseSemanticRetriever.load(cache, movies=MOVIES, encoder=FakeEncoder(), model_name="fake")
+
+
+def test_dense_cache_load_uses_stable_open_archive_if_path_is_swapped(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    cache = tmp_path / "movies.npz"
+    original = DenseSemanticRetriever.fit(MOVIES, encoder=FakeEncoder(), model_name="fake")
+    original.save(cache)
+    replacement = tmp_path / "replacement.npz"
+    replacement.write_bytes(b"attacker replacement")
+    from recagent_eval import retrieval
+
+    inspect_archive = retrieval._inspect_npz_archive
+
+    def inspect_then_swap(archive, manifest):
+        result = inspect_archive(archive, manifest)
+        os.replace(replacement, cache)
+        return result
+
+    monkeypatch.setattr(retrieval, "_inspect_npz_archive", inspect_then_swap)
+
+    loaded = DenseSemanticRetriever.load(
+        cache,
+        movies=MOVIES,
+        encoder=FakeEncoder(),
+        model_name="fake",
+    )
+    np.testing.assert_array_equal(loaded.embeddings, original.embeddings)
+
+
+def test_portable_lock_pairs_concurrent_read_and_write_without_fcntl(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    cache = tmp_path / "movies.npz"
+    initial = DenseSemanticRetriever.fit(MOVIES, encoder=FakeEncoder(), model_name="fake")
+    initial.save(cache)
+    writer = DenseSemanticRetriever.fit(MOVIES, encoder=FakeEncoder(), model_name="fake")
+    writer.embeddings[:] = np.asarray([[0.0, 1.0], [1.0, 0.0], [0.0, 1.0]])
+    data_published = threading.Event()
+    continue_publish = threading.Event()
+    real_replace = os.replace
+
+    def paused_replace(source, destination):
+        real_replace(source, destination)
+        if Path(destination) == cache:
+            data_published.set()
+            continue_publish.wait(timeout=2)
+
+    monkeypatch.setattr("recagent_eval.retrieval.fcntl", None)
+    monkeypatch.setattr("recagent_eval.retrieval.os.replace", paused_replace)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        write_future = pool.submit(writer.save, cache)
+        assert data_published.wait(timeout=2)
+        read_future = pool.submit(
+            DenseSemanticRetriever.load,
+            cache,
+            movies=MOVIES,
+            encoder=FakeEncoder(),
+            model_name="fake",
+        )
+        time.sleep(0.05)
+        continue_publish.set()
+        write_future.result(timeout=2)
+        loaded = read_future.result(timeout=2)
+
+    np.testing.assert_array_equal(loaded.embeddings, writer.embeddings)
+
+
+def test_alias_validation_instantiates_model_at_stored_resolved_sha(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    resolved_sha = "b" * 40
+
+    class RecordingSentenceEncoder:
+        revisions: list[str | None] = []
+        model_revision = resolved_sha
+
+        def __init__(self, model_name: str, *, revision: str | None, device: str) -> None:
+            type(self).revisions.append(revision)
+
+        def encode(self, texts: list[str]) -> np.ndarray:
+            return np.eye(len(texts), 2, dtype=np.float32)
+
+    monkeypatch.setattr(
+        "recagent_eval.retrieval.SentenceTransformerEncoder",
+        RecordingSentenceEncoder,
+    )
+    cache = tmp_path / "alias.npz"
+    DenseSemanticRetriever.fit(
+        {10: MOVIES[10], 20: MOVIES[20]},
+        model_name="fake",
+        model_revision="main",
+    ).save(cache)
+
+    DenseSemanticRetriever.load(
+        cache,
+        movies={10: MOVIES[10], 20: MOVIES[20]},
+        model_name="fake",
+        model_revision="main",
+    )
+
+    assert RecordingSentenceEncoder.revisions == ["main", resolved_sha]
