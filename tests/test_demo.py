@@ -1,5 +1,6 @@
 import builtins
 import importlib
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -286,3 +287,101 @@ def test_demo_module_import_does_not_require_gradio(monkeypatch) -> None:
 
     monkeypatch.setattr(builtins, "__import__", without_gradio)
     importlib.reload(demo)
+
+
+def test_build_demo_wires_submit_enter_and_reset_callbacks(monkeypatch, tmp_path) -> None:
+    components = []
+
+    class Component:
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
+            self.events = []
+            components.append(self)
+
+        def click(self, callback, inputs=None, outputs=None):
+            self.events.append(("click", callback, inputs, outputs))
+
+        def submit(self, callback, inputs=None, outputs=None):
+            self.events.append(("submit", callback, inputs, outputs))
+
+    class ContextComponent(Component):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def launch(self):
+            self.launched = True
+
+    fake_gradio = SimpleNamespace(
+        Blocks=ContextComponent,
+        Markdown=Component,
+        State=Component,
+        Chatbot=Component,
+        Textbox=Component,
+        Row=ContextComponent,
+        Button=Component,
+        JSON=Component,
+    )
+    agent = SessionAwareAgent()
+    selection = SimpleNamespace(provider=object(), status=_status())
+    monkeypatch.setitem(sys.modules, "gradio", fake_gradio)
+    monkeypatch.setattr(demo, "select_demo_provider", lambda name: selection)
+    monkeypatch.setattr(demo, "_build_agent", lambda *args, **kwargs: agent)
+
+    blocks = demo.build_demo(tmp_path, provider_name="rule-based")
+
+    submit_button = next(
+        component for component in components if component.args == ("Recommend",)
+    )
+    reset_button = next(
+        component for component in components if component.args == ("Reset session",)
+    )
+    textbox = next(
+        component
+        for component in components
+        if component.kwargs.get("label") == "Movie request"
+    )
+    submit_event = submit_button.events[0]
+    enter_event = textbox.events[0]
+    reset_event = reset_button.events[0]
+
+    assert blocks.kwargs == {"title": "RecAgent-Eval"}
+    assert submit_event[0] == "click"
+    assert enter_event[0] == "submit"
+    assert submit_event[1] is enter_event[1]
+    assert submit_event[2] == enter_event[2]
+    assert len(submit_event[3]) == 8
+
+    response = submit_event[1]("space movies", {})
+    assert response[0][-1]["role"] == "assistant"
+    assert response[1] == ""
+    assert response[3]["liked_genres"] == ["Sci-Fi"]
+    assert response[-1]["provider"]["active"] == "rule-based"
+    reset_values = reset_event[1]()
+    assert reset_values[:2] == ([], "")
+    assert reset_values[2] == reset_session().model_dump(mode="json")
+    assert reset_values[3:] == ({}, {}, [], [], {})
+
+
+def test_launch_builds_then_launches_blocks(monkeypatch, tmp_path) -> None:
+    blocks = SimpleNamespace(launch=lambda: setattr(blocks, "launched", True))
+    seen = {}
+
+    def fake_build(data_dir, **kwargs):
+        seen["data_dir"] = data_dir
+        seen.update(kwargs)
+        return blocks
+
+    monkeypatch.setattr(demo, "build_demo", fake_build)
+    demo.launch(
+        tmp_path,
+        provider_name="qwen",
+        semantic_config_path=tmp_path / "semantic.yaml",
+        ranker_config_path=tmp_path / "ranker.yaml",
+    )
+
+    assert blocks.launched is True
+    assert seen["provider_name"] == "qwen"

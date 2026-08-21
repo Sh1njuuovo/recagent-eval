@@ -274,6 +274,76 @@ def test_fold_builder_cannot_omit_assigned_validation_user() -> None:
         )
 
 
+def test_cv_rejects_invalid_groups_grid_and_fold_builder_contracts() -> None:
+    with pytest.raises(ValueError, match="at least 3 users"):
+        cross_validate_lambdamart(
+            _queries()[:2], estimator_factory=_Estimator, parameter_grid=({"num_leaves": 1},)
+        )
+    with pytest.raises(ValueError, match="must not be empty"):
+        cross_validate_lambdamart(_queries(), estimator_factory=_Estimator, parameter_grid=())
+    with pytest.raises(ValueError, match="exactly one query per user"):
+        cross_validate_lambdamart(
+            [*_queries(), _queries()[0]],
+            estimator_factory=_Estimator,
+            parameter_grid=({"num_leaves": 1},),
+        )
+
+    def wrong_training(train, validation):
+        all_queries = _queries()
+        return (
+            [query for query in all_queries if query.user_id in train][1:],
+            [query for query in all_queries if query.user_id in validation],
+        )
+
+    with pytest.raises(ValueError, match="training query users"):
+        cross_validate_lambdamart(
+            _queries(),
+            estimator_factory=_Estimator,
+            parameter_grid=({"num_leaves": 1},),
+            fold_query_builder=wrong_training,
+        )
+
+
+def test_bootstrap_and_validation_rows_reject_malformed_numeric_inputs() -> None:
+    with pytest.raises(ValueError, match="equal, non-empty"):
+        paired_bootstrap_ndcg([], [], seed=1)
+    with pytest.raises(ValueError, match="finite"):
+        paired_bootstrap_ndcg([0.0], [float("nan")], seed=1)
+
+    rows = _positive_evidence().per_user_rows
+    missing = dict(rows[0])
+    missing.pop("latency_ms")
+    with pytest.raises(ValueError, match="missing cells"):
+        build_validation_evidence(
+            [missing],
+            dataset_fingerprint="data",
+            feature_fingerprint="features",
+            model_fingerprint="model",
+            candidate_policy_fingerprint="policy",
+            seed=1,
+        )
+    bad_list = dict(rows[0], allowed_movie_ids=["one"])
+    with pytest.raises(ValueError, match="integer array"):
+        build_validation_evidence(
+            [bad_list],
+            dataset_fingerprint="data",
+            feature_fingerprint="features",
+            model_fingerprint="model",
+            candidate_policy_fingerprint="policy",
+            seed=1,
+        )
+    nonfinite = dict(rows[0], latency_ms=float("inf"))
+    with pytest.raises(ValueError, match="non-finite"):
+        build_validation_evidence(
+            [nonfinite],
+            dataset_fingerprint="data",
+            feature_fingerprint="features",
+            model_fingerprint="model",
+            candidate_policy_fingerprint="policy",
+            seed=1,
+        )
+
+
 def test_fold_candidate_statistics_fit_only_training_users(monkeypatch) -> None:
     movies = {
         movie_id: Movie(movie_id, f"M{movie_id}", ("Drama",), 2000)

@@ -520,6 +520,79 @@ def test_dense_cache_rejects_malicious_npy_shape_before_numpy_load(
         DenseSemanticRetriever.load(cache, movies=MOVIES, encoder=FakeEncoder(), model_name="fake")
 
 
+def test_dense_cache_manifest_rejects_each_unsafe_metadata_class(
+    tmp_path, monkeypatch
+) -> None:
+    cache = tmp_path / "movies.npz"
+    DenseSemanticRetriever.fit(MOVIES, encoder=FakeEncoder(), model_name="fake").save(cache)
+    manifest_path = tmp_path / "movies.npz.json"
+    original = json.loads(manifest_path.read_text())
+    invalid_values = (
+        ("schema_version", 0, "schema_version"),
+        ("normalized", False, "normalized"),
+        ("dimension", -1, "dimension"),
+        ("device", "metal", "device"),
+        ("item_text_schema", "old", "item_text_schema"),
+        ("embedding_dtype", "float64", "dtype"),
+        ("embedding_shape", "3x2", "shape"),
+        ("encoder_metadata", {}, "encoder metadata"),
+        ("runtime_metadata", {}, "runtime metadata"),
+        ("library_versions", {}, "library metadata"),
+        ("movie_ids", "10,20,30", "movie_ids"),
+        ("embedding_shape", [4, 2], "shape/dimension"),
+        ("generated_at", "yesterday", "generated_at"),
+        ("generated_at", "2026-01-01T00:00:00", "must be UTC"),
+        ("model_name", "", "model_name"),
+        ("requested_revision", "", "requested_revision"),
+        ("embedding_checksum", "not-a-checksum", "checksum"),
+    )
+
+    for field, value, message in invalid_values:
+        manifest_path.write_text(json.dumps({**original, field: value}))
+        with pytest.raises(ValueError, match=message):
+            DenseSemanticRetriever.load(
+                cache, movies=MOVIES, encoder=FakeEncoder(), model_name="fake"
+            )
+
+    manifest_path.write_text(json.dumps(original))
+    monkeypatch.setattr("recagent_eval.retrieval.MAX_CACHE_ROWS", 2)
+    with pytest.raises(ValueError, match="row count"):
+        DenseSemanticRetriever.load(
+            cache, movies=MOVIES, encoder=FakeEncoder(), model_name="fake"
+        )
+    monkeypatch.setattr("recagent_eval.retrieval.MAX_CACHE_ROWS", 1_000_000)
+    monkeypatch.setattr("recagent_eval.retrieval.MAX_EMBEDDING_BYTES", 1)
+    with pytest.raises(ValueError, match="expected embedding bytes"):
+        DenseSemanticRetriever.load(
+            cache, movies=MOVIES, encoder=FakeEncoder(), model_name="fake"
+        )
+
+
+def test_dense_retriever_rejects_invalid_device_revision_shape_and_query_dimension() -> None:
+    with pytest.raises(ValueError, match="device"):
+        DenseSemanticRetriever.fit(MOVIES, encoder=FakeEncoder(), device="metal")
+
+    class RevisionlessEncoder:
+        def encode(self, texts):
+            return np.ones((len(texts), 2))
+
+    with pytest.raises(ValueError, match="resolved model_revision"):
+        DenseSemanticRetriever.fit(MOVIES, encoder=RevisionlessEncoder())
+
+    class WrongShapeEncoder(FakeEncoder):
+        def encode(self, texts):
+            return np.ones((len(texts),))
+
+    with pytest.raises(ValueError, match="two-dimensional"):
+        DenseSemanticRetriever.fit(MOVIES, encoder=WrongShapeEncoder())
+
+    encoder = FakeEncoder()
+    retriever = DenseSemanticRetriever.fit(MOVIES, encoder=encoder, model_name="fake")
+    encoder.encode = lambda texts: np.ones((1, 3))  # type: ignore[method-assign]
+    with pytest.raises(ValueError, match="dimension"):
+        retriever.retrieve("query")
+
+
 def test_dense_cache_load_uses_stable_open_archive_if_path_is_swapped(
     tmp_path,
     monkeypatch,

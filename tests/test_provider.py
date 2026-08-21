@@ -115,6 +115,42 @@ def test_provider_returns_typed_error_for_invalid_json() -> None:
     assert result.error.code == "invalid_json"
 
 
+def test_provider_rejects_structured_arrays_and_malformed_success_payloads() -> None:
+    array_provider = OpenAICompatibleProvider(
+        base_url="https://example.test/v1",
+        api_key="secret",
+        model="test-model",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200,
+                json={"choices": [{"message": {"content": "[]"}}]},
+            )
+        ),
+    )
+    array_response = array_provider.chat(
+        [{"role": "user", "content": "hello"}], response_schema={"type": "object"}
+    )
+
+    malformed_provider = OpenAICompatibleProvider(
+        base_url="https://example.test/v1",
+        api_key="secret",
+        model="test-model",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json={"usage": {}})
+        ),
+    )
+    malformed_response = malformed_provider.chat(
+        [{"role": "user", "content": "hello"}]
+    )
+
+    assert array_response.error is not None
+    assert array_response.error.code == "invalid_json"
+    assert "JSON object" in array_response.error.message
+    assert malformed_response.error is not None
+    assert malformed_response.error.code == "provider_error"
+    assert malformed_response.error.retryable is False
+
+
 def test_provider_deep_copies_and_forwards_extra_body() -> None:
     captured: dict[str, object] = {}
 
@@ -208,6 +244,38 @@ def test_qwen_provider_factory_sets_non_thinking_payload() -> None:
     assert selection.status.requested == "qwen"
     assert selection.status.active == "vllm/qwen"
     assert selection.status.fallback is False
+
+
+def test_deepseek_provider_factory_uses_configured_endpoint_model_and_key() -> None:
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["url"] = str(request.url)
+        captured["authorization"] = request.headers["authorization"]
+        captured.update(json.loads(request.content))
+        return _success_response()
+
+    selection = build_provider(
+        " DeepSeek ",
+        environ={
+            "DEEPSEEK_API_KEY": "configured-secret",
+            "DEEPSEEK_BASE_URL": "https://deepseek.example/v1/",
+            "DEEPSEEK_MODEL": "deepseek-reasoner",
+        },
+        transport=httpx.MockTransport(handler),
+    )
+    response = selection.provider.chat([{"role": "user", "content": "hello"}])
+
+    assert response.error is None
+    assert captured == {
+        "url": "https://deepseek.example/v1/chat/completions",
+        "authorization": "Bearer configured-secret",
+        "model": "deepseek-reasoner",
+        "messages": [{"role": "user", "content": "hello"}],
+        "temperature": 0,
+    }
+    assert selection.status.active == "deepseek"
+    assert selection.status.model == "deepseek-reasoner"
 
 
 def test_demo_provider_factory_falls_back_visibly_when_configuration_missing() -> None:

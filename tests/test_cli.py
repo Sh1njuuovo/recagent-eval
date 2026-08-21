@@ -3,11 +3,14 @@ import json
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 import yaml
 from typer.testing import CliRunner
 
+from recagent_eval.cases import EvaluationCase
 from recagent_eval.cli import app
 from recagent_eval.data import Movie, Rating
+from recagent_eval.models import PreferenceState
 from recagent_eval.v2_selection import (
     consume_frozen_authorization,
     consumption_marker_path,
@@ -259,6 +262,344 @@ def test_consumed_frozen_identity_rejects_before_any_dataset_or_model_load(
     )
     assert result.exit_code != 0
     assert "already consumed" in result.output
+
+
+def _tiny_dataset():
+    movies = {
+        movie_id: Movie(movie_id, f"Movie {movie_id}", ("Drama",), 2000)
+        for movie_id in range(1, 6)
+    }
+    ratings = [
+        Rating(user_id, movie_id, 5, movie_id)
+        for user_id in range(1, 4)
+        for movie_id in range(1, 6)
+    ]
+    return movies, ratings
+
+
+def test_build_embeddings_rejects_device_and_missing_dataset(tmp_path) -> None:
+    invalid = CliRunner().invoke(
+        app, ["build-embeddings", "--data-dir", str(tmp_path), "--device", "metal"]
+    )
+    missing = CliRunner().invoke(
+        app, ["build-embeddings", "--data-dir", str(tmp_path)]
+    )
+
+    assert invalid.exit_code != 0
+    assert "device must be cpu or cuda" in invalid.output
+    assert missing.exit_code != 0
+    assert "movies.dat missing" in missing.output
+
+
+def test_build_embeddings_reuses_cache_and_force_rebuilds(tmp_path, monkeypatch) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "movies.dat").write_text("catalog")
+    output = tmp_path / "dense.npz"
+    output.write_bytes(b"cache")
+    movies, _ = _tiny_dataset()
+    monkeypatch.setattr("recagent_eval.cli.load_movielens_movies", lambda path: movies)
+    validated = []
+    monkeypatch.setattr(
+        "recagent_eval.cli.DenseSemanticRetriever.validate_cache",
+        lambda path, **kwargs: validated.append((path, kwargs))
+        or {"resolved_revision": "commit-123"},
+    )
+
+    reused = CliRunner().invoke(
+        app,
+        ["build-embeddings", "--data-dir", str(data_dir), "--output", str(output)],
+    )
+
+    saved = []
+    retriever = SimpleNamespace(
+        model_revision="commit-456", save=lambda path: saved.append(path)
+    )
+    monkeypatch.setattr(
+        "recagent_eval.cli.DenseSemanticRetriever.fit",
+        lambda *args, **kwargs: retriever,
+    )
+    rebuilt = CliRunner().invoke(
+        app,
+        [
+            "build-embeddings",
+            "--data-dir",
+            str(data_dir),
+            "--output",
+            str(output),
+            "--force",
+        ],
+    )
+
+    assert reused.exit_code == 0, reused.output
+    assert "Reused 5 embeddings" in reused.output
+    assert validated[0][0] == output
+    assert rebuilt.exit_code == 0, rebuilt.output
+    assert saved == [output]
+    assert "commit-456" in rebuilt.output
+
+
+def test_prepare_cases_writes_generated_cases_and_rejects_shortfall(
+    tmp_path, monkeypatch
+) -> None:
+    movies, ratings = _tiny_dataset()
+    monkeypatch.setattr("recagent_eval.cli._load_dataset", lambda path: (movies, ratings))
+    case = EvaluationCase(
+        case_id="generated",
+        user_id=1,
+        turns=("recommend",),
+        relevant_movie_ids={5},
+        initial_state=PreferenceState(liked_movie_ids={1}),
+    )
+    monkeypatch.setattr("recagent_eval.cli.generate_cases", lambda *args, **kwargs: [case])
+    output = tmp_path / "cases.json"
+
+    valid = CliRunner().invoke(
+        app,
+        [
+            "prepare-cases",
+            "--data-dir",
+            str(tmp_path),
+            "--output",
+            str(output),
+            "--single-turn-count",
+            "1",
+            "--multi-turn-count",
+            "0",
+        ],
+    )
+    short = CliRunner().invoke(
+        app,
+        [
+            "prepare-cases",
+            "--data-dir",
+            str(tmp_path),
+            "--output",
+            str(output),
+            "--single-turn-count",
+            "2",
+            "--multi-turn-count",
+            "0",
+        ],
+    )
+
+    assert valid.exit_code == 0, valid.output
+    assert json.loads(output.read_text())[0]["case_id"] == "generated"
+    assert short.exit_code != 0
+    assert "not enough eligible users" in short.output
+
+
+def test_tune_and_select_retrieval_write_frozen_artifacts(tmp_path, monkeypatch) -> None:
+    movies, ratings = _tiny_dataset()
+    monkeypatch.setattr("recagent_eval.cli._load_dataset", lambda path: (movies, ratings))
+    monkeypatch.setattr(
+        "recagent_eval.cli.tune_on_validation",
+        lambda *args, **kwargs: (0.7, 0.2, 0.1),
+    )
+    config = tmp_path / "config.yaml"
+    config.write_text("name: tuned\nretrieval_top_k: 9\n")
+    tuned = tmp_path / "weights.json"
+    tuned_config = tmp_path / "tuned.yaml"
+
+    tune_result = CliRunner().invoke(
+        app,
+        [
+            "tune",
+            "--data-dir",
+            str(tmp_path),
+            "--output",
+            str(tuned),
+            "--config",
+            str(config),
+            "--config-output",
+            str(tuned_config),
+        ],
+    )
+    missing_config = CliRunner().invoke(
+        app,
+        [
+            "tune",
+            "--data-dir",
+            str(tmp_path),
+            "--output",
+            str(tmp_path / "other.json"),
+            "--config-output",
+            str(tmp_path / "invalid.yaml"),
+        ],
+    )
+    monkeypatch.setattr(
+        "recagent_eval.cli.build_retrieval_ablation",
+        lambda *args, **kwargs: [{"retrieval_top_k": 20, "ndcg_at_10": 0.4}],
+    )
+    monkeypatch.setattr(
+        "recagent_eval.cli.select_retrieval_parameters",
+        lambda *args, **kwargs: {
+            "retrieval_top_k": 20,
+            "semantic_profile_history_cap": 7,
+        },
+    )
+    evidence = tmp_path / "retrieval.json"
+    selected_config = tmp_path / "selected.yaml"
+    select_result = CliRunner().invoke(
+        app,
+        [
+            "select-retrieval",
+            "--data-dir",
+            str(tmp_path),
+            "--evidence-output",
+            str(evidence),
+            "--config-output",
+            str(selected_config),
+        ],
+    )
+
+    assert tune_result.exit_code == 0, tune_result.output
+    assert json.loads(tuned.read_text())["weights"] == [0.7, 0.2, 0.1]
+    assert yaml.safe_load(tuned_config.read_text())["weights"] == [0.7, 0.2, 0.1]
+    assert missing_config.exit_code != 0
+    assert "requires --config" in missing_config.output
+    assert select_result.exit_code == 0, select_result.output
+    assert json.loads(evidence.read_text())["selection"]["retrieval_top_k"] == 20
+    assert yaml.safe_load(selected_config.read_text())["semantic_profile_history_cap"] == 7
+
+
+@pytest.mark.parametrize(
+    ("candidate_row", "expected_ranker"),
+    [
+        (
+            {
+                "kind": "rrf",
+                "parameters": {"rrf_k": 30},
+                "ndcg_at_10": 0.4,
+                "recall_at_10": 0.5,
+                "hit_rate_at_10": 0.5,
+                "users": 3,
+            },
+            {"kind": "rrf", "rrf_k": 30},
+        ),
+        (
+            {
+                "kind": "percentile_linear",
+                "parameters": {"weights": [0.8, 0.2]},
+                "ndcg_at_10": 0.4,
+                "recall_at_10": 0.5,
+                "hit_rate_at_10": 0.5,
+                "users": 3,
+            },
+            {"kind": "percentile_linear", "weights": [0.8, 0.2]},
+        ),
+    ],
+)
+def test_select_ranker_unlocks_and_writes_exact_selected_parameters(
+    tmp_path, monkeypatch, candidate_row, expected_ranker
+) -> None:
+    movies, ratings = _tiny_dataset()
+    monkeypatch.setattr("recagent_eval.cli._load_dataset", lambda path: (movies, ratings))
+    itemcf = {
+        "kind": "itemcf",
+        "parameters": {},
+        "ndcg_at_10": 0.2,
+        "recall_at_10": 0.3,
+        "hit_rate_at_10": 0.3,
+        "users": 3,
+    }
+    monkeypatch.setattr(
+        "recagent_eval.cli.build_ranker_ablation",
+        lambda *args, **kwargs: [itemcf, candidate_row],
+    )
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        "name: selection\nrequired_retrieval_tools: [itemcf_retrieve, semantic_retrieve]\n"
+    )
+    cases = tmp_path / "cases.json"
+    cases.write_text("[]")
+    evidence = tmp_path / "evidence.json"
+    selected = tmp_path / "selected.yaml"
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "select-ranker",
+            "--config",
+            str(config),
+            "--cases",
+            str(cases),
+            "--data-dir",
+            str(tmp_path),
+            "--evidence-output",
+            str(evidence),
+            "--config-output",
+            str(selected),
+            "--max-users",
+            "3",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Frozen test unlocked" in result.output
+    assert yaml.safe_load(selected.read_text())["ranker"] == expected_ranker
+    assert json.loads(evidence.read_text())["test_unlocked"] is True
+
+
+def test_evaluate_and_subset_commands_forward_validated_inputs(tmp_path, monkeypatch) -> None:
+    movies, ratings = _tiny_dataset()
+    monkeypatch.setattr("recagent_eval.cli._load_dataset", lambda path: (movies, ratings))
+    config = tmp_path / "config.yaml"
+    config.write_text("name: evaluate\n")
+    source = tmp_path / "cases.json"
+    cases = [
+        EvaluationCase(
+            case_id="single-1",
+            user_id=1,
+            turns=("recommend",),
+            relevant_movie_ids={5},
+            tags=("single-turn",),
+        )
+    ]
+    source.write_text(json.dumps([case.model_dump(mode="json") for case in cases]))
+    seen = {}
+
+    def fake_run(**kwargs):
+        seen.update(kwargs)
+        return {"episodes": len(kwargs["cases"]), "ndcg_at_10": 0.5}
+
+    monkeypatch.setattr("recagent_eval.cli.run_experiment", fake_run)
+    output = tmp_path / "run"
+    evaluated = CliRunner().invoke(
+        app,
+        [
+            "evaluate",
+            "--config",
+            str(config),
+            "--cases",
+            str(source),
+            "--data-dir",
+            str(tmp_path),
+            "--output",
+            str(output),
+        ],
+    )
+    subset = tmp_path / "subset.json"
+    subset_result = CliRunner().invoke(
+        app,
+        [
+            "subset-cases",
+            "--source",
+            str(source),
+            "--output",
+            str(subset),
+            "--single-turn-count",
+            "1",
+            "--multi-turn-count",
+            "0",
+        ],
+    )
+
+    assert evaluated.exit_code == 0, evaluated.output
+    assert json.loads(evaluated.output)["episodes"] == 1
+    assert seen["output_dir"] == output
+    assert subset_result.exit_code == 0, subset_result.output
+    assert json.loads(subset.read_text())[0]["case_id"] == "single-1"
 
 
 def _learned_frozen_config(tmp_path) -> tuple[object, object]:
