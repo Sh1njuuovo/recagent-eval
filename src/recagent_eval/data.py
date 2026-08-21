@@ -192,7 +192,8 @@ def leakage_safe_ranking_split(
             row
             for row in rows
             if (row.timestamp, row.movie_id, row.rating) < validation_key
-            and row.movie_id not in target_movie_ids
+            and row.movie_id
+            not in {validation_row.movie_id, test_row.movie_id}
         ]
         histories[user_id] = history
         history_rows.extend(history)

@@ -38,6 +38,12 @@ def load_experiment_config(path: Path) -> ExperimentConfig:
     )
     if evidence_path_value is not None and not learned_evidence_path:
         raise ValueError("ranker.evidence_path must not be empty")
+    bundle_path_value = ranker_payload.get("bundle_manifest_path")
+    learned_bundle_manifest_path = (
+        str(bundle_path_value).strip() if bundle_path_value is not None else None
+    )
+    if bundle_path_value is not None and not learned_bundle_manifest_path:
+        raise ValueError("ranker.bundle_manifest_path must not be empty")
     learned_values = {
         name: (
             str(ranker_payload.get(name)).strip()
@@ -116,6 +122,7 @@ def load_experiment_config(path: Path) -> ExperimentConfig:
         semantic_device=semantic_device,
         learned_model_path=learned_model_path,
         learned_evidence_path=learned_evidence_path,
+        learned_bundle_manifest_path=learned_bundle_manifest_path,
         learned_dataset_fingerprint=learned_values["dataset_fingerprint"],
         learned_candidate_policy_fingerprint=learned_values[
             "candidate_policy_fingerprint"

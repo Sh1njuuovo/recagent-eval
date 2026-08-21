@@ -19,6 +19,7 @@ from recagent_eval.learned_ranking import (
     RankerEstimator,
     build_training_matrix,
 )
+from recagent_eval.safe_io import read_regular_file
 
 
 @dataclass(frozen=True)
@@ -648,9 +649,7 @@ def consume_frozen_authorization(
         )
     except FileExistsError as exc:
         try:
-            if marker_path.stat().st_size > 4096:
-                raise ValueError("frozen authorization marker is invalid")
-            existing = json.loads(marker_path.read_text())
+            existing = json.loads(read_regular_file(marker_path, max_bytes=4096))
         except (OSError, ValueError) as read_exc:
             raise ValueError("frozen authorization marker is invalid") from read_exc
         required = set(payload)
@@ -672,6 +671,33 @@ def consume_frozen_authorization(
         stream.write("\n")
         stream.flush()
         os.fsync(stream.fileno())
+    directory = os.open(marker_path.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
+
+
+def assert_frozen_authorization_available(
+    marker_path: Path, *, case_fingerprint: str
+) -> None:
+    """Fail before loading frozen inputs when an authorization is already consumed."""
+    if not marker_path.exists():
+        return
+    try:
+        existing = json.loads(read_regular_file(marker_path, max_bytes=4096))
+    except (OSError, ValueError) as exc:
+        raise ValueError("frozen authorization marker is invalid") from exc
+    required = {"schema_version", "evidence_hash", "case_fingerprint", "consumed_at"}
+    if (
+        set(existing) != required
+        or existing.get("schema_version") != "lambdamart-frozen-consumption/v1"
+        or any(type(existing.get(key)) is not str for key in required)
+    ):
+        raise ValueError("frozen authorization marker is invalid")
+    if existing["case_fingerprint"] != case_fingerprint:
+        raise ValueError("frozen authorization marker binding mismatch")
+    raise ValueError("frozen authorization was already consumed")
 
 
 def consumption_marker_path(

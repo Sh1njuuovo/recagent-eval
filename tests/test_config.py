@@ -63,6 +63,7 @@ def test_complete_learned_gate_config_round_trips(tmp_path: Path) -> None:
   kind: lambdamart
   model_path: model.json
   evidence_path: evidence.json
+  bundle_manifest_path: bundle.json
   dataset_fingerprint: dataset
   candidate_policy_fingerprint: policy
   config_fingerprint: config
@@ -73,6 +74,7 @@ def test_complete_learned_gate_config_round_trips(tmp_path: Path) -> None:
     )
     config = load_experiment_config(path)
     assert config.learned_dataset_fingerprint == "dataset"
+    assert config.learned_bundle_manifest_path == "bundle.json"
     assert config.learned_candidate_policy_fingerprint == "policy"
     assert config.learned_config_fingerprint == "config"
     assert config.learned_case_fingerprint == "cases"

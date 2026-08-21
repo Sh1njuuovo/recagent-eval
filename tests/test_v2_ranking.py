@@ -55,7 +55,11 @@ def _valid_artifact(**overrides) -> RankerArtifact:
         "dataset_fingerprint": "dataset",
         "training_user_count": 3,
         "training_group_count": 3,
-        "dependency_versions": {"lightgbm": "test"},
+        "dependency_versions": {
+            "lightgbm": "test",
+            "numpy": "test",
+            "scikit-learn": "test",
+        },
         "model_string": "model contents",
         "model_checksum": hashlib.sha256(b"model contents").hexdigest(),
         "training_rows_fingerprint": "train",
@@ -105,7 +109,7 @@ def test_leakage_safe_split_has_three_disjoint_targets_and_ordered_history() -> 
     assert split.validation_targets == {1: 3, 2: 6}
     assert split.test_targets == {1: 4, 2: 7}
     assert [row.movie_id for row in split.histories[1]] == [99, 1]
-    assert [row.movie_id for row in split.legal_retrieval_train if row.user_id == 1] == [99, 1]
+    assert [row.movie_id for row in split.legal_retrieval_train if row.user_id == 1] == [99, 1, 2]
     assert set(split.ranker_targets) == {1, 2}
     assert len({split.ranker_targets[1], split.validation_targets[1], split.test_targets[1]}) == 3
 
@@ -125,7 +129,7 @@ def test_split_uses_latest_three_distinct_movies_and_removes_all_target_rows() -
     assert split.validation_targets == {1: 3}
     assert split.test_targets == {1: 4}
     assert [row.movie_id for row in split.histories[1]] == [1]
-    assert [row.movie_id for row in split.legal_retrieval_train] == [1]
+    assert [row.movie_id for row in split.legal_retrieval_train] == [1, 2, 2]
 
 
 def test_feature_schema_values_are_finite_and_routes_have_presence_flags() -> None:
@@ -267,6 +271,11 @@ def test_ranker_artifact_rejects_missing_or_extra_provenance(tmp_path: Path) -> 
 def test_ranker_artifact_requires_explicit_lowercase_sha256(checksum: str) -> None:
     with pytest.raises(ValueError, match="checksum"):
         _valid_artifact(model_checksum=checksum)
+
+
+def test_ranker_artifact_requires_all_runtime_dependency_versions() -> None:
+    with pytest.raises(ValueError, match="dependency versions"):
+        _valid_artifact(dependency_versions={"lightgbm": "test"})
 
 def test_real_lightgbm_ranker_smoke_uses_query_groups() -> None:
     matrix = build_training_matrix(

@@ -9,6 +9,7 @@ from typing import Annotated
 import typer
 import yaml
 
+from recagent_eval.bundle import load_ranker_bundle
 from recagent_eval.candidate_features import FEATURE_SCHEMA_FINGERPRINT
 from recagent_eval.cases import (
     EvaluationCase,
@@ -37,7 +38,7 @@ from recagent_eval.lambdamart_pipeline import (
 from recagent_eval.learned_ranking import (
     LearnedRanker,
     estimator_from_artifact,
-    load_ranker_artifact,
+    parse_ranker_artifact,
 )
 from recagent_eval.models import PreferenceState
 from recagent_eval.provider import OpenAICompatibleProvider, RuleBasedProvider
@@ -58,6 +59,7 @@ from recagent_eval.retrieval import (
     TfidfSemanticRetriever,
 )
 from recagent_eval.runner import ExperimentConfig, case_fingerprint, run_experiment
+from recagent_eval.safe_io import ensure_distinct_files
 from recagent_eval.tuning import (
     build_retrieval_ablation,
     select_retrieval_parameters,
@@ -65,6 +67,7 @@ from recagent_eval.tuning import (
 )
 from recagent_eval.v2_selection import (
     LearnedValidationEvidence,
+    assert_frozen_authorization_available,
     consume_frozen_authorization,
     consumption_marker_path,
     validate_learned_gate,
@@ -273,19 +276,32 @@ def select_ranker_command(
         retrieval_top_k=config.retrieval_top_k,
         history_cap=config.semantic_profile_history_cap,
     )
-    if config.learned_model_path is not None or config.learned_evidence_path is not None:
-        if config.learned_model_path is None or config.learned_evidence_path is None:
+    learned_paths = (
+        config.learned_model_path,
+        config.learned_evidence_path,
+        config.learned_bundle_manifest_path,
+    )
+    if any(path is not None for path in learned_paths):
+        if any(path is None for path in learned_paths):
             raise typer.BadParameter(
-                "ranker.model_path and ranker.evidence_path must be configured together"
+                "ranker model, evidence, and bundle manifest paths must be configured together"
             )
+        assert config.learned_model_path is not None
+        assert config.learned_evidence_path is not None
+        assert config.learned_bundle_manifest_path is not None
         learned_split = leakage_safe_ranking_split(ratings)
         learned_dataset_fingerprint = ranking_dataset_fingerprint(
             movies, learned_split
         )
         registered_case_fingerprint = case_fingerprint(load_cases(cases_path))
         try:
-            artifact = load_ranker_artifact(
+            model_bytes, evidence_bytes = load_ranker_bundle(
                 Path(config.learned_model_path),
+                Path(config.learned_evidence_path),
+                Path(config.learned_bundle_manifest_path),
+            )
+            artifact = parse_ranker_artifact(
+                model_bytes,
                 expected_dataset_fingerprint=learned_dataset_fingerprint,
                 expected_candidate_policy_fingerprint=candidate_policy_fingerprint(
                     config
@@ -294,7 +310,7 @@ def select_ranker_command(
                 expected_case_fingerprint=registered_case_fingerprint,
             )
             learned_evidence = LearnedValidationEvidence.model_validate_json(
-                Path(config.learned_evidence_path).read_text()
+                evidence_bytes
             )
             validate_learned_gate(
                 learned_evidence,
@@ -388,6 +404,7 @@ def select_ranker_command(
     elif selected_kind == "lambdamart":
         ranker_payload["model_path"] = config.learned_model_path
         ranker_payload["evidence_path"] = config.learned_evidence_path
+        ranker_payload["bundle_manifest_path"] = config.learned_bundle_manifest_path
         ranker_payload["dataset_fingerprint"] = learned_evidence.dataset_fingerprint
         ranker_payload["candidate_policy_fingerprint"] = (
             learned_evidence.candidate_policy_fingerprint
@@ -423,8 +440,10 @@ def train_ranker(
     evidence_output: Annotated[Path, typer.Option(help="Per-user validation evidence JSON")] = Path(
         "artifacts/lambdamart-validation.json"
     ),
+    bundle_manifest_output: Annotated[
+        Path, typer.Option(help="Atomic model/evidence bundle manifest JSON")
+    ] = Path("artifacts/lambdamart-bundle.json"),
     max_users: Annotated[int, typer.Option(min=3)] = 500,
-    seed: int = 42,
 ) -> None:
     config = _validated_config(config_path)
     movies, ratings = _load_dataset(data_dir)
@@ -455,8 +474,9 @@ def train_ranker(
             config,
             model_output=output,
             evidence_output=evidence_output,
+            bundle_manifest_output=bundle_manifest_output,
             max_users=max_users,
-            seed=seed,
+            seed=config.seed,
             registered_case_fingerprint=case_fingerprint(load_cases(cases_path)),
         )
     except (RuntimeError, ValueError) as exc:
@@ -560,6 +580,10 @@ def _evaluate_learned_ranker(
 ) -> None:
     if config.learned_model_path is None:
         raise typer.BadParameter("ranker.model_path is required when ranker.kind is lambdamart")
+    if config.learned_bundle_manifest_path is None:
+        raise typer.BadParameter(
+            "ranker.bundle_manifest_path is required when ranker.kind is lambdamart"
+        )
     if (
         config.learned_dataset_fingerprint is None
         or config.learned_config_fingerprint is None
@@ -573,16 +597,38 @@ def _evaluate_learned_ranker(
             "fingerprints and ranker.consumption_dir"
         )
     try:
-        evidence_bytes = evidence_path.read_bytes()
-        consume_frozen_authorization(
-            consumption_marker_path(
-                Path(config.learned_consumption_dir),
-                case_fingerprint=config.learned_case_fingerprint,
-                dataset_fingerprint=config.learned_dataset_fingerprint,
-                config_fingerprint=config.learned_config_fingerprint,
-            ),
-            evidence_hash=hashlib.sha256(evidence_bytes).hexdigest(),
+        marker_path = consumption_marker_path(
+            Path(config.learned_consumption_dir),
             case_fingerprint=config.learned_case_fingerprint,
+            dataset_fingerprint=config.learned_dataset_fingerprint,
+            config_fingerprint=config.learned_config_fingerprint,
+        )
+        assert_frozen_authorization_available(
+            marker_path, case_fingerprint=config.learned_case_fingerprint
+        )
+        frozen_paths = {
+            "model": Path(config.learned_model_path),
+            "evidence": evidence_path,
+            "bundle manifest": Path(config.learned_bundle_manifest_path),
+            "frozen cases": cases_path,
+            "dataset directory": data_dir,
+            "frozen output": output,
+            "consumption marker": marker_path,
+        }
+        if config.semantic_cache_path is not None:
+            frozen_paths["semantic cache"] = Path(config.semantic_cache_path)
+        ensure_distinct_files(frozen_paths)
+        model_bytes, evidence_bytes = load_ranker_bundle(
+            Path(config.learned_model_path),
+            evidence_path,
+            Path(config.learned_bundle_manifest_path),
+            expected_metadata={
+                "run_fingerprint": config.learned_gate_fingerprint,
+                "config_fingerprint": config.learned_config_fingerprint,
+                "dataset_fingerprint": config.learned_dataset_fingerprint,
+                "candidate_policy_fingerprint": config.learned_candidate_policy_fingerprint,
+                "feature_fingerprint": FEATURE_SCHEMA_FINGERPRINT,
+            },
         )
     except (OSError, ValueError) as exc:
         raise typer.BadParameter(str(exc)) from exc
@@ -593,10 +639,9 @@ def _evaluate_learned_ranker(
         movies, ratings = _load_dataset(data_dir)
         split = leakage_safe_ranking_split(ratings)
         dataset_fingerprint = ranking_dataset_fingerprint(movies, split)
-        cases = load_cases(cases_path)
-        fixed_case_fingerprint = case_fingerprint(cases)
-        artifact = load_ranker_artifact(
-            Path(config.learned_model_path),
+        fixed_case_fingerprint = config.learned_case_fingerprint
+        artifact = parse_ranker_artifact(
+            model_bytes,
             expected_dataset_fingerprint=dataset_fingerprint,
             expected_candidate_policy_fingerprint=candidate_policy_fingerprint(config),
             expected_config_fingerprint=lambdamart_config_fingerprint(config),
@@ -660,6 +705,17 @@ def _evaluate_learned_ranker(
         )
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
+    try:
+        consume_frozen_authorization(
+            marker_path,
+            evidence_hash=hashlib.sha256(evidence_bytes).hexdigest(),
+            case_fingerprint=config.learned_case_fingerprint,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    cases = load_cases(cases_path)
+    if case_fingerprint(cases) != fixed_case_fingerprint:
+        raise typer.BadParameter("registered frozen case fingerprint mismatch")
     metrics = evaluate_frozen_cases(
         movies,
         split.legal_retrieval_train,

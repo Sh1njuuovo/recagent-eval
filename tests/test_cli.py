@@ -1,5 +1,6 @@
 import hashlib
 import json
+from types import SimpleNamespace
 
 import numpy as np
 import yaml
@@ -66,7 +67,7 @@ def test_train_ranker_cli_smoke_uses_offline_semantic_retriever(
     tmp_path, monkeypatch
 ) -> None:
     config = tmp_path / "ranker.yaml"
-    config.write_text("semantic:\n  kind: tfidf\n")
+    config.write_text("seed: 73\nsemantic:\n  kind: tfidf\n")
     cases = tmp_path / "cases.json"
     cases.write_text("[]")
     movies = {
@@ -111,6 +112,18 @@ def test_train_ranker_cli_smoke_uses_offline_semantic_retriever(
     assert result.exit_code == 0, result.output
     assert json.loads(result.output)["training_users"] == 3
     assert seen["max_users"] == 3
+    assert seen["seed"] == 73
+
+
+def test_train_ranker_has_no_ambiguous_cli_seed_override(tmp_path) -> None:
+    config = tmp_path / "ranker.yaml"
+    config.write_text("seed: 73\n")
+    result = CliRunner().invoke(
+        app,
+        ["train-ranker", "--config", str(config), "--seed", "42"],
+    )
+    assert result.exit_code != 0
+    assert "No such option" in result.output
 
 
 def test_generic_evaluate_rejects_lambdamart_before_loading_artifact(tmp_path) -> None:
@@ -143,6 +156,7 @@ def test_consumed_frozen_identity_rejects_before_any_dataset_or_model_load(
   kind: lambdamart
   model_path: {tmp_path / 'missing-model.json'}
   evidence_path: {evidence}
+  bundle_manifest_path: {tmp_path / 'missing-bundle.json'}
   dataset_fingerprint: dataset
   candidate_policy_fingerprint: policy
   config_fingerprint: config
@@ -181,6 +195,122 @@ def test_consumed_frozen_identity_rejects_before_any_dataset_or_model_load(
     )
     assert result.exit_code != 0
     assert "already consumed" in result.output
+
+
+def _learned_frozen_config(tmp_path) -> tuple[object, object]:
+    consumption_dir = tmp_path / "consumed"
+    config = tmp_path / "selected.yaml"
+    config.write_text(
+        f"""ranker:
+  kind: lambdamart
+  model_path: {tmp_path / "model.json"}
+  evidence_path: {tmp_path / "evidence.json"}
+  bundle_manifest_path: {tmp_path / "bundle.json"}
+  dataset_fingerprint: dataset
+  candidate_policy_fingerprint: policy
+  config_fingerprint: config
+  case_fingerprint: cases
+  gate_fingerprint: gate
+  consumption_dir: {consumption_dir}
+"""
+    )
+    marker = consumption_marker_path(
+        consumption_dir,
+        case_fingerprint="cases",
+        dataset_fingerprint="dataset",
+        config_fingerprint="config",
+    )
+    return config, marker
+
+
+def _stub_learned_preclaim(monkeypatch, *, validation_fingerprint: str) -> None:
+    evidence = SimpleNamespace(
+        evidence_fingerprint="gate", per_user_rows=[], mean_ndcg_delta=0.1
+    )
+    monkeypatch.setattr(
+        "recagent_eval.cli.load_ranker_bundle", lambda *args, **kwargs: (b"model", b"evidence")
+    )
+    monkeypatch.setattr(
+        "recagent_eval.cli.LearnedValidationEvidence",
+        SimpleNamespace(model_validate_json=lambda _raw: evidence),
+    )
+    monkeypatch.setattr("recagent_eval.cli._load_dataset", lambda _path: ({}, []))
+    monkeypatch.setattr("recagent_eval.cli.ranking_dataset_fingerprint", lambda *args: "dataset")
+    artifact = SimpleNamespace(
+        validation_user_count=0,
+        validation_rows_fingerprint=validation_fingerprint,
+        model_checksum="model",
+        model_dump=lambda **kwargs: {},
+    )
+    monkeypatch.setattr("recagent_eval.cli.parse_ranker_artifact", lambda *args, **kwargs: artifact)
+    monkeypatch.setattr("recagent_eval.cli.estimator_from_artifact", lambda _artifact: object())
+    monkeypatch.setattr("recagent_eval.cli.TfidfSemanticRetriever.fit", lambda _movies: object())
+    monkeypatch.setattr("recagent_eval.cli.build_validation_rows", lambda *args, **kwargs: [])
+    monkeypatch.setattr("recagent_eval.cli.candidate_policy_fingerprint", lambda _config: "policy")
+    monkeypatch.setattr("recagent_eval.cli.lambdamart_config_fingerprint", lambda _config: "config")
+    monkeypatch.setattr("recagent_eval.cli.validate_learned_gate", lambda *args, **kwargs: None)
+
+
+def test_validation_replay_failure_does_not_consume_marker(tmp_path, monkeypatch) -> None:
+    config, marker = _learned_frozen_config(tmp_path)
+    _stub_learned_preclaim(monkeypatch, validation_fingerprint="wrong")
+    result = CliRunner().invoke(
+        app,
+        [
+            "evaluate-ranker",
+            "--config",
+            str(config),
+            "--evidence",
+            str(tmp_path / "evidence.json"),
+            "--cases",
+            str(tmp_path / "cases.json"),
+        ],
+    )
+    assert result.exit_code != 0
+    assert "replay" in result.output
+    assert not marker.exists()
+
+
+def test_missing_bundle_members_do_not_consume_marker(tmp_path) -> None:
+    config, marker = _learned_frozen_config(tmp_path)
+    result = CliRunner().invoke(
+        app,
+        [
+            "evaluate-ranker",
+            "--config",
+            str(config),
+            "--evidence",
+            str(tmp_path / "evidence.json"),
+            "--cases",
+            str(tmp_path / "cases.json"),
+        ],
+    )
+    assert result.exit_code != 0
+    assert "bundle manifest" in result.output
+    assert not marker.exists()
+
+
+def test_case_loader_failure_after_claim_keeps_marker_consumed(tmp_path, monkeypatch) -> None:
+    config, marker = _learned_frozen_config(tmp_path)
+    fingerprint = hashlib.sha256(b"[]").hexdigest()
+    _stub_learned_preclaim(monkeypatch, validation_fingerprint=fingerprint)
+    monkeypatch.setattr(
+        "recagent_eval.cli.load_cases", lambda _path: (_ for _ in ()).throw(ValueError("bad cases"))
+    )
+    result = CliRunner().invoke(
+        app,
+        [
+            "evaluate-ranker",
+            "--config",
+            str(config),
+            "--evidence",
+            str(tmp_path / "evidence.json"),
+            "--cases",
+            str(tmp_path / "cases.json"),
+        ],
+    )
+    assert result.exit_code != 0
+    assert marker.exists()
 
 
 def test_build_embeddings_uses_injected_sentence_encoder(tmp_path, monkeypatch) -> None:

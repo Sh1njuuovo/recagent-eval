@@ -25,6 +25,7 @@ from recagent_eval.candidate_features import (
 )
 from recagent_eval.data import Movie, Rating
 from recagent_eval.models import PreferenceState, RecommendedMovie, ScoreBreakdown
+from recagent_eval.safe_io import read_regular_file
 
 ARTIFACT_SCHEMA_VERSION = "lambdamart-artifact/v1"
 MAX_ARTIFACT_BYTES = 64 * 1024 * 1024
@@ -285,7 +286,13 @@ class RankerArtifact(BaseModel):
         )
         if any(not value or value == "unspecified" for value in provenance_strings):
             raise ValueError("ranker artifact provenance must be non-empty")
-        if not self.dependency_versions or not self.fold_map:
+        required_dependencies = {"lightgbm", "numpy", "scikit-learn"}
+        if (
+            set(self.dependency_versions) != required_dependencies
+            or any(not value for value in self.dependency_versions.values())
+        ):
+            raise ValueError("ranker artifact dependency versions are incomplete")
+        if not self.fold_map:
             raise ValueError("ranker artifact provenance must be non-empty")
         try:
             created = datetime.fromisoformat(self.created_at)
@@ -472,9 +479,7 @@ class _BoosterEstimator:
 
 
 def save_ranker_artifact(artifact: RankerArtifact, path: Path) -> None:
-    payload = artifact.model_dump_json(indent=2).encode()
-    if len(payload) > MAX_ARTIFACT_BYTES:
-        raise ValueError("ranker artifact exceeds maximum size")
+    payload = serialize_ranker_artifact(artifact)
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     try:
@@ -489,6 +494,13 @@ def save_ranker_artifact(artifact: RankerArtifact, path: Path) -> None:
         raise
 
 
+def serialize_ranker_artifact(artifact: RankerArtifact) -> bytes:
+    payload = (artifact.model_dump_json(indent=2) + "\n").encode()
+    if len(payload) > MAX_ARTIFACT_BYTES:
+        raise ValueError("ranker artifact exceeds maximum size")
+    return payload
+
+
 def load_ranker_artifact(
     path: Path,
     *,
@@ -499,13 +511,32 @@ def load_ranker_artifact(
     expected_case_fingerprint: str | None = None,
 ) -> RankerArtifact:
     try:
-        size = path.stat().st_size
-    except FileNotFoundError as exc:
-        raise ValueError(f"LambdaMART artifact is missing: {path}") from exc
-    if size > MAX_ARTIFACT_BYTES:
-        raise ValueError("ranker artifact exceeds maximum size")
+        raw = read_regular_file(path, max_bytes=MAX_ARTIFACT_BYTES)
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"invalid LambdaMART artifact: {exc}") from exc
+    return parse_ranker_artifact(
+        raw,
+        expected_dataset_fingerprint=expected_dataset_fingerprint,
+        expected_feature_fingerprint=expected_feature_fingerprint,
+        expected_candidate_policy_fingerprint=expected_candidate_policy_fingerprint,
+        expected_config_fingerprint=expected_config_fingerprint,
+        expected_case_fingerprint=expected_case_fingerprint,
+    )
+
+
+def parse_ranker_artifact(
+    raw: bytes,
+    *,
+    expected_dataset_fingerprint: str | None = None,
+    expected_feature_fingerprint: str = FEATURE_SCHEMA_FINGERPRINT,
+    expected_candidate_policy_fingerprint: str | None = None,
+    expected_config_fingerprint: str | None = None,
+    expected_case_fingerprint: str | None = None,
+) -> RankerArtifact:
+    if len(raw) > MAX_ARTIFACT_BYTES:
+        raise ValueError("invalid LambdaMART artifact: artifact exceeds maximum size")
     try:
-        payload = json.loads(path.read_bytes())
+        payload = json.loads(raw)
         required = {
             "schema_version",
             "kind",
@@ -566,17 +597,17 @@ def load_ranker_artifact(
         and artifact.case_fingerprint != expected_case_fingerprint
     ):
         raise ValueError("ranker artifact case fingerprint mismatch")
-    stored_lightgbm = artifact.dependency_versions.get("lightgbm")
-    runtime_lightgbm = _dependency_version("lightgbm")
-    if (
-        stored_lightgbm not in {None, "missing", "test"}
-        and runtime_lightgbm != "missing"
-        and stored_lightgbm.split(".", 1)[0] != runtime_lightgbm.split(".", 1)[0]
-    ):
-        raise ValueError(
-            "ranker artifact LightGBM version is incompatible: "
-            f"artifact={stored_lightgbm}, runtime={runtime_lightgbm}"
-        )
+    for package, stored_version in artifact.dependency_versions.items():
+        runtime_version = _dependency_version(package)
+        if stored_version == "test":
+            continue
+        if runtime_version == "missing" or stored_version.split(".", 1)[0] != runtime_version.split(
+            ".", 1
+        )[0]:
+            raise ValueError(
+                f"ranker artifact {package} version is incompatible: "
+                f"artifact={stored_version}, runtime={runtime_version}"
+            )
     return artifact
 
 

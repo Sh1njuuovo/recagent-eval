@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from recagent_eval.agent import build_semantic_profile
+from recagent_eval.bundle import publish_ranker_bundle
 from recagent_eval.candidate_features import (
     FEATURE_SCHEMA_FINGERPRINT,
     build_candidate_feature_rows,
@@ -20,7 +21,7 @@ from recagent_eval.learned_ranking import (
     artifact_from_estimator,
     build_training_matrix,
     make_lgbm_ranker,
-    save_ranker_artifact,
+    serialize_ranker_artifact,
 )
 from recagent_eval.models import PreferenceState
 from recagent_eval.ranking import HybridRanker
@@ -40,6 +41,7 @@ def train_lambdamart_pipeline(
     *,
     model_output: Path,
     evidence_output: Path,
+    bundle_manifest_output: Path,
     max_users: int,
     seed: int,
     registered_case_fingerprint: str = "unregistered",
@@ -130,8 +132,6 @@ def train_lambdamart_pipeline(
         provenance=provenance,
         cv_results=cv_results,
     )
-    save_ranker_artifact(artifact, model_output)
-
     policy_fingerprint = candidate_policy_fingerprint(config)
     evidence = build_validation_evidence(
         rows,
@@ -149,10 +149,22 @@ def train_lambdamart_pipeline(
             "dependency_versions": artifact.dependency_versions,
         },
     )
-    evidence_output.parent.mkdir(parents=True, exist_ok=True)
-    evidence_output.write_text(
-        json.dumps(evidence.model_dump(mode="json"), indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
+    evidence_bytes = (
+        json.dumps(evidence.model_dump(mode="json"), indent=2, sort_keys=True) + "\n"
+    ).encode()
+    publish_ranker_bundle(
+        serialize_ranker_artifact(artifact),
+        evidence_bytes,
+        model_output,
+        evidence_output,
+        bundle_manifest_output,
+        {
+            "run_fingerprint": evidence.evidence_fingerprint,
+            "config_fingerprint": provenance["config_fingerprint"],
+            "dataset_fingerprint": dataset_fingerprint,
+            "candidate_policy_fingerprint": policy_fingerprint,
+            "feature_fingerprint": FEATURE_SCHEMA_FINGERPRINT,
+        },
     )
     return {
         "selected_params": cv.selected_params,
@@ -163,6 +175,7 @@ def train_lambdamart_pipeline(
         "dataset_fingerprint": dataset_fingerprint,
         "feature_fingerprint": FEATURE_SCHEMA_FINGERPRINT,
         "candidate_policy_fingerprint": policy_fingerprint,
+        "bundle_manifest_path": str(bundle_manifest_output),
     }
 
 
