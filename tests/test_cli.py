@@ -6,6 +6,7 @@ import yaml
 from typer.testing import CliRunner
 
 from recagent_eval.cli import app
+from recagent_eval.data import Movie, Rating
 
 
 def test_smoke_command_runs_offline_end_to_end(tmp_path) -> None:
@@ -55,6 +56,53 @@ def test_show_config_includes_retrieval_policy(tmp_path) -> None:
         "semantic_retrieve",
     ]
     assert payload["semantic_profile_history_cap"] == 20
+
+
+def test_train_ranker_cli_smoke_uses_offline_semantic_retriever(
+    tmp_path, monkeypatch
+) -> None:
+    config = tmp_path / "ranker.yaml"
+    config.write_text("semantic:\n  kind: tfidf\n")
+    movies = {
+        movie_id: Movie(movie_id, f"Movie {movie_id}", ("Drama",), 2000)
+        for movie_id in range(1, 5)
+    }
+    ratings = [
+        Rating(user, movie_id, 5, movie_id)
+        for user in range(1, 4)
+        for movie_id in range(1, 5)
+    ]
+    monkeypatch.setattr(
+        "recagent_eval.cli._load_dataset", lambda _path: (movies, ratings)
+    )
+    seen = {}
+
+    def fake_train(*args, **kwargs):
+        seen.update(kwargs)
+        return {"training_users": 3}
+
+    monkeypatch.setattr("recagent_eval.cli.train_lambdamart_pipeline", fake_train)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "train-ranker",
+            "--config",
+            str(config),
+            "--data-dir",
+            str(tmp_path),
+            "--output",
+            str(tmp_path / "model.json"),
+            "--evidence-output",
+            str(tmp_path / "evidence.json"),
+            "--max-users",
+            "3",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["training_users"] == 3
+    assert seen["max_users"] == 3
 
 
 def test_build_embeddings_uses_injected_sentence_encoder(tmp_path, monkeypatch) -> None:

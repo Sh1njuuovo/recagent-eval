@@ -9,6 +9,7 @@ from typing import Annotated
 import typer
 import yaml
 
+from recagent_eval.candidate_features import FEATURE_SCHEMA_FINGERPRINT
 from recagent_eval.cases import (
     EvaluationCase,
     generate_cases,
@@ -21,10 +22,21 @@ from recagent_eval.data import (
     Movie,
     Rating,
     chronological_split,
+    leakage_safe_ranking_split,
     load_movielens_movies,
     load_movielens_ratings,
 )
 from recagent_eval.dataset import download_movielens_1m
+from recagent_eval.lambdamart_pipeline import (
+    candidate_policy_fingerprint,
+    ranking_dataset_fingerprint,
+    train_lambdamart_pipeline,
+)
+from recagent_eval.learned_ranking import (
+    LearnedRanker,
+    estimator_from_artifact,
+    load_ranker_artifact,
+)
 from recagent_eval.models import PreferenceState
 from recagent_eval.provider import OpenAICompatibleProvider, RuleBasedProvider
 from recagent_eval.ranker_selection import (
@@ -38,12 +50,20 @@ from recagent_eval.ranker_selection import (
     select_ranker as select_ranker_evidence,
 )
 from recagent_eval.ranking import HybridRanker
-from recagent_eval.retrieval import DEFAULT_DENSE_MODEL, DenseSemanticRetriever
+from recagent_eval.retrieval import (
+    DEFAULT_DENSE_MODEL,
+    DenseSemanticRetriever,
+    TfidfSemanticRetriever,
+)
 from recagent_eval.runner import ExperimentConfig, case_fingerprint, run_experiment
 from recagent_eval.tuning import (
     build_retrieval_ablation,
     select_retrieval_parameters,
     tune_on_validation,
+)
+from recagent_eval.v2_selection import (
+    LearnedValidationEvidence,
+    validate_learned_gate,
 )
 
 app = typer.Typer(no_args_is_help=True, help="Evaluate a conversational movie recommender.")
@@ -59,9 +79,7 @@ def download_data(
 
 @app.command("build-embeddings")
 def build_embeddings(
-    data_dir: Annotated[Path, typer.Option(help="MovieLens 1M directory")] = Path(
-        "data/raw/ml-1m"
-    ),
+    data_dir: Annotated[Path, typer.Option(help="MovieLens 1M directory")] = Path("data/raw/ml-1m"),
     output: Annotated[Path, typer.Option(help="Dense embedding NPZ cache")] = Path(
         "artifacts/embeddings/movielens.npz"
     ),
@@ -101,10 +119,7 @@ def build_embeddings(
         retriever.save(output)
     except (RuntimeError, ValueError) as exc:
         raise typer.BadParameter(str(exc)) from exc
-    typer.echo(
-        f"Wrote {len(movies)} embeddings to {output} "
-        f"at revision {retriever.model_revision}"
-    )
+    typer.echo(f"Wrote {len(movies)} embeddings to {output} at revision {retriever.model_revision}")
 
 
 @app.command("prepare-cases")
@@ -158,9 +173,7 @@ def tune(
             chronological_split(ratings),
             step=step,
             retrieval_top_k=config.retrieval_top_k if config else 100,
-            semantic_profile_history_cap=(
-                config.semantic_profile_history_cap if config else 20
-            ),
+            semantic_profile_history_cap=(config.semantic_profile_history_cap if config else 20),
         )
     )
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -180,9 +193,7 @@ def tune(
 
 @app.command("select-retrieval")
 def select_retrieval(
-    data_dir: Annotated[Path, typer.Option(help="MovieLens 1M directory")] = Path(
-        "data/raw/ml-1m"
-    ),
+    data_dir: Annotated[Path, typer.Option(help="MovieLens 1M directory")] = Path("data/raw/ml-1m"),
     evidence_output: Annotated[
         Path,
         typer.Option(help="Validation ablation JSON"),
@@ -210,9 +221,7 @@ def select_retrieval(
         "name": "structured-memory-hybrid-constraint-aware",
         "seed": 42,
         "retrieval_top_k": int(selection["retrieval_top_k"]),
-        "semantic_profile_history_cap": int(
-            selection["semantic_profile_history_cap"]
-        ),
+        "semantic_profile_history_cap": int(selection["semantic_profile_history_cap"]),
         "enable_memory": True,
         "enable_semantic_retrieval": True,
         "structured_planning": True,
@@ -237,16 +246,10 @@ def select_retrieval(
 @app.command("select-ranker")
 def select_ranker_command(
     config_path: Annotated[Path, typer.Option("--config")],
-    cases_path: Annotated[Path, typer.Option("--cases")] = Path(
-        "cases/fixed_cases.json"
-    ),
+    cases_path: Annotated[Path, typer.Option("--cases")] = Path("cases/fixed_cases.json"),
     data_dir: Annotated[Path, typer.Option()] = Path("data/raw/ml-1m"),
-    evidence_output: Annotated[Path, typer.Option()] = Path(
-        "artifacts/ranker_ablation.json"
-    ),
-    config_output: Annotated[Path, typer.Option()] = Path(
-        "configs/full_ranker_selected.yaml"
-    ),
+    evidence_output: Annotated[Path, typer.Option()] = Path("artifacts/ranker_ablation.json"),
+    config_output: Annotated[Path, typer.Option()] = Path("configs/full_ranker_selected.yaml"),
     max_users: int = 500,
 ) -> None:
     config = _validated_config(config_path)
@@ -266,6 +269,72 @@ def select_ranker_command(
         retrieval_top_k=config.retrieval_top_k,
         history_cap=config.semantic_profile_history_cap,
     )
+    if config.learned_model_path is not None or config.learned_evidence_path is not None:
+        if config.learned_model_path is None or config.learned_evidence_path is None:
+            raise typer.BadParameter(
+                "ranker.model_path and ranker.evidence_path must be configured together"
+            )
+        learned_split = leakage_safe_ranking_split(ratings)
+        learned_dataset_fingerprint = ranking_dataset_fingerprint(
+            movies, learned_split
+        )
+        try:
+            artifact = load_ranker_artifact(
+                Path(config.learned_model_path),
+                expected_dataset_fingerprint=learned_dataset_fingerprint,
+            )
+            learned_evidence = LearnedValidationEvidence.model_validate_json(
+                Path(config.learned_evidence_path).read_text()
+            )
+            validate_learned_gate(
+                learned_evidence,
+                dataset_fingerprint=learned_dataset_fingerprint,
+                feature_fingerprint=FEATURE_SCHEMA_FINGERPRINT,
+                model_fingerprint=artifact.model_checksum,
+                candidate_policy_fingerprint=candidate_policy_fingerprint(config),
+            )
+        except (OSError, ValueError) as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        rows.append(
+            {
+                "kind": "lambdamart",
+                "parameters": artifact.selected_params,
+                "recall_at_10": learned_evidence.aggregates["lambdamart_recall_at_10"],
+                "ndcg_at_10": learned_evidence.mean_lambdamart_ndcg_at_10,
+                "hit_rate_at_10": learned_evidence.aggregates["lambdamart_hit_at_10"],
+                "itemcf_candidate_recall": learned_evidence.aggregates["itemcf_candidate_recall"],
+                "semantic_candidate_recall": learned_evidence.aggregates["dense_candidate_recall"],
+                "union_candidate_recall": learned_evidence.aggregates["union_candidate_recall"],
+                "latency_ms_per_user": learned_evidence.aggregates["latency_ms"],
+                "users": len(learned_evidence.per_user_rows),
+                "validation_evidence_fingerprint": learned_evidence.evidence_fingerprint,
+            }
+        )
+        rows = [
+            {
+                "kind": "itemcf",
+                "parameters": {},
+                "recall_at_10": learned_evidence.aggregates[
+                    "itemcf_recall_at_10"
+                ],
+                "ndcg_at_10": learned_evidence.mean_itemcf_ndcg_at_10,
+                "hit_rate_at_10": learned_evidence.aggregates[
+                    "itemcf_hit_at_10"
+                ],
+                "itemcf_candidate_recall": learned_evidence.aggregates[
+                    "itemcf_candidate_recall"
+                ],
+                "semantic_candidate_recall": learned_evidence.aggregates[
+                    "dense_candidate_recall"
+                ],
+                "union_candidate_recall": learned_evidence.aggregates[
+                    "union_candidate_recall"
+                ],
+                "latency_ms_per_user": 0.0,
+                "users": len(learned_evidence.per_user_rows),
+            },
+            rows[-1],
+        ]
     fingerprint = ranker_dataset_fingerprint(
         movies,
         split,
@@ -303,6 +372,9 @@ def select_ranker_command(
         ranker_payload["rrf_k"] = int(parameters["rrf_k"])
     elif selected_kind == "percentile_linear":
         ranker_payload["weights"] = list(parameters["weights"])
+    elif selected_kind == "lambdamart":
+        ranker_payload["model_path"] = config.learned_model_path
+        ranker_payload["evidence_path"] = config.learned_evidence_path
     payload["ranker"] = ranker_payload
     config_output.parent.mkdir(parents=True, exist_ok=True)
     config_output.write_text(
@@ -313,6 +385,52 @@ def select_ranker_command(
         "Frozen test unlocked: selected "
         f"{selected_kind} with validation margin {evidence.margin:.6f}"
     )
+
+
+@app.command("train-ranker")
+def train_ranker(
+    config_path: Annotated[Path, typer.Option("--config")],
+    data_dir: Annotated[Path, typer.Option()] = Path("data/raw/ml-1m"),
+    output: Annotated[Path, typer.Option(help="LambdaMART artifact JSON")] = Path(
+        "artifacts/lambdamart.json"
+    ),
+    evidence_output: Annotated[Path, typer.Option(help="Per-user validation evidence JSON")] = Path(
+        "artifacts/lambdamart-validation.json"
+    ),
+    max_users: Annotated[int, typer.Option(min=3)] = 500,
+    seed: int = 42,
+) -> None:
+    config = _validated_config(config_path)
+    movies, ratings = _load_dataset(data_dir)
+    split = leakage_safe_ranking_split(ratings)
+    if len(split.ranker_targets) < 3:
+        raise typer.BadParameter("train-ranker requires at least three eligible users")
+    try:
+        if config.semantic_kind == "dense":
+            if config.semantic_cache_path is None:
+                raise ValueError("semantic.cache_path is required for offline LambdaMART training")
+            semantic = DenseSemanticRetriever.load(
+                Path(config.semantic_cache_path),
+                movies=movies,
+                model_name=config.semantic_model_name,
+                model_revision=config.semantic_model_revision,
+                device=config.semantic_device,
+            )
+        else:
+            semantic = TfidfSemanticRetriever.fit(movies)
+        summary = train_lambdamart_pipeline(
+            movies,
+            split,
+            semantic,
+            config,
+            model_output=output,
+            evidence_output=evidence_output,
+            max_users=max_users,
+            seed=seed,
+        )
+    except (RuntimeError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(json.dumps(summary, indent=2, sort_keys=True))
 
 
 @app.command("evaluate-ranker")
@@ -326,10 +444,17 @@ def evaluate_ranker(
     ),
 ) -> None:
     config = _validated_config(config_path)
-    try:
-        evidence = RankerSelectionEvidence.model_validate_json(
-            evidence_path.read_text()
+    if config.ranker_kind == "lambdamart":
+        _evaluate_learned_ranker(
+            config=config,
+            evidence_path=evidence_path,
+            cases_path=cases_path,
+            data_dir=data_dir,
+            output=output,
         )
+        return
+    try:
+        evidence = RankerSelectionEvidence.model_validate_json(evidence_path.read_text())
     except (OSError, ValueError) as exc:
         raise typer.BadParameter(str(exc)) from exc
     movies, ratings = _load_dataset(data_dir)
@@ -386,6 +511,78 @@ def evaluate_ranker(
         encoding="utf-8",
     )
     typer.echo(f"Frozen ranker test metrics written to {output}")
+
+
+def _evaluate_learned_ranker(
+    *,
+    config: ExperimentConfig,
+    evidence_path: Path,
+    cases_path: Path,
+    data_dir: Path,
+    output: Path,
+) -> None:
+    if config.learned_model_path is None:
+        raise typer.BadParameter("ranker.model_path is required when ranker.kind is lambdamart")
+    try:
+        evidence = LearnedValidationEvidence.model_validate_json(evidence_path.read_text())
+        movies, ratings = _load_dataset(data_dir)
+        split = leakage_safe_ranking_split(ratings)
+        dataset_fingerprint = ranking_dataset_fingerprint(movies, split)
+        artifact = load_ranker_artifact(
+            Path(config.learned_model_path),
+            expected_dataset_fingerprint=dataset_fingerprint,
+        )
+        validate_learned_gate(
+            evidence,
+            dataset_fingerprint=dataset_fingerprint,
+            feature_fingerprint=FEATURE_SCHEMA_FINGERPRINT,
+            model_fingerprint=artifact.model_checksum,
+            candidate_policy_fingerprint=candidate_policy_fingerprint(config),
+        )
+    except (OSError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    cases = load_cases(cases_path)
+    ranker = LearnedRanker(
+        estimator_from_artifact(artifact),
+        legal_train_rows=split.legal_retrieval_train,
+    )
+    if config.semantic_kind == "dense":
+        if config.semantic_cache_path is None:
+            raise typer.BadParameter(
+                "semantic.cache_path is required for frozen LambdaMART evaluation"
+            )
+        try:
+            semantic = DenseSemanticRetriever.load(
+                Path(config.semantic_cache_path),
+                movies=movies,
+                model_name=config.semantic_model_name,
+                model_revision=config.semantic_model_revision,
+                device=config.semantic_device,
+            )
+        except (OSError, ValueError) as exc:
+            raise typer.BadParameter(str(exc)) from exc
+    else:
+        semantic = TfidfSemanticRetriever.fit(movies)
+    metrics = evaluate_frozen_cases(
+        movies,
+        split.legal_retrieval_train,
+        cases,
+        ranker=ranker,
+        retrieval_top_k=config.retrieval_top_k,
+        history_cap=config.semantic_profile_history_cap,
+        semantic_retriever=semantic,
+    )
+    metrics.update(
+        {
+            "selection_margin": evidence.mean_ndcg_delta,
+            "selection_evidence_fingerprint": evidence.evidence_fingerprint,
+            "case_fingerprint": case_fingerprint(cases),
+            "dataset_fingerprint": dataset_fingerprint,
+        }
+    )
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(metrics, indent=2, sort_keys=True) + "\n")
+    typer.echo(f"Frozen LambdaMART test metrics written to {output}")
 
 
 def _ranker_parameters(config: ExperimentConfig) -> dict[str, object]:

@@ -42,6 +42,20 @@ def test_dense_semantic_config_is_loaded(tmp_path: Path) -> None:
     assert config.semantic_device == "cuda"
 
 
+def test_learned_ranker_paths_are_loaded(tmp_path: Path) -> None:
+    path = tmp_path / "learned.yaml"
+    path.write_text(
+        "ranker:\n  kind: lambdamart\n  model_path: artifacts/ranker.json\n"
+        "  evidence_path: artifacts/validation.json\n"
+    )
+
+    config = load_experiment_config(path)
+
+    assert config.ranker_kind == "lambdamart"
+    assert config.learned_model_path == "artifacts/ranker.json"
+    assert config.learned_evidence_path == "artifacts/validation.json"
+
+
 def test_nested_rrf_config_is_validated(tmp_path: Path) -> None:
     path = tmp_path / "rrf.yaml"
     path.write_text("name: rrf\nranker:\n  kind: rrf\n  rrf_k: 30\n")

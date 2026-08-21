@@ -10,7 +10,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from recagent_eval.agent import build_semantic_profile
+from recagent_eval.agent import MovieRanker, build_semantic_profile
 from recagent_eval.cases import EvaluationCase
 from recagent_eval.data import DatasetSplit, Movie, Rating
 from recagent_eval.evaluation import hit_rate_at_k, ndcg_at_k, recall_at_k
@@ -18,6 +18,7 @@ from recagent_eval.models import PreferenceState
 from recagent_eval.ranking import HybridRanker, RankerKind
 from recagent_eval.retrieval import (
     ItemCFRetriever,
+    SemanticRetriever,
     TfidfSemanticRetriever,
     hard_filter,
 )
@@ -26,6 +27,7 @@ SELECTABLE_METHOD_PRIORITY = {
     "itemcf": 0,
     "rrf": 1,
     "percentile_linear": 2,
+    "lambdamart": 3,
 }
 
 
@@ -119,7 +121,7 @@ def select_ranker(
     selected_ndcg = float(best["ndcg_at_10"])
     margin = selected_ndcg - itemcf_ndcg
     unlocked = (
-        str(best["kind"]) in {"rrf", "percentile_linear"}
+        str(best["kind"]) in {"rrf", "percentile_linear", "lambdamart"}
         and margin > 1e-12
     )
     return RankerSelectionEvidence(
@@ -247,12 +249,13 @@ def evaluate_frozen_cases(
     ratings: list[Rating] | tuple[Rating, ...],
     cases: list[EvaluationCase],
     *,
-    ranker: HybridRanker,
+    ranker: MovieRanker,
     retrieval_top_k: int,
     history_cap: int,
+    semantic_retriever: SemanticRetriever | None = None,
 ) -> dict[str, float | int | str]:
     itemcf = ItemCFRetriever.fit(ratings)
-    semantic = TfidfSemanticRetriever.fit(movies)
+    semantic = semantic_retriever or TfidfSemanticRetriever.fit(movies)
     recalls: list[float] = []
     ndcgs: list[float] = []
     hits: list[float] = []

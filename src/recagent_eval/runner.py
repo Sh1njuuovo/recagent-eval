@@ -20,6 +20,11 @@ from recagent_eval.evaluation import (
     build_candidate_diagnostics,
     pipeline_compliant,
 )
+from recagent_eval.learned_ranking import (
+    LearnedRanker,
+    estimator_from_artifact,
+    load_ranker_artifact,
+)
 from recagent_eval.models import ToolName
 from recagent_eval.provider import LLMProvider
 from recagent_eval.ranking import HybridRanker, RankerKind
@@ -49,6 +54,8 @@ class ExperimentConfig:
     semantic_model_revision: str | None = None
     semantic_cache_path: str | None = None
     semantic_device: str = "cpu"
+    learned_model_path: str | None = None
+    learned_evidence_path: str | None = None
     seed: int = 42
 
 
@@ -86,15 +93,25 @@ def run_experiment(
             semantic = DenseSemanticRetriever.fit(**dense_options)
     else:
         semantic = TfidfSemanticRetriever.fit(movies)
+    if config.ranker_kind == "lambdamart":
+        if config.learned_model_path is None:
+            raise ValueError("ranker.model_path is required when ranker.kind is lambdamart")
+        artifact = load_ranker_artifact(Path(config.learned_model_path))
+        ranker = LearnedRanker(
+            estimator_from_artifact(artifact),
+            legal_train_rows=ratings,
+        )
+    else:
+        ranker = HybridRanker(
+            config.weights,
+            kind=config.ranker_kind,
+            rrf_k=config.rrf_k,
+        )
     agent = RecommendationAgent(
         movies=movies,
         itemcf=itemcf,
         semantic=semantic,
-        ranker=HybridRanker(
-            config.weights,
-            kind=config.ranker_kind,
-            rrf_k=config.rrf_k,
-        ),
+        ranker=ranker,
         provider=provider,
         config=AgentConfig(
             retrieval_top_k=config.retrieval_top_k,

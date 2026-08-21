@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
 
 from pydantic import ValidationError
 
@@ -17,12 +17,17 @@ from recagent_eval.models import (
     ToolTrace,
 )
 from recagent_eval.provider import LLMProvider, LLMResponse
-from recagent_eval.ranking import HybridRanker
 from recagent_eval.retrieval import (
     ItemCFRetriever,
     SemanticRetriever,
     hard_filter,
 )
+
+
+class MovieRanker(Protocol):
+    kind: str
+
+    def rank(self, movies: dict[int, Movie], **kwargs: Any) -> list[Any]: ...
 
 
 @dataclass(frozen=True)
@@ -43,7 +48,7 @@ class RecommendationAgent:
         movies: dict[int, Movie],
         itemcf: ItemCFRetriever,
         semantic: SemanticRetriever,
-        ranker: HybridRanker,
+        ranker: MovieRanker,
         provider: LLMProvider,
         config: AgentConfig | None = None,
     ) -> None:
