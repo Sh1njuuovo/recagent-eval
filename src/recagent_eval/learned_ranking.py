@@ -5,6 +5,7 @@ import importlib.metadata
 import json
 import math
 import os
+import re
 import tempfile
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
@@ -13,6 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
+import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from recagent_eval.candidate_features import (
@@ -243,7 +245,7 @@ class RankerArtifact(BaseModel):
     dependency_versions: dict[str, str]
     created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
     model_string: str
-    model_checksum: str = ""
+    model_checksum: str
     training_rows_fingerprint: str
     history_fingerprint: str
     fold_map_fingerprint: str
@@ -292,9 +294,10 @@ class RankerArtifact(BaseModel):
         if created.tzinfo is None or created.utcoffset() != UTC.utcoffset(created):
             raise ValueError("ranker artifact created_at must be UTC")
         expected = hashlib.sha256(self.model_string.encode()).hexdigest()
-        if self.model_checksum and self.model_checksum != expected:
+        if not re.fullmatch(r"[0-9a-f]{64}", self.model_checksum):
+            raise ValueError("ranker artifact model checksum must be lowercase SHA256")
+        if self.model_checksum != expected:
             raise ValueError("ranker artifact model checksum mismatch")
-        self.model_checksum = expected
         if self.cv_results:
             aggregates = [row for row in self.cv_results if "mean_ndcg_at_10" in row]
             folds = [row for row in self.cv_results if "fold" in row]
@@ -314,6 +317,79 @@ class RankerArtifact(BaseModel):
                 (params, fold) for params in expected_params for fold in range(3)
             }:
                 raise ValueError("ranker artifact CV grid is incomplete or duplicated")
+            all_users = sorted(self.fold_map)
+            try:
+                from sklearn.model_selection import GroupKFold
+            except ImportError as exc:  # pragma: no cover
+                raise RuntimeError("artifact validation requires the 'ml' dependencies") from exc
+            canonical_map: dict[int, int] = {}
+            user_array = np.asarray(all_users)
+            for fold, (_, validation_indexes) in enumerate(
+                GroupKFold(n_splits=3).split(user_array, groups=user_array)
+            ):
+                canonical_map.update(
+                    {int(user_array[index]): fold for index in validation_indexes}
+                )
+            if canonical_map != self.fold_map:
+                raise ValueError("ranker artifact fold map is not canonical")
+            aggregate_by_params = {
+                json.dumps(row["params"], sort_keys=True): row for row in aggregates
+            }
+            for params_key in expected_params:
+                parameter_folds = [
+                    row
+                    for row in folds
+                    if json.dumps(row["params"], sort_keys=True) == params_key
+                ]
+                ndcg_sum = 0.0
+                recall_sum = 0.0
+                count = 0
+                for row in parameter_folds:
+                    fold = int(row["fold"])
+                    expected_validation = sorted(
+                        user for user, assigned in self.fold_map.items() if assigned == fold
+                    )
+                    expected_train = sorted(set(all_users) - set(expected_validation))
+                    if (
+                        row.get("validation_users") != expected_validation
+                        or row.get("train_users") != expected_train
+                        or int(row.get("validation_count", -1))
+                        != len(expected_validation)
+                    ):
+                        raise ValueError("ranker artifact fold users/count are inconsistent")
+                    cell_count = int(row["validation_count"])
+                    cell_ndcg_sum = float(row.get("ndcg_sum", math.nan))
+                    cell_recall_sum = float(row.get("recall_sum", math.nan))
+                    if (
+                        not math.isclose(
+                            float(row["ndcg_at_10"]),
+                            cell_ndcg_sum / cell_count,
+                            abs_tol=1e-12,
+                        )
+                        or not math.isclose(
+                            float(row["recall_at_10"]),
+                            cell_recall_sum / cell_count,
+                            abs_tol=1e-12,
+                        )
+                    ):
+                        raise ValueError("ranker artifact fold metric sums are inconsistent")
+                    count += cell_count
+                    ndcg_sum += cell_ndcg_sum
+                    recall_sum += cell_recall_sum
+                aggregate = aggregate_by_params[params_key]
+                if (
+                    not math.isclose(
+                        float(aggregate["mean_ndcg_at_10"]),
+                        ndcg_sum / count,
+                        abs_tol=1e-12,
+                    )
+                    or not math.isclose(
+                        float(aggregate["mean_recall_at_10"]),
+                        recall_sum / count,
+                        abs_tol=1e-12,
+                    )
+                ):
+                    raise ValueError("ranker artifact weighted CV aggregate is inconsistent")
             report = hashlib.sha256(
                 json.dumps(
                     self.cv_results, sort_keys=True, separators=(",", ":")
@@ -365,13 +441,15 @@ def artifact_from_estimator(
         package: _dependency_version(package) for package in ("lightgbm", "numpy", "scikit-learn")
     }
     provenance = dict(provenance or {})
+    model_string = str(booster.model_to_string())
     return RankerArtifact(
         selected_params=dict(selected_params),
         dataset_fingerprint=dataset_fingerprint,
         training_user_count=training_user_count,
         training_group_count=training_group_count,
         dependency_versions=versions,
-        model_string=str(booster.model_to_string()),
+        model_string=model_string,
+        model_checksum=hashlib.sha256(model_string.encode()).hexdigest(),
         cv_results=[dict(row) for row in cv_results],
         **provenance,
     )

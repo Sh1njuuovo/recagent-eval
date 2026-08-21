@@ -19,6 +19,27 @@ class ProviderMustNotBeCalled:
         raise AssertionError("provider must not be called")
 
 
+def test_run_experiment_always_rejects_direct_lambdamart_calls(tmp_path: Path) -> None:
+    config = ExperimentConfig(name="bypass", ranker_kind="lambdamart")
+    for case_id in ("arbitrary-a", "arbitrary-b"):
+        with pytest.raises(ValueError, match="dedicated frozen learned"):
+            run_experiment(
+                movies={},
+                ratings=[],
+                cases=[
+                    EvaluationCase(
+                        case_id=case_id,
+                        user_id=1,
+                        turns=("x",),
+                        relevant_movie_ids={999},
+                    )
+                ],
+                provider=ProviderMustNotBeCalled(),
+                config=config,
+                output_dir=tmp_path / case_id,
+            )
+
+
 def test_run_experiment_rejects_ineligible_labels_before_provider_call(
     tmp_path: Path,
 ) -> None:

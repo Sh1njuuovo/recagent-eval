@@ -83,6 +83,9 @@ def train_lambdamart_pipeline(
             "validation_users": list(row.validation_users),
             "ndcg_at_10": row.ndcg_at_10,
             "recall_at_10": row.recall_at_10,
+            "validation_count": row.validation_count,
+            "ndcg_sum": row.ndcg_sum,
+            "recall_sum": row.recall_sum,
         }
         for row in cv.fold_rows
     ]

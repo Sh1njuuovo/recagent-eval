@@ -26,7 +26,7 @@ from recagent_eval.models import PreferenceState, ScoreBreakdown
 
 
 def _valid_artifact(**overrides) -> RankerArtifact:
-    fold_map = {1: 0, 2: 1, 3: 2}
+    fold_map = {3: 0, 2: 1, 1: 2}
     cv_results = [
         {"params": params, "mean_ndcg_at_10": 0.0, "mean_recall_at_10": 0.0}
         for params in DEFAULT_PARAMETER_GRID
@@ -34,10 +34,13 @@ def _valid_artifact(**overrides) -> RankerArtifact:
         {
             "params": params,
             "fold": fold,
-            "train_users": [user for user in fold_map if fold_map[user] != fold],
-            "validation_users": [user for user in fold_map if fold_map[user] == fold],
+            "train_users": sorted(user for user in fold_map if fold_map[user] != fold),
+            "validation_users": sorted(user for user in fold_map if fold_map[user] == fold),
             "ndcg_at_10": 0.0,
             "recall_at_10": 0.0,
+            "validation_count": 1,
+            "ndcg_sum": 0.0,
+            "recall_sum": 0.0,
         }
         for params in DEFAULT_PARAMETER_GRID
         for fold in range(3)
@@ -54,6 +57,7 @@ def _valid_artifact(**overrides) -> RankerArtifact:
         "training_group_count": 3,
         "dependency_versions": {"lightgbm": "test"},
         "model_string": "model contents",
+        "model_checksum": hashlib.sha256(b"model contents").hexdigest(),
         "training_rows_fingerprint": "train",
         "history_fingerprint": "history",
         "fold_map_fingerprint": hashlib.sha256(
@@ -73,6 +77,10 @@ def _valid_artifact(**overrides) -> RankerArtifact:
         "validation_user_count": 3,
     }
     values.update(overrides)
+    if "model_string" in overrides and "model_checksum" not in overrides:
+        values["model_checksum"] = hashlib.sha256(
+            str(values["model_string"]).encode()
+        ).hexdigest()
     return RankerArtifact(**values)
 
 
@@ -248,13 +256,17 @@ def test_ranker_artifact_rejects_missing_or_extra_provenance(tmp_path: Path) -> 
     path.write_text(json.dumps(payload))
     with pytest.raises(ValueError, match="missing required fields"):
         load_ranker_artifact(path)
-
     payload["fold_map_fingerprint"] = "unspecified"
     payload["unexpected"] = True
     path.write_text(json.dumps(payload))
     with pytest.raises(ValueError, match="extra"):
         load_ranker_artifact(path)
 
+
+@pytest.mark.parametrize("checksum", ["", "xyz", "A" * 64, "0" * 63])
+def test_ranker_artifact_requires_explicit_lowercase_sha256(checksum: str) -> None:
+    with pytest.raises(ValueError, match="checksum"):
+        _valid_artifact(model_checksum=checksum)
 
 def test_real_lightgbm_ranker_smoke_uses_query_groups() -> None:
     matrix = build_training_matrix(

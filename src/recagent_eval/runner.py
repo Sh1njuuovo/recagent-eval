@@ -78,6 +78,11 @@ def run_experiment(
     config: ExperimentConfig,
     output_dir: Path,
 ) -> dict[str, float | int]:
+    if config.ranker_kind == "lambdamart":
+        raise ValueError(
+            "run_experiment cannot execute LambdaMART; use the dedicated "
+            "frozen learned evaluation entrypoint"
+        )
     validate_cases_relevance(cases, movies)
     random.seed(config.seed)
     np.random.seed(config.seed)

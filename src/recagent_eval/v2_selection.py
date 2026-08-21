@@ -29,6 +29,9 @@ class CVFoldRow:
     validation_users: tuple[int, ...]
     ndcg_at_10: float
     recall_at_10: float
+    validation_count: int
+    ndcg_sum: float
+    recall_sum: float
 
 
 @dataclass(frozen=True)
@@ -140,6 +143,9 @@ def cross_validate_lambdamart(
                     validation_users=validation_users,
                     ndcg_at_10=ndcg,
                     recall_at_10=recall,
+                    validation_count=len(fold_ndcg),
+                    ndcg_sum=sum(fold_ndcg),
+                    recall_sum=sum(fold_recall),
                 )
             )
         parameter_rows.append(
