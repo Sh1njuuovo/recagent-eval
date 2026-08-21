@@ -41,13 +41,31 @@ def _ratings() -> list[Rating]:
 def test_leakage_safe_split_has_three_disjoint_targets_and_ordered_history() -> None:
     split = leakage_safe_ranking_split(list(reversed(_ratings())))
 
+    assert split.ranker_targets == {1: 2, 2: 5}
+    assert split.validation_targets == {1: 3, 2: 6}
+    assert split.test_targets == {1: 4, 2: 7}
+    assert [row.movie_id for row in split.histories[1]] == [99, 1]
+    assert [row.movie_id for row in split.legal_retrieval_train if row.user_id == 1] == [99, 1]
+    assert set(split.ranker_targets) == {1, 2}
+    assert len({split.ranker_targets[1], split.validation_targets[1], split.test_targets[1]}) == 3
+
+
+def test_split_uses_latest_three_distinct_movies_and_removes_all_target_rows() -> None:
+    ratings = [
+        Rating(1, 1, 5, 1),
+        Rating(1, 2, 5, 2),
+        Rating(1, 2, 4, 3),
+        Rating(1, 3, 5, 4),
+        Rating(1, 4, 5, 5),
+    ]
+
+    split = leakage_safe_ranking_split(ratings)
+
     assert split.ranker_targets == {1: 2}
     assert split.validation_targets == {1: 3}
     assert split.test_targets == {1: 4}
-    assert [row.movie_id for row in split.histories[1]] == [99, 1]
-    assert [row.movie_id for row in split.legal_retrieval_train if row.user_id == 1] == [99, 1, 2]
-    assert 2 not in split.ranker_targets
-    assert len({split.ranker_targets[1], split.validation_targets[1], split.test_targets[1]}) == 3
+    assert [row.movie_id for row in split.histories[1]] == [1]
+    assert [row.movie_id for row in split.legal_retrieval_train] == [1]
 
 
 def test_feature_schema_values_are_finite_and_routes_have_presence_flags() -> None:
@@ -177,6 +195,29 @@ def test_ranker_artifact_rejects_tampering(tmp_path: Path) -> None:
     path.write_text(json.dumps(payload))
     with pytest.raises(ValueError, match="checksum"):
         load_ranker_artifact(path, expected_dataset_fingerprint="dataset")
+
+
+def test_ranker_artifact_rejects_missing_or_extra_provenance(tmp_path: Path) -> None:
+    artifact = RankerArtifact(
+        selected_params={"num_leaves": 15},
+        dataset_fingerprint="dataset",
+        training_user_count=1,
+        training_group_count=1,
+        model_string="model",
+    )
+    path = tmp_path / "ranker.json"
+    save_ranker_artifact(artifact, path)
+    payload = json.loads(path.read_text())
+    payload.pop("fold_map_fingerprint")
+    path.write_text(json.dumps(payload))
+    with pytest.raises(ValueError, match="missing required fields"):
+        load_ranker_artifact(path)
+
+    payload["fold_map_fingerprint"] = "unspecified"
+    payload["unexpected"] = True
+    path.write_text(json.dumps(payload))
+    with pytest.raises(ValueError, match="extra"):
+        load_ranker_artifact(path)
 
 
 def test_real_lightgbm_ranker_smoke_uses_query_groups() -> None:

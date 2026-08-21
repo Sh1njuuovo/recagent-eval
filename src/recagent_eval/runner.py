@@ -35,6 +35,10 @@ from recagent_eval.retrieval import (
     SemanticRetriever,
     TfidfSemanticRetriever,
 )
+from recagent_eval.v2_selection import (
+    LearnedValidationEvidence,
+    validate_learned_gate,
+)
 
 
 @dataclass(frozen=True)
@@ -56,6 +60,11 @@ class ExperimentConfig:
     semantic_device: str = "cpu"
     learned_model_path: str | None = None
     learned_evidence_path: str | None = None
+    learned_dataset_fingerprint: str | None = None
+    learned_candidate_policy_fingerprint: str | None = None
+    learned_config_fingerprint: str | None = None
+    learned_case_fingerprint: str | None = None
+    learned_gate_fingerprint: str | None = None
     seed: int = 42
 
 
@@ -96,7 +105,47 @@ def run_experiment(
     if config.ranker_kind == "lambdamart":
         if config.learned_model_path is None:
             raise ValueError("ranker.model_path is required when ranker.kind is lambdamart")
-        artifact = load_ranker_artifact(Path(config.learned_model_path))
+        if (
+            config.learned_dataset_fingerprint is None
+            or config.learned_candidate_policy_fingerprint is None
+            or config.learned_config_fingerprint is None
+            or config.learned_case_fingerprint is None
+            or config.learned_evidence_path is None
+            or config.learned_gate_fingerprint is None
+        ):
+            raise ValueError(
+                "LambdaMART runner requires expected dataset, candidate-policy, "
+                "and config fingerprints from a validated gate"
+            )
+        artifact = load_ranker_artifact(
+            Path(config.learned_model_path),
+            expected_dataset_fingerprint=config.learned_dataset_fingerprint,
+            expected_candidate_policy_fingerprint=(
+                config.learned_candidate_policy_fingerprint
+            ),
+            expected_config_fingerprint=config.learned_config_fingerprint,
+            expected_case_fingerprint=config.learned_case_fingerprint,
+        )
+        try:
+            evidence = LearnedValidationEvidence.model_validate_json(
+                Path(config.learned_evidence_path).read_text()
+            )
+        except (OSError, ValueError) as exc:
+            raise ValueError(f"invalid LambdaMART validation evidence: {exc}") from exc
+        if evidence.evidence_fingerprint != config.learned_gate_fingerprint:
+            raise ValueError("LambdaMART validation evidence fingerprint mismatch")
+        validate_learned_gate(
+            evidence,
+            dataset_fingerprint=config.learned_dataset_fingerprint,
+            feature_fingerprint=artifact.feature_fingerprint,
+            model_fingerprint=artifact.model_checksum,
+            candidate_policy_fingerprint=(
+                config.learned_candidate_policy_fingerprint
+            ),
+            case_fingerprint=config.learned_case_fingerprint,
+            config_fingerprint=config.learned_config_fingerprint,
+            artifact_provenance=artifact.model_dump(mode="python"),
+        )
         ranker = LearnedRanker(
             estimator_from_artifact(artifact),
             legal_train_rows=ratings,

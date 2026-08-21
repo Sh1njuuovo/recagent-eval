@@ -148,18 +148,35 @@ def leakage_safe_ranking_split(
     for user_id in sorted(by_user):
         rows = by_user[user_id]
         positives = [row for row in rows if row.rating >= positive_threshold]
-        if len(positives) < 4:
+        latest_by_movie: list[Rating] = []
+        seen_movies: set[int] = set()
+        for row in reversed(positives):
+            if row.movie_id not in seen_movies:
+                latest_by_movie.append(row)
+                seen_movies.add(row.movie_id)
+            if len(latest_by_movie) == 3:
+                break
+        if len(latest_by_movie) < 3:
             history_rows.extend(rows)
             retrieval_rows.extend(rows)
             continue
-        ranker_row, validation_row, test_row = positives[-3:]
+        ranker_row, validation_row, test_row = reversed(latest_by_movie)
+        target_movie_ids = {
+            ranker_row.movie_id,
+            validation_row.movie_id,
+            test_row.movie_id,
+        }
         history = tuple(
             row
             for row in rows
-            if row.timestamp < ranker_row.timestamp
-            or (
-                row.timestamp == ranker_row.timestamp
-                and (row.movie_id, row.rating) < (ranker_row.movie_id, ranker_row.rating)
+            if row.movie_id not in target_movie_ids
+            and (
+                row.timestamp < ranker_row.timestamp
+                or (
+                    row.timestamp == ranker_row.timestamp
+                    and (row.movie_id, row.rating)
+                    < (ranker_row.movie_id, ranker_row.rating)
+                )
             )
         )
         # A row equal by value to a target is intentionally treated as a target;
@@ -175,7 +192,7 @@ def leakage_safe_ranking_split(
             row
             for row in rows
             if (row.timestamp, row.movie_id, row.rating) < validation_key
-            and row not in {validation_row, test_row}
+            and row.movie_id not in target_movie_ids
         ]
         histories[user_id] = history
         history_rows.extend(history)

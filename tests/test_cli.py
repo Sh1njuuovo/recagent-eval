@@ -63,6 +63,8 @@ def test_train_ranker_cli_smoke_uses_offline_semantic_retriever(
 ) -> None:
     config = tmp_path / "ranker.yaml"
     config.write_text("semantic:\n  kind: tfidf\n")
+    cases = tmp_path / "cases.json"
+    cases.write_text("[]")
     movies = {
         movie_id: Movie(movie_id, f"Movie {movie_id}", ("Drama",), 2000)
         for movie_id in range(1, 5)
@@ -91,6 +93,8 @@ def test_train_ranker_cli_smoke_uses_offline_semantic_retriever(
             str(config),
             "--data-dir",
             str(tmp_path),
+            "--cases",
+            str(cases),
             "--output",
             str(tmp_path / "model.json"),
             "--evidence-output",
@@ -103,6 +107,24 @@ def test_train_ranker_cli_smoke_uses_offline_semantic_retriever(
     assert result.exit_code == 0, result.output
     assert json.loads(result.output)["training_users"] == 3
     assert seen["max_users"] == 3
+
+
+def test_generic_evaluate_rejects_lambdamart_before_loading_artifact(tmp_path) -> None:
+    config = tmp_path / "learned.yaml"
+    config.write_text("ranker:\n  kind: lambdamart\n  model_path: missing.json\n")
+    result = CliRunner().invoke(
+        app,
+        [
+            "evaluate",
+            "--config",
+            str(config),
+            "--cases",
+            str(tmp_path / "cases.json"),
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "generic evaluate cannot authorize LambdaMART" in result.output
 
 
 def test_build_embeddings_uses_injected_sentence_encoder(tmp_path, monkeypatch) -> None:

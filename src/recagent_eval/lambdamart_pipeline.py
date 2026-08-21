@@ -25,7 +25,7 @@ from recagent_eval.learned_ranking import (
 )
 from recagent_eval.models import PreferenceState
 from recagent_eval.ranking import HybridRanker
-from recagent_eval.retrieval import ItemCFRetriever, SemanticRetriever
+from recagent_eval.retrieval import ItemCFRetriever, SemanticRetriever, hard_filter
 from recagent_eval.runner import ExperimentConfig
 from recagent_eval.v2_selection import (
     build_validation_evidence,
@@ -43,6 +43,7 @@ def train_lambdamart_pipeline(
     evidence_output: Path,
     max_users: int,
     seed: int,
+    registered_case_fingerprint: str = "unregistered",
 ) -> dict[str, Any]:
     dataset_fingerprint = ranking_dataset_fingerprint(movies, split)
     training_queries = build_candidate_queries(
@@ -59,6 +60,14 @@ def train_lambdamart_pipeline(
         training_queries,
         estimator_factory=lambda params: make_lgbm_ranker(params, seed=seed),
         seed=seed,
+        fold_query_builder=lambda train_users, validation_users: build_fold_queries(
+            movies,
+            split,
+            semantic,
+            config,
+            train_users=train_users,
+            validation_users=validation_users,
+        ),
     )
     matrix = build_training_matrix(training_queries)
     estimator = make_lgbm_ranker(cv.selected_params, seed=seed)
@@ -67,12 +76,51 @@ def train_lambdamart_pipeline(
         list(matrix.labels),
         group=list(matrix.groups),
     )
+    cv_results = [dict(row) for row in cv.parameter_rows] + [
+        {
+            "params": row.params,
+            "fold": row.fold,
+            "train_users": list(row.train_users),
+            "validation_users": list(row.validation_users),
+            "ndcg_at_10": row.ndcg_at_10,
+            "recall_at_10": row.recall_at_10,
+        }
+        for row in cv.fold_rows
+    ]
+    provenance = {
+        "training_rows_fingerprint": _fingerprint_ratings(
+            split.ranker_training_history
+        ),
+        "history_fingerprint": _fingerprint(
+            {
+                user_id: [
+                    [row.movie_id, row.rating, row.timestamp]
+                    for row in split.histories[user_id]
+                ]
+                for user_id in sorted(split.histories)
+            }
+        ),
+        "fold_map_fingerprint": _fingerprint(cv.fold_by_user),
+        "fold_map": cv.fold_by_user,
+        "group_fingerprint": _fingerprint(
+            {"groups": matrix.groups, "users": matrix.user_ids}
+        ),
+        "candidate_policy_fingerprint": candidate_policy_fingerprint(config),
+        "config_fingerprint": lambdamart_config_fingerprint(config),
+        "metric_fingerprint": _fingerprint(
+            {"metric": "ndcg", "k": 10, "bootstrap_resamples": 2000}
+        ),
+        "case_fingerprint": registered_case_fingerprint,
+        "report_fingerprint": _fingerprint(cv_results),
+    }
     artifact = artifact_from_estimator(
         estimator,
         selected_params=cv.selected_params,
         dataset_fingerprint=dataset_fingerprint,
         training_user_count=matrix.training_users,
         training_group_count=len(matrix.groups),
+        provenance=provenance,
+        cv_results=cv_results,
     )
     save_ranker_artifact(artifact, model_output)
 
@@ -127,6 +175,12 @@ def train_lambdamart_pipeline(
                 ),
                 "union_candidate_recall": float(target in feature_rows),
                 "constraint_satisfied": True,
+                "legal_history_movie_ids": sorted(
+                    row.movie_id
+                    for row in validation_histories.get(query.user_id, ())
+                ),
+                "allowed_movie_ids": sorted(feature_rows),
+                "lambdamart_ranked_movie_ids": learned_ids,
                 "latency_ms": (time.perf_counter() - started) * 1000,
             }
         )
@@ -138,6 +192,14 @@ def train_lambdamart_pipeline(
         model_fingerprint=artifact.model_checksum,
         candidate_policy_fingerprint=policy_fingerprint,
         seed=seed,
+        provenance={
+            **provenance,
+            "selected_params": cv.selected_params,
+            "cv_results": cv_results,
+            "training_user_count": matrix.training_users,
+            "training_group_count": len(matrix.groups),
+            "dependency_versions": artifact.dependency_versions,
+        },
     )
     evidence_output.parent.mkdir(parents=True, exist_ok=True)
     evidence_output.write_text(
@@ -166,6 +228,7 @@ def build_candidate_queries(
     retrieval_top_k: int,
     history_cap: int,
     max_users: int,
+    states: Mapping[int, PreferenceState] | None = None,
 ) -> list[CandidateQuery]:
     itemcf = ItemCFRetriever.fit(legal_train_rows)
     queries: list[CandidateQuery] = []
@@ -174,8 +237,14 @@ def build_candidate_queries(
         history_ids = {
             row.movie_id for row in history_rows if row.rating >= 4 and row.movie_id in movies
         }
-        state = _state_from_history(history_ids, movies)
-        allowed_ids = set(movies) - history_ids
+        state = (
+            states[user_id]
+            if states is not None and user_id in states
+            else _state_from_history(history_ids, movies)
+        )
+        allowed_ids = {
+            movie.movie_id for movie in hard_filter(movies.values(), state)
+        } - history_ids
         itemcf_scores = dict(
             itemcf.retrieve(history_ids, top_k=retrieval_top_k, allowed_ids=allowed_ids)
         )
@@ -205,6 +274,50 @@ def build_candidate_queries(
     return queries
 
 
+def build_fold_queries(
+    movies: dict[int, Movie],
+    split: LeakageSafeRankingSplit,
+    semantic: SemanticRetriever,
+    config: ExperimentConfig,
+    *,
+    train_users: tuple[int, ...],
+    validation_users: tuple[int, ...],
+) -> tuple[list[CandidateQuery], list[CandidateQuery]]:
+    """Rebuild retrieval and global statistics from training-fold users only."""
+    training_user_set = set(train_users)
+    fold_train_rows = tuple(
+        row
+        for row in split.ranker_training_history
+        if row.user_id in training_user_set
+    )
+    common = {
+        "movies": movies,
+        "legal_train_rows": fold_train_rows,
+        "semantic": semantic,
+        "retrieval_top_k": config.retrieval_top_k,
+        "history_cap": config.semantic_profile_history_cap,
+    }
+    return (
+        build_candidate_queries(
+            **common,
+            histories={user_id: split.histories[user_id] for user_id in train_users},
+            targets={user_id: split.ranker_targets[user_id] for user_id in train_users},
+            max_users=len(train_users),
+        ),
+        build_candidate_queries(
+            **common,
+            histories={
+                user_id: split.histories[user_id] for user_id in validation_users
+            },
+            targets={
+                user_id: split.ranker_targets[user_id]
+                for user_id in validation_users
+            },
+            max_users=len(validation_users),
+        ),
+    )
+
+
 def candidate_policy_fingerprint(config: ExperimentConfig) -> str:
     payload = {
         "schema": "union-candidate-policy/v1",
@@ -218,6 +331,20 @@ def candidate_policy_fingerprint(config: ExperimentConfig) -> str:
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
+
+
+def lambdamart_config_fingerprint(config: ExperimentConfig) -> str:
+    return _fingerprint(
+        {
+            "retrieval_top_k": config.retrieval_top_k,
+            "semantic_profile_history_cap": config.semantic_profile_history_cap,
+            "semantic_kind": config.semantic_kind,
+            "semantic_model_name": config.semantic_model_name,
+            "semantic_model_revision": config.semantic_model_revision,
+            "semantic_cache_path": config.semantic_cache_path,
+            "seed": config.seed,
+        }
+    )
 
 
 def ranking_dataset_fingerprint(
@@ -262,3 +389,18 @@ def _single_ndcg(ranked_ids: list[int], target: int) -> float:
     if target not in ranked_ids[:10]:
         return 0.0
     return 1.0 / math.log2(ranked_ids.index(target) + 2)
+
+
+def _fingerprint(value: Any) -> str:
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def _fingerprint_ratings(rows: tuple[Rating, ...]) -> str:
+    return _fingerprint(
+        [
+            [row.user_id, row.movie_id, row.rating, row.timestamp]
+            for row in rows
+        ]
+    )

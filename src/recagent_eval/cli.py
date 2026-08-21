@@ -29,6 +29,7 @@ from recagent_eval.data import (
 from recagent_eval.dataset import download_movielens_1m
 from recagent_eval.lambdamart_pipeline import (
     candidate_policy_fingerprint,
+    lambdamart_config_fingerprint,
     ranking_dataset_fingerprint,
     train_lambdamart_pipeline,
 )
@@ -63,6 +64,7 @@ from recagent_eval.tuning import (
 )
 from recagent_eval.v2_selection import (
     LearnedValidationEvidence,
+    consume_frozen_authorization,
     validate_learned_gate,
 )
 
@@ -278,10 +280,16 @@ def select_ranker_command(
         learned_dataset_fingerprint = ranking_dataset_fingerprint(
             movies, learned_split
         )
+        registered_case_fingerprint = case_fingerprint(load_cases(cases_path))
         try:
             artifact = load_ranker_artifact(
                 Path(config.learned_model_path),
                 expected_dataset_fingerprint=learned_dataset_fingerprint,
+                expected_candidate_policy_fingerprint=candidate_policy_fingerprint(
+                    config
+                ),
+                expected_config_fingerprint=lambdamart_config_fingerprint(config),
+                expected_case_fingerprint=registered_case_fingerprint,
             )
             learned_evidence = LearnedValidationEvidence.model_validate_json(
                 Path(config.learned_evidence_path).read_text()
@@ -292,6 +300,9 @@ def select_ranker_command(
                 feature_fingerprint=FEATURE_SCHEMA_FINGERPRINT,
                 model_fingerprint=artifact.model_checksum,
                 candidate_policy_fingerprint=candidate_policy_fingerprint(config),
+                case_fingerprint=registered_case_fingerprint,
+                config_fingerprint=lambdamart_config_fingerprint(config),
+                artifact_provenance=artifact.model_dump(mode="python"),
             )
         except (OSError, ValueError) as exc:
             raise typer.BadParameter(str(exc)) from exc
@@ -391,6 +402,9 @@ def select_ranker_command(
 def train_ranker(
     config_path: Annotated[Path, typer.Option("--config")],
     data_dir: Annotated[Path, typer.Option()] = Path("data/raw/ml-1m"),
+    cases_path: Annotated[Path, typer.Option("--cases")] = Path(
+        "cases/fixed_cases.json"
+    ),
     output: Annotated[Path, typer.Option(help="LambdaMART artifact JSON")] = Path(
         "artifacts/lambdamart.json"
     ),
@@ -405,6 +419,10 @@ def train_ranker(
     split = leakage_safe_ranking_split(ratings)
     if len(split.ranker_targets) < 3:
         raise typer.BadParameter("train-ranker requires at least three eligible users")
+    if not cases_path.exists():
+        raise typer.BadParameter(
+            "train-ranker requires a registered --cases file for frozen-test provenance"
+        )
     try:
         if config.semantic_kind == "dense":
             if config.semantic_cache_path is None:
@@ -427,6 +445,7 @@ def train_ranker(
             evidence_output=evidence_output,
             max_users=max_users,
             seed=seed,
+            registered_case_fingerprint=case_fingerprint(load_cases(cases_path)),
         )
     except (RuntimeError, ValueError) as exc:
         raise typer.BadParameter(str(exc)) from exc
@@ -436,7 +455,13 @@ def train_ranker(
 @app.command("evaluate-ranker")
 def evaluate_ranker(
     config_path: Annotated[Path, typer.Option("--config")],
-    evidence_path: Annotated[Path, typer.Option("--evidence")],
+    evidence_path: Annotated[
+        Path,
+        typer.Option(
+            "--evidence",
+            help="Validation evidence; LambdaMART frozen use is consumed once beside this file",
+        ),
+    ],
     cases_path: Annotated[Path, typer.Option("--cases")],
     data_dir: Annotated[Path, typer.Option()] = Path("data/raw/ml-1m"),
     output: Annotated[Path, typer.Option()] = Path(
@@ -528,9 +553,14 @@ def _evaluate_learned_ranker(
         movies, ratings = _load_dataset(data_dir)
         split = leakage_safe_ranking_split(ratings)
         dataset_fingerprint = ranking_dataset_fingerprint(movies, split)
+        cases = load_cases(cases_path)
+        fixed_case_fingerprint = case_fingerprint(cases)
         artifact = load_ranker_artifact(
             Path(config.learned_model_path),
             expected_dataset_fingerprint=dataset_fingerprint,
+            expected_candidate_policy_fingerprint=candidate_policy_fingerprint(config),
+            expected_config_fingerprint=lambdamart_config_fingerprint(config),
+            expected_case_fingerprint=fixed_case_fingerprint,
         )
         validate_learned_gate(
             evidence,
@@ -538,10 +568,12 @@ def _evaluate_learned_ranker(
             feature_fingerprint=FEATURE_SCHEMA_FINGERPRINT,
             model_fingerprint=artifact.model_checksum,
             candidate_policy_fingerprint=candidate_policy_fingerprint(config),
+            case_fingerprint=fixed_case_fingerprint,
+            config_fingerprint=lambdamart_config_fingerprint(config),
+            artifact_provenance=artifact.model_dump(mode="python"),
         )
     except (OSError, ValueError) as exc:
         raise typer.BadParameter(str(exc)) from exc
-    cases = load_cases(cases_path)
     ranker = LearnedRanker(
         estimator_from_artifact(artifact),
         legal_train_rows=split.legal_retrieval_train,
@@ -563,6 +595,12 @@ def _evaluate_learned_ranker(
             raise typer.BadParameter(str(exc)) from exc
     else:
         semantic = TfidfSemanticRetriever.fit(movies)
+    evidence_hash = hashlib.sha256(evidence_path.read_bytes()).hexdigest()
+    consume_frozen_authorization(
+        evidence_path.with_name(f"{evidence_path.name}.frozen-consumed.json"),
+        evidence_hash=evidence_hash,
+        case_fingerprint=fixed_case_fingerprint,
+    )
     metrics = evaluate_frozen_cases(
         movies,
         split.legal_retrieval_train,
@@ -576,7 +614,7 @@ def _evaluate_learned_ranker(
         {
             "selection_margin": evidence.mean_ndcg_delta,
             "selection_evidence_fingerprint": evidence.evidence_fingerprint,
-            "case_fingerprint": case_fingerprint(cases),
+            "case_fingerprint": fixed_case_fingerprint,
             "dataset_fingerprint": dataset_fingerprint,
         }
     )
@@ -623,6 +661,11 @@ def evaluate(
     ] = "rule-based",
 ) -> None:
     config = _validated_config(config_path)
+    if config.ranker_kind == "lambdamart":
+        raise typer.BadParameter(
+            "generic evaluate cannot authorize LambdaMART; use evaluate-ranker "
+            "with validation evidence and its one-time frozen-test marker"
+        )
     movies, ratings = _load_dataset(data_dir)
     split = chronological_split(ratings)
     provider = _provider(provider_name)

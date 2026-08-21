@@ -3,12 +3,15 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import numpy as np
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from recagent_eval.learned_ranking import (
     DEFAULT_PARAMETER_GRID,
@@ -43,6 +46,11 @@ def cross_validate_lambdamart(
     parameter_grid: Sequence[Mapping[str, int | float]] = DEFAULT_PARAMETER_GRID,
     seed: int = 42,
     n_splits: int = 3,
+    fold_query_builder: Callable[
+        [tuple[int, ...], tuple[int, ...]],
+        tuple[Sequence[CandidateQuery], Sequence[CandidateQuery]],
+    ]
+    | None = None,
 ) -> CVSelection:
     """Select LambdaMART parameters with whole-user GroupKFold splits."""
     del seed  # GroupKFold itself is deterministic and intentionally unshuffled.
@@ -69,16 +77,30 @@ def cross_validate_lambdamart(
         fold_by_user.update({user_id: fold for user_id in validation_users})
 
     query_by_user = {query.user_id: query for query in queries}
+    if len(query_by_user) != len(queries):
+        raise ValueError("grouped CV requires exactly one query per user")
+    fold_queries = [
+        fold_query_builder(train_users, validation_users)
+        if fold_query_builder is not None
+        else (
+            [query_by_user[user_id] for user_id in train_users],
+            [query_by_user[user_id] for user_id in validation_users],
+        )
+        for train_users, validation_users in folds
+    ]
     fold_rows: list[CVFoldRow] = []
     parameter_rows: list[dict[str, Any]] = []
     for raw_params in parameter_grid:
         params = dict(raw_params)
-        ndcgs: list[float] = []
-        recalls: list[float] = []
+        held_out_ndcgs: list[float] = []
+        held_out_recalls: list[float] = []
         for fold, (train_users, validation_users) in enumerate(folds):
-            train_matrix = build_training_matrix(
-                [query_by_user[user_id] for user_id in train_users]
-            )
+            train_queries, validation_queries = fold_queries[fold]
+            if {query.user_id for query in train_queries} & {
+                query.user_id for query in validation_queries
+            }:
+                raise ValueError("fold query builder mixed training and validation users")
+            train_matrix = build_training_matrix(train_queries)
             if not train_matrix.groups:
                 raise ValueError(f"fold {fold} has no trainable query groups")
             estimator = estimator_factory(params)
@@ -89,8 +111,7 @@ def cross_validate_lambdamart(
             )
             fold_ndcg: list[float] = []
             fold_recall: list[float] = []
-            for user_id in validation_users:
-                query = query_by_user[user_id]
+            for query in validation_queries:
                 ranked = _rank_query(estimator, query)
                 target_rank = (
                     ranked.index(query.target_movie_id) + 1
@@ -103,8 +124,8 @@ def cross_validate_lambdamart(
                 )
             ndcg = _mean(fold_ndcg)
             recall = _mean(fold_recall)
-            ndcgs.append(ndcg)
-            recalls.append(recall)
+            held_out_ndcgs.extend(fold_ndcg)
+            held_out_recalls.extend(fold_recall)
             fold_rows.append(
                 CVFoldRow(
                     params=params,
@@ -118,8 +139,8 @@ def cross_validate_lambdamart(
         parameter_rows.append(
             {
                 "params": params,
-                "mean_ndcg_at_10": _mean(ndcgs),
-                "mean_recall_at_10": _mean(recalls),
+                "mean_ndcg_at_10": _mean(held_out_ndcgs),
+                "mean_recall_at_10": _mean(held_out_recalls),
             }
         )
     selected = max(
@@ -210,10 +231,20 @@ _REQUIRED_ROW_FIELDS = {
     "union_candidate_recall",
     "constraint_satisfied",
     "latency_ms",
+    "legal_history_movie_ids",
+    "allowed_movie_ids",
+    "lambdamart_ranked_movie_ids",
+}
+_LIST_ROW_FIELDS = {
+    "legal_history_movie_ids",
+    "allowed_movie_ids",
+    "lambdamart_ranked_movie_ids",
 }
 
 
 class LearnedValidationEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     schema_version: str = "lambdamart-validation/v1"
     per_user_rows: list[dict[str, Any]]
     dataset_fingerprint: str
@@ -230,6 +261,20 @@ class LearnedValidationEvidence(BaseModel):
     constraint_satisfaction_rate: float
     aggregates: dict[str, float]
     evidence_fingerprint: str
+    training_rows_fingerprint: str
+    history_fingerprint: str
+    fold_map_fingerprint: str
+    group_fingerprint: str
+    config_fingerprint: str
+    metric_fingerprint: str
+    case_fingerprint: str
+    report_fingerprint: str
+    selected_params: dict[str, int | float]
+    cv_results: list[dict[str, Any]]
+    training_user_count: int
+    training_group_count: int
+    dependency_versions: dict[str, str]
+    fold_map: dict[int, int]
 
 
 def build_validation_evidence(
@@ -240,7 +285,32 @@ def build_validation_evidence(
     model_fingerprint: str,
     candidate_policy_fingerprint: str,
     seed: int,
+    provenance: Mapping[str, Any] | None = None,
 ) -> LearnedValidationEvidence:
+    provenance_defaults: dict[str, Any] = {
+        "training_rows_fingerprint": "unspecified",
+        "history_fingerprint": "unspecified",
+        "fold_map_fingerprint": "unspecified",
+        "group_fingerprint": "unspecified",
+        "config_fingerprint": "unspecified",
+        "metric_fingerprint": "unspecified",
+        "case_fingerprint": "unspecified",
+        "selected_params": {},
+        "cv_results": [],
+        "training_user_count": 0,
+        "training_group_count": 0,
+        "dependency_versions": {},
+        "fold_map": {},
+    }
+    supplied_provenance = dict(provenance or {})
+    provenance = {
+        key: supplied_provenance.get(key, default)
+        for key, default in provenance_defaults.items()
+    }
+    if "report_fingerprint" in supplied_provenance:
+        provenance["report_fingerprint"] = supplied_provenance[
+            "report_fingerprint"
+        ]
     rows = [dict(row) for row in sorted(per_user_rows, key=lambda row: int(row["user_id"]))]
     if not rows:
         raise ValueError("validation evidence requires per-user rows")
@@ -253,7 +323,27 @@ def build_validation_evidence(
             raise ValueError(
                 f"validation evidence row user={row.get('user_id')} missing cells: {missing}"
             )
-        for key in _REQUIRED_ROW_FIELDS - {"user_id", "constraint_satisfied"}:
+        if type(row["constraint_satisfied"]) is not bool:
+            raise ValueError(
+                f"validation evidence row user={row['user_id']} "
+                "constraint_satisfied must be a JSON boolean"
+            )
+        for key in _LIST_ROW_FIELDS:
+            value = row[key]
+            if not isinstance(value, list) or any(type(item) is not int for item in value):
+                raise ValueError(
+                    f"validation evidence row user={row['user_id']} {key} "
+                    "must be a JSON integer array"
+                )
+        allowed = set(row["allowed_movie_ids"])
+        history = set(row["legal_history_movie_ids"])
+        ranked = set(row["lambdamart_ranked_movie_ids"])
+        row["constraint_satisfied"] = ranked <= allowed and ranked.isdisjoint(history)
+        for key in _REQUIRED_ROW_FIELDS - {
+            "user_id",
+            "constraint_satisfied",
+            *_LIST_ROW_FIELDS,
+        }:
             if not math.isfinite(float(row[key])):
                 raise ValueError(
                     f"validation evidence row user={row['user_id']} has non-finite {key}"
@@ -263,7 +353,11 @@ def build_validation_evidence(
     interval = paired_bootstrap_ndcg(itemcf, learned, seed=seed)
     aggregates = {
         field: _mean([float(row[field]) for row in rows])
-        for field in sorted(_REQUIRED_ROW_FIELDS - {"user_id", "constraint_satisfied"})
+        for field in sorted(
+            _REQUIRED_ROW_FIELDS
+            - {"user_id", "constraint_satisfied"}
+            - _LIST_ROW_FIELDS
+        )
     }
     constraints = _mean([float(bool(row["constraint_satisfied"])) for row in rows])
     fingerprint_payload = {
@@ -273,6 +367,9 @@ def build_validation_evidence(
         "model_fingerprint": model_fingerprint,
         "candidate_policy_fingerprint": candidate_policy_fingerprint,
         "seed": seed,
+        "provenance": {
+            key: value for key, value in provenance.items() if key != "report_fingerprint"
+        },
     }
     fingerprint = hashlib.sha256(
         json.dumps(fingerprint_payload, sort_keys=True, separators=(",", ":")).encode()
@@ -293,6 +390,27 @@ def build_validation_evidence(
         constraint_satisfaction_rate=constraints,
         aggregates=aggregates,
         evidence_fingerprint=fingerprint,
+        training_rows_fingerprint=str(
+            provenance.get("training_rows_fingerprint", "unspecified")
+        ),
+        history_fingerprint=str(provenance.get("history_fingerprint", "unspecified")),
+        fold_map_fingerprint=str(
+            provenance.get("fold_map_fingerprint", "unspecified")
+        ),
+        group_fingerprint=str(provenance.get("group_fingerprint", "unspecified")),
+        config_fingerprint=str(provenance.get("config_fingerprint", "unspecified")),
+        metric_fingerprint=str(provenance.get("metric_fingerprint", "unspecified")),
+        case_fingerprint=str(provenance.get("case_fingerprint", "unspecified")),
+        report_fingerprint=str(provenance.get("report_fingerprint", fingerprint)),
+        selected_params=dict(provenance.get("selected_params", {})),
+        cv_results=[dict(row) for row in provenance.get("cv_results", [])],
+        training_user_count=int(provenance.get("training_user_count", 0)),
+        training_group_count=int(provenance.get("training_group_count", 0)),
+        dependency_versions=dict(provenance.get("dependency_versions", {})),
+        fold_map={
+            int(user): int(fold)
+            for user, fold in dict(provenance.get("fold_map", {})).items()
+        },
     )
 
 
@@ -303,6 +421,9 @@ def validate_learned_gate(
     feature_fingerprint: str,
     model_fingerprint: str,
     candidate_policy_fingerprint: str,
+    case_fingerprint: str | None = None,
+    config_fingerprint: str | None = None,
+    artifact_provenance: Mapping[str, Any] | None = None,
 ) -> None:
     if evidence.schema_version != "lambdamart-validation/v1":
         raise ValueError("unsupported validation evidence schema")
@@ -314,6 +435,22 @@ def validate_learned_gate(
             model_fingerprint=evidence.model_fingerprint,
             candidate_policy_fingerprint=evidence.candidate_policy_fingerprint,
             seed=evidence.seed,
+            provenance={
+                "training_rows_fingerprint": evidence.training_rows_fingerprint,
+                "history_fingerprint": evidence.history_fingerprint,
+                "fold_map_fingerprint": evidence.fold_map_fingerprint,
+                "group_fingerprint": evidence.group_fingerprint,
+                "config_fingerprint": evidence.config_fingerprint,
+                "metric_fingerprint": evidence.metric_fingerprint,
+                "case_fingerprint": evidence.case_fingerprint,
+                "report_fingerprint": evidence.report_fingerprint,
+                "selected_params": evidence.selected_params,
+                "cv_results": evidence.cv_results,
+                "training_user_count": evidence.training_user_count,
+                "training_group_count": evidence.training_group_count,
+                "dependency_versions": evidence.dependency_versions,
+                "fold_map": evidence.fold_map,
+            },
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError(f"validation evidence is incomplete: {exc}") from exc
@@ -330,6 +467,51 @@ def validate_learned_gate(
     )
     if any(not _same(getattr(evidence, name), getattr(derived, name)) for name in derived_fields):
         raise ValueError("validation evidence aggregate fields are inconsistent with per-user rows")
+    if evidence.cv_results:
+        aggregates = [row for row in evidence.cv_results if "mean_ndcg_at_10" in row]
+        folds = [row for row in evidence.cv_results if "fold" in row]
+        if len(aggregates) != 16:
+            raise ValueError("validation evidence must contain all 16 CV aggregate results")
+        if len(folds) != 48 or {int(row["fold"]) for row in folds} != {0, 1, 2}:
+            raise ValueError("validation evidence must contain all 16 CV results per fold")
+        expected_params = {
+            json.dumps(params, sort_keys=True) for params in DEFAULT_PARAMETER_GRID
+        }
+        aggregate_params = {
+            json.dumps(row["params"], sort_keys=True) for row in aggregates
+        }
+        fold_cells = {
+            (json.dumps(row["params"], sort_keys=True), int(row["fold"]))
+            for row in folds
+        }
+        if aggregate_params != expected_params or fold_cells != {
+            (params, fold) for params in expected_params for fold in range(3)
+        }:
+            raise ValueError("validation evidence CV grid is incomplete or duplicated")
+        calculated_report = hashlib.sha256(
+            json.dumps(
+                evidence.cv_results, sort_keys=True, separators=(",", ":")
+            ).encode()
+        ).hexdigest()
+        if calculated_report != evidence.report_fingerprint:
+            raise ValueError("validation evidence report fingerprint is inconsistent")
+        calculated_fold_map = hashlib.sha256(
+            json.dumps(
+                evidence.fold_map, sort_keys=True, separators=(",", ":")
+            ).encode()
+        ).hexdigest()
+        if calculated_fold_map != evidence.fold_map_fingerprint:
+            raise ValueError("validation evidence fold-map fingerprint is inconsistent")
+        selected = max(
+            aggregates,
+            key=lambda row: (
+                float(row["mean_ndcg_at_10"]),
+                float(row["mean_recall_at_10"]),
+                tuple(-value for value in _complexity_key(row["params"])),
+            ),
+        )["params"]
+        if selected != evidence.selected_params:
+            raise ValueError("validation evidence selected parameters are inconsistent")
     comparisons = {
         "dataset_fingerprint": (evidence.dataset_fingerprint, dataset_fingerprint),
         "feature_fingerprint": (evidence.feature_fingerprint, feature_fingerprint),
@@ -339,15 +521,130 @@ def validate_learned_gate(
             candidate_policy_fingerprint,
         ),
     }
+    if case_fingerprint is not None:
+        comparisons["case_fingerprint"] = (
+            evidence.case_fingerprint,
+            case_fingerprint,
+        )
+    if config_fingerprint is not None:
+        comparisons["config_fingerprint"] = (
+            evidence.config_fingerprint,
+            config_fingerprint,
+        )
     mismatches = [name for name, pair in comparisons.items() if pair[0] != pair[1]]
     if mismatches:
         raise ValueError("validation evidence fingerprint mismatch: " + ", ".join(mismatches))
+    expected_metric_fingerprint = hashlib.sha256(
+        json.dumps(
+            {"bootstrap_resamples": 2000, "k": 10, "metric": "ndcg"},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    if evidence.metric_fingerprint not in {
+        "unspecified",
+        expected_metric_fingerprint,
+    }:
+        raise ValueError("validation evidence metric fingerprint mismatch")
+    if artifact_provenance is not None:
+        shared_fields = (
+            "training_rows_fingerprint",
+            "history_fingerprint",
+            "fold_map_fingerprint",
+            "group_fingerprint",
+            "candidate_policy_fingerprint",
+            "config_fingerprint",
+            "metric_fingerprint",
+            "case_fingerprint",
+            "report_fingerprint",
+            "selected_params",
+            "cv_results",
+            "training_user_count",
+            "training_group_count",
+            "dependency_versions",
+            "fold_map",
+        )
+        differing = [
+            name
+            for name in shared_fields
+            if getattr(evidence, name) != artifact_provenance.get(name)
+        ]
+        if differing:
+            raise ValueError(
+                "validation evidence/artifact provenance mismatch: "
+                + ", ".join(differing)
+            )
+    if case_fingerprint is not None or config_fingerprint is not None:
+        provenance_values = (
+            evidence.training_rows_fingerprint,
+            evidence.history_fingerprint,
+            evidence.fold_map_fingerprint,
+            evidence.group_fingerprint,
+            evidence.config_fingerprint,
+            evidence.metric_fingerprint,
+            evidence.case_fingerprint,
+            evidence.report_fingerprint,
+        )
+        if any(value in {"", "unspecified"} for value in provenance_values):
+            raise ValueError("validation evidence provenance is incomplete")
+        if not evidence.dependency_versions or not evidence.cv_results:
+            raise ValueError("validation evidence provenance is incomplete")
+        if evidence.training_user_count <= 0 or evidence.training_group_count <= 0:
+            raise ValueError("validation evidence provenance counts are incomplete")
     if evidence.mean_lambdamart_ndcg_at_10 <= evidence.mean_itemcf_ndcg_at_10:
         raise ValueError("frozen test is locked: LambdaMART did not improve mean NDCG@10")
     if evidence.ndcg_delta_ci_lower <= 0:
         raise ValueError("frozen test is locked: paired bootstrap confidence interval crosses zero")
     if evidence.constraint_satisfaction_rate != 1.0:
         raise ValueError("frozen test is locked: constraints were not satisfied for every user")
+
+
+def consume_frozen_authorization(
+    marker_path: Path,
+    *,
+    evidence_hash: str,
+    case_fingerprint: str,
+) -> None:
+    """Atomically consume one LambdaMART frozen-test authorization."""
+    marker_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "schema_version": "lambdamart-frozen-consumption/v1",
+        "evidence_hash": evidence_hash,
+        "case_fingerprint": case_fingerprint,
+        "consumed_at": datetime.now(UTC).isoformat(),
+    }
+    try:
+        descriptor = os.open(
+            marker_path,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            0o600,
+        )
+    except FileExistsError as exc:
+        try:
+            if marker_path.stat().st_size > 4096:
+                raise ValueError("frozen authorization marker is invalid")
+            existing = json.loads(marker_path.read_text())
+        except (OSError, ValueError) as read_exc:
+            raise ValueError("frozen authorization marker is invalid") from read_exc
+        required = set(payload)
+        if (
+            set(existing) != required
+            or existing.get("schema_version")
+            != "lambdamart-frozen-consumption/v1"
+            or any(type(existing.get(key)) is not str for key in required)
+        ):
+            raise ValueError("frozen authorization marker is invalid") from exc
+        if (
+            existing["evidence_hash"] != evidence_hash
+            or existing["case_fingerprint"] != case_fingerprint
+        ):
+            raise ValueError("frozen authorization marker binding mismatch") from exc
+        raise ValueError("frozen authorization was already consumed") from exc
+    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+        json.dump(payload, stream, sort_keys=True)
+        stream.write("\n")
+        stream.flush()
+        os.fsync(stream.fileno())
 
 
 def _same(left: object, right: object) -> bool:

@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from recagent_eval.candidate_features import (
     FEATURE_NAMES,
@@ -229,6 +229,8 @@ class LearnedRanker:
 
 
 class RankerArtifact(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     schema_version: str = ARTIFACT_SCHEMA_VERSION
     kind: str = "lambdamart"
     feature_schema_version: str = FEATURE_SCHEMA_VERSION
@@ -242,6 +244,17 @@ class RankerArtifact(BaseModel):
     created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
     model_string: str
     model_checksum: str = ""
+    training_rows_fingerprint: str = "unspecified"
+    history_fingerprint: str = "unspecified"
+    fold_map_fingerprint: str = "unspecified"
+    group_fingerprint: str = "unspecified"
+    candidate_policy_fingerprint: str = "unspecified"
+    config_fingerprint: str = "unspecified"
+    metric_fingerprint: str = "unspecified"
+    case_fingerprint: str = "unspecified"
+    report_fingerprint: str = "unspecified"
+    cv_results: list[dict[str, Any]] = Field(default_factory=list)
+    fold_map: dict[int, int] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_contract(self) -> RankerArtifact:
@@ -257,6 +270,54 @@ class RankerArtifact(BaseModel):
         if self.model_checksum and self.model_checksum != expected:
             raise ValueError("ranker artifact model checksum mismatch")
         self.model_checksum = expected
+        if self.cv_results:
+            aggregates = [row for row in self.cv_results if "mean_ndcg_at_10" in row]
+            folds = [row for row in self.cv_results if "fold" in row]
+            if len(aggregates) != 16 or len(folds) != 48:
+                raise ValueError("ranker artifact CV results are incomplete")
+            expected_params = {
+                json.dumps(params, sort_keys=True) for params in DEFAULT_PARAMETER_GRID
+            }
+            aggregate_params = {
+                json.dumps(row["params"], sort_keys=True) for row in aggregates
+            }
+            fold_cells = {
+                (json.dumps(row["params"], sort_keys=True), int(row["fold"]))
+                for row in folds
+            }
+            if aggregate_params != expected_params or fold_cells != {
+                (params, fold) for params in expected_params for fold in range(3)
+            }:
+                raise ValueError("ranker artifact CV grid is incomplete or duplicated")
+            report = hashlib.sha256(
+                json.dumps(
+                    self.cv_results, sort_keys=True, separators=(",", ":")
+                ).encode()
+            ).hexdigest()
+            if report != self.report_fingerprint:
+                raise ValueError("ranker artifact report fingerprint mismatch")
+            selected = max(
+                aggregates,
+                key=lambda row: (
+                    float(row["mean_ndcg_at_10"]),
+                    float(row["mean_recall_at_10"]),
+                    (
+                        -float(row["params"].get("num_leaves", 0)),
+                        -float(row["params"].get("n_estimators", 0)),
+                        -float(row["params"].get("learning_rate", 0)),
+                        float(row["params"].get("min_child_samples", 0)),
+                    ),
+                ),
+            )["params"]
+            if selected != self.selected_params:
+                raise ValueError("ranker artifact selected parameters are inconsistent")
+            fold_map_hash = hashlib.sha256(
+                json.dumps(
+                    self.fold_map, sort_keys=True, separators=(",", ":")
+                ).encode()
+            ).hexdigest()
+            if fold_map_hash != self.fold_map_fingerprint:
+                raise ValueError("ranker artifact fold-map fingerprint mismatch")
         return self
 
 
@@ -267,6 +328,8 @@ def artifact_from_estimator(
     dataset_fingerprint: str,
     training_user_count: int,
     training_group_count: int,
+    provenance: Mapping[str, Any] | None = None,
+    cv_results: Sequence[Mapping[str, Any]] = (),
 ) -> RankerArtifact:
     booster = getattr(estimator, "booster_", None)
     if booster is None or not hasattr(booster, "model_to_string"):
@@ -274,6 +337,7 @@ def artifact_from_estimator(
     versions = {
         package: _dependency_version(package) for package in ("lightgbm", "numpy", "scikit-learn")
     }
+    provenance = dict(provenance or {})
     return RankerArtifact(
         selected_params=dict(selected_params),
         dataset_fingerprint=dataset_fingerprint,
@@ -281,6 +345,8 @@ def artifact_from_estimator(
         training_group_count=training_group_count,
         dependency_versions=versions,
         model_string=str(booster.model_to_string()),
+        cv_results=[dict(row) for row in cv_results],
+        **provenance,
     )
 
 
@@ -322,6 +388,10 @@ def load_ranker_artifact(
     path: Path,
     *,
     expected_dataset_fingerprint: str | None = None,
+    expected_feature_fingerprint: str = FEATURE_SCHEMA_FINGERPRINT,
+    expected_candidate_policy_fingerprint: str | None = None,
+    expected_config_fingerprint: str | None = None,
+    expected_case_fingerprint: str | None = None,
 ) -> RankerArtifact:
     try:
         size = path.stat().st_size
@@ -345,6 +415,17 @@ def load_ranker_artifact(
             "created_at",
             "model_string",
             "model_checksum",
+            "training_rows_fingerprint",
+            "history_fingerprint",
+            "fold_map_fingerprint",
+            "group_fingerprint",
+            "candidate_policy_fingerprint",
+            "config_fingerprint",
+            "metric_fingerprint",
+            "case_fingerprint",
+            "report_fingerprint",
+            "cv_results",
+            "fold_map",
         }
         missing = sorted(required - set(payload))
         if missing:
@@ -360,6 +441,24 @@ def load_ranker_artifact(
             "ranker artifact dataset fingerprint mismatch: "
             f"expected={expected_dataset_fingerprint}, actual={artifact.dataset_fingerprint}"
         )
+    if artifact.feature_fingerprint != expected_feature_fingerprint:
+        raise ValueError("ranker artifact feature fingerprint mismatch")
+    if (
+        expected_candidate_policy_fingerprint is not None
+        and artifact.candidate_policy_fingerprint
+        != expected_candidate_policy_fingerprint
+    ):
+        raise ValueError("ranker artifact candidate-policy fingerprint mismatch")
+    if (
+        expected_config_fingerprint is not None
+        and artifact.config_fingerprint != expected_config_fingerprint
+    ):
+        raise ValueError("ranker artifact config fingerprint mismatch")
+    if (
+        expected_case_fingerprint is not None
+        and artifact.case_fingerprint != expected_case_fingerprint
+    ):
+        raise ValueError("ranker artifact case fingerprint mismatch")
     stored_lightgbm = artifact.dependency_versions.get("lightgbm")
     runtime_lightgbm = _dependency_version("lightgbm")
     if (
