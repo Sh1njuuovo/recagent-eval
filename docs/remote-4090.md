@@ -1,66 +1,132 @@
-# RTX 4090 remote runbook
+# RTX 4090 remote Qwen runbook
 
-## Preconditions
+This runbook serves `Qwen/Qwen3-8B` with vLLM on one RTX 4090. The Qwen3-8B
+model repository identifies the model license as Apache-2.0; record the exact
+model revision used with the run artifacts.
 
-- One NVIDIA RTX 4090 with at least 20 GB free VRAM.
-- Linux, a compatible NVIDIA driver, Python 3.11, `uv`, Git, and `curl`.
-- At least 20 GB free disk for environment and model cache.
-- A maximum runtime/budget set on the remote platform.
+Remote results are **pending** until the commands below run successfully.
+Missing GPU access, an unhealthy endpoint, or an interrupted connection stays
+recorded as pending/failed evidence. Do not fill metrics from estimates.
 
-Record environment before the run:
+## Preconditions and budget
+
+- Linux server with an RTX 4090, compatible NVIDIA driver, `nvidia-smi`, Git,
+  `curl`, GNU `timeout`, Python 3.11+, and enough model-cache disk.
+- A platform time/cost limit and `RUN_TIMEOUT_SECONDS` chosen before launch.
+- A dedicated virtualenv. Every Python, vLLM, and project command below runs
+  inside that environment; never install into the server's global Python.
+- The repository and MovieLens data are already present on the server.
+
+Record the server/provider budget in the job notes. If the budget expires,
+retain logs and mark remaining 10-case or 50+20 runs pending.
+
+## Create and activate the environment
 
 ```bash
-nvidia-smi
+cd recagent-eval
+uv venv .venv
+source .venv/bin/activate
+uv pip install -e '.[dev,ml]' vllm
+recagent-eval download-data --output data/raw
+```
+
+Confirm the interpreter is inside the virtualenv, then capture initial facts:
+
+```bash
+test -n "${VIRTUAL_ENV:-}"
 python --version
-uv --version
+python -m pip freeze
+nvidia-smi
 uname -a
 ```
 
-## Setup
+## Configure without exposing the API key
+
+Read the key silently so it is not saved in shell history. The script never
+prints it and writes a redacted command record.
 
 ```bash
-git clone <your-recagent-eval-repository>
-cd recagent-eval
-uv sync --extra dev
-uv run recagent-eval download-data --output data/raw
-uv run recagent-eval prepare-cases \
-  --data-dir data/raw/ml-1m \
-  --output cases/fixed_cases.json
+read -rsp 'Temporary vLLM API key: ' VLLM_API_KEY && printf '\n'
+export VLLM_API_KEY
+export VLLM_MODEL='Qwen/Qwen3-8B'
+export VLLM_PORT=8000
+export RUN_TIMEOUT_SECONDS=1800
 ```
 
-Create the 20-case smoke subset without changing the formal 50-case file:
+The server binds only to `127.0.0.1`. From the laptop, open a separate terminal
+and forward a local port; replace the SSH destination with the real host:
 
 ```bash
-uv run recagent-eval subset-cases \
-  --source cases/fixed_cases.json \
-  --output cases/qwen_smoke_cases.json \
-  --single-turn-count 16 \
-  --multi-turn-count 4
+ssh -L 8000:127.0.0.1:8000 -N user@gpu-host
 ```
 
-Then run:
+A client on the laptop can then use `http://127.0.0.1:8000/v1`. Keep the API
+key in that client's environment as well.
+
+## Required 10-case smoke first
+
+`cases/qwen_smoke_cases.json` contains exactly 10 fixed cases. The script starts
+vLLM, checks `http://127.0.0.1:8000/health`, runs the existing `evaluate` CLI,
+captures the environment and GPU snapshots, and kills vLLM on exit.
 
 ```bash
 scripts/run_remote_qwen.sh
 ```
 
-## Evidence to preserve
+Do not start either matrix until all of these exist and are internally
+consistent:
 
-- `gpu-before.csv`, `gpu-after.csv`, `vllm.log`.
-- `episodes.jsonl`, `metrics.json`, `run_manifest.json`.
-- Model ID and revision, CUDA/driver version, wall-clock time and platform cost.
-- p50/p95 episode latency, plan validity, tool success, tokens/s from vLLM logs,
-  and peak GPU memory from `nvidia-smi`.
+- `artifacts/runs/qwen-smoke/environment.json`, `commands.txt`, `vllm.log`,
+  `gpu-before.csv`, and `gpu-after.csv`;
+- `episodes.jsonl`, `metrics.json`, and `run_manifest.json`;
+- exactly 10 episodes, with provider/model identity and no credential text;
+- measured `plan_valid_rate`, `tool_success_rate`,
+  `constraint_satisfaction_rate`, `fallback_rate`, `latency_p50_ms`,
+  `latency_p95_ms`, and `total_tokens`.
 
-Run only 10–20 cases. Qwen is a compatibility and performance smoke test; its
-results must not be merged into the formal DeepSeek matrix.
+The manifest and environment sidecar capture package/runtime versions, model,
+configuration and case fingerprints. vLLM logs are the source for serving
+throughput details. If tokens/s is absent from the log, report it as unavailable.
 
-## Failure recovery
+## 50+20 matrices after smoke approval
 
-- Out of memory: reduce `--gpu-memory-utilization` or model context length;
-  do not silently switch to a different model.
-- Server unhealthy: inspect `vllm.log`, record the model/driver error, then
-  terminate the process.
-- Invalid plans: preserve episode output; the Agent repairs once and records a
-  deterministic fallback.
-- Before releasing the machine, copy artifacts off the host and stop vLLM.
+Only after reviewing the 10-case artifacts, keep the same healthy loopback
+server running (or restart it with the same revision) and execute the existing
+evaluation CLI on the 50 fixed cases and 20 stability cases:
+
+```bash
+export VLLM_BASE_URL='http://127.0.0.1:8000/v1'
+timeout "$RUN_TIMEOUT_SECONDS" recagent-eval evaluate \
+  --config configs/full.yaml \
+  --cases cases/fixed_cases.json \
+  --data-dir data/raw/ml-1m \
+  --output artifacts/runs/qwen-formal-50 \
+  --provider vllm
+
+timeout "$RUN_TIMEOUT_SECONDS" recagent-eval evaluate \
+  --config configs/full.yaml \
+  --cases cases/stability_cases.json \
+  --data-dir data/raw/ml-1m \
+  --output artifacts/runs/qwen-stability-20 \
+  --provider vllm
+```
+
+These commands deliberately reuse generic `evaluate`; it continues to reject
+LambdaMART configs before provider or dataset execution. Learned-ranker frozen
+evaluation remains available only through its gated command.
+
+## Failure handling and cleanup
+
+- Missing GPU/driver or connection: preserve the error and mark all unrun work
+  pending. Never fabricate GPU, latency, token, or quality metrics.
+- Out of memory: capture `vllm.log` and GPU state. Adjust the declared memory or
+  context budget and record the revised command; do not silently swap models.
+- Timeout or malformed JSON: preserve episode errors. The agent performs its
+  bounded repair and deterministic fallback, reflected in `fallback_rate`.
+- Health-check failure: inspect the log and stop; matrices remain pending.
+- End of job: copy artifacts off the host, unset `VLLM_API_KEY`, stop vLLM, and
+  release the server. The script's trap handles its own vLLM child process.
+
+```bash
+unset VLLM_API_KEY
+```

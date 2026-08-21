@@ -112,6 +112,10 @@ def test_run_experiment_writes_reproducible_records_and_metrics(
         "rrf_k": 60,
         "weights": [0.5, 0.3, 0.2],
     }
+    assert manifest["provider"] == {
+        "kind": "rule-based",
+        "model": "deterministic-offline",
+    }
 
 
 def test_case_fingerprint_payload_sorts_set_like_fields() -> None:

@@ -144,6 +144,70 @@ def test_generic_evaluate_rejects_lambdamart_before_loading_artifact(tmp_path) -
     assert "generic evaluate cannot authorize LambdaMART" in result.output
 
 
+def test_formal_evaluate_fails_actionably_for_unconfigured_vllm(
+    tmp_path, monkeypatch
+) -> None:
+    config = tmp_path / "config.yaml"
+    config.write_text("name: remote\n")
+    cases = tmp_path / "cases.json"
+    cases.write_text("[]")
+    monkeypatch.delenv("VLLM_BASE_URL", raising=False)
+    monkeypatch.delenv("VLLM_API_KEY", raising=False)
+    monkeypatch.setattr("recagent_eval.cli._load_dataset", lambda _path: ({}, []))
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "evaluate",
+            "--config",
+            str(config),
+            "--cases",
+            str(cases),
+            "--provider",
+            "vllm",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "VLLM_BASE_URL" in result.output
+    assert "rule-based" not in result.output.lower()
+
+
+def test_demo_command_forwards_provider_and_config_paths(tmp_path, monkeypatch) -> None:
+    seen = {}
+
+    def fake_launch(data_dir, **kwargs):
+        seen["data_dir"] = data_dir
+        seen.update(kwargs)
+
+    monkeypatch.setattr("recagent_eval.demo.launch", fake_launch)
+    semantic = tmp_path / "semantic.yaml"
+    ranker = tmp_path / "ranker.yaml"
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "demo",
+            "--data-dir",
+            str(tmp_path),
+            "--provider",
+            "qwen",
+            "--semantic-config",
+            str(semantic),
+            "--ranker-config",
+            str(ranker),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen == {
+        "data_dir": tmp_path,
+        "provider_name": "qwen",
+        "semantic_config_path": semantic,
+        "ranker_config_path": ranker,
+    }
+
+
 def test_consumed_frozen_identity_rejects_before_any_dataset_or_model_load(
     tmp_path, monkeypatch
 ) -> None:

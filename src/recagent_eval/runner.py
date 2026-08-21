@@ -206,6 +206,10 @@ def run_experiment(
             "rrf_k": config.rrf_k,
             "weights": config.weights,
         },
+        "provider": {
+            "kind": str(getattr(provider, "name", type(provider).__name__)),
+            "model": str(getattr(provider, "model", "unknown")),
+        },
         "retrieval_top_k": config.retrieval_top_k,
         "enable_memory": config.enable_memory,
         "enable_semantic_retrieval": config.enable_semantic_retrieval,

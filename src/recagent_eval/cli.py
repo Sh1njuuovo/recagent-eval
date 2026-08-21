@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 from pathlib import Path
 from typing import Annotated
 
@@ -41,7 +40,7 @@ from recagent_eval.learned_ranking import (
     parse_ranker_artifact,
 )
 from recagent_eval.models import PreferenceState
-from recagent_eval.provider import OpenAICompatibleProvider, RuleBasedProvider
+from recagent_eval.provider import RuleBasedProvider, build_provider
 from recagent_eval.ranker_selection import (
     RankerSelectionEvidence,
     build_ranker_ablation,
@@ -772,7 +771,7 @@ def evaluate(
     data_dir: Annotated[Path, typer.Option()] = Path("data/raw/ml-1m"),
     output: Annotated[Path, typer.Option()] = Path("artifacts/runs/latest"),
     provider_name: Annotated[
-        str, typer.Option("--provider", help="rule-based, deepseek, or vllm")
+        str, typer.Option("--provider", help="rule-based, deepseek, vllm, or qwen")
     ] = "rule-based",
 ) -> None:
     config = _validated_config(config_path)
@@ -799,6 +798,32 @@ def evaluate(
 def show_config(config_path: Path) -> None:
     config = _validated_config(config_path)
     typer.echo(json.dumps(config.__dict__, indent=2))
+
+
+@app.command("demo")
+def demo_command(
+    data_dir: Annotated[Path, typer.Option()] = Path("data/raw/ml-1m"),
+    provider_name: Annotated[
+        str | None,
+        typer.Option("--provider", help="rule-based, deepseek, vllm, or qwen"),
+    ] = None,
+    semantic_config_path: Annotated[
+        Path | None,
+        typer.Option("--semantic-config", help="Semantic retrieval config YAML"),
+    ] = None,
+    ranker_config_path: Annotated[
+        Path | None,
+        typer.Option("--ranker-config", help="Demo ranker config YAML"),
+    ] = None,
+) -> None:
+    from recagent_eval.demo import launch
+
+    launch(
+        data_dir,
+        provider_name=provider_name,
+        semantic_config_path=semantic_config_path,
+        ranker_config_path=ranker_config_path,
+    )
 
 
 @app.command("smoke")
@@ -860,24 +885,10 @@ def _load_dataset(data_dir: Path) -> tuple[dict[int, Movie], list[Rating]]:
 
 
 def _provider(name: str):
-    if name == "rule-based":
-        return RuleBasedProvider()
-    if name == "deepseek":
-        key = os.environ.get("DEEPSEEK_API_KEY")
-        if not key:
-            raise typer.BadParameter("DEEPSEEK_API_KEY is required")
-        return OpenAICompatibleProvider(
-            base_url=os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1"),
-            api_key=key,
-            model=os.environ.get("DEEPSEEK_MODEL", "deepseek-chat"),
-        )
-    if name == "vllm":
-        return OpenAICompatibleProvider(
-            base_url=os.environ.get("VLLM_BASE_URL", "http://127.0.0.1:8000/v1"),
-            api_key=os.environ.get("VLLM_API_KEY", "local"),
-            model=os.environ.get("VLLM_MODEL", "Qwen/Qwen2.5-7B-Instruct"),
-        )
-    raise typer.BadParameter("provider must be rule-based, deepseek, or vllm")
+    try:
+        return build_provider(name).provider
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
 
 
 if __name__ == "__main__":
