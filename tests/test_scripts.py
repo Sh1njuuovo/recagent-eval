@@ -419,6 +419,27 @@ exit 0
         "REPLAY_OUTPUT_DIR": str(replay_output),
         "VLLM_PORT": "18127",
     }
+    occupied_replay_output = tmp_path / "occupied replay output"
+    (logs / "serve.args").unlink(missing_ok=True)
+    (logs / "evaluate.args").unlink(missing_ok=True)
+    occupied_replay = subprocess.run(
+        ["bash", str(success_output / "replay.sh")],
+        cwd=Path.cwd(),
+        env={
+            **replay_env,
+            "REPLAY_OUTPUT_DIR": str(occupied_replay_output),
+            "STUB_PORT_OCCUPIED": "1",
+            "STUB_MODEL_ID": "Qwen/Qwen3-8B",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert occupied_replay.returncode != 0
+    assert "occupied" in occupied_replay.stderr
+    assert not (logs / "serve.args").exists()
+    assert not (logs / "evaluate.args").exists()
+
     replay = subprocess.run(
         ["bash", str(success_output / "replay.sh")],
         cwd=Path.cwd(),

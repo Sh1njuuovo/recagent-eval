@@ -283,6 +283,23 @@ umask 077
 if ! mkdir "$REPLAY_OUTPUT_DIR"; then echo "REPLAY_OUTPUT_DIR already exists" >&2; exit 2; fi
 exec 9>{shlex.quote(lock_path)}
 {shlex.quote(flock_bin)} -n 9 || {{ echo "endpoint lock unavailable" >&2; exit 3; }}
+if ! {shlex.quote(python_bin)} - --port-check {shlex.quote(port)} <<'PYPORT'
+import socket
+import sys
+
+port = int(sys.argv[2])
+probe = socket.socket()
+try:
+    probe.bind(("127.0.0.1", port))
+except OSError:
+    raise SystemExit(1)
+finally:
+    probe.close()
+PYPORT
+then
+  echo "Loopback endpoint 127.0.0.1:{port} is occupied" >&2
+  exit 3
+fi
 {server_command} > "$REPLAY_OUTPUT_DIR/vllm.log" 2>&1 &
 server_pid=$!
 cleanup() {{ kill "$server_pid" 2>/dev/null || true; wait "$server_pid" 2>/dev/null || true; }}

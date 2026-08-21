@@ -105,10 +105,11 @@ consistent:
   `constraint_satisfaction_rate`, `fallback_rate`, `latency_p50_ms`,
   `latency_p95_ms`, and `total_tokens`.
 
-The replayable `commands.txt` captures the effective executable, immutable
-revision, API model, host/port, dtype, GPU-memory utilization, timeout,
-config/case/data/output paths, and the Qwen non-thinking provider setting. It
-references `VLLM_API_KEY` without recording its value. `status.json` records
+`commands.txt` is the exact command record: it captures the effective
+executable, immutable revision, API model, host/port, dtype, GPU-memory
+utilization, timeout, config/case/data/output paths, and the Qwen non-thinking
+provider setting. `replay.sh` is the executable replay artifact. Neither file
+records the `VLLM_API_KEY` value. `status.json` records
 success/failure, exit code, start/end timestamps, and duration even when the
 health check or evaluation fails; it also records the resolved run ID and run
 directory. The manifest and environment sidecar capture
@@ -116,10 +117,12 @@ package/runtime versions, model, configuration and case fingerprints. vLLM
 logs are the source for serving throughput details. If tokens/s is absent from
 the log, report it as unavailable.
 
-`replay.sh` reproduces server background launch, redirected vLLM logs, PID
-cleanup, health wait, exact model verification, and evaluation. Set a fresh
+`replay.sh` reproduces the endpoint lock and loopback bind probe before server
+launch, then performs background launch, redirected vLLM logs, PID cleanup,
+health wait, exact model verification, and evaluation. Set a fresh
 `REPLAY_OUTPUT_DIR` plus `VLLM_API_KEY` before using it; it refuses an existing
-replay directory.
+replay directory. An occupied port aborts before the replay starts vLLM or the
+evaluation, even if that old endpoint would report the expected model.
 
 ## 50+20 matrices after smoke approval
 
