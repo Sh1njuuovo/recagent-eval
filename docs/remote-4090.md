@@ -49,6 +49,8 @@ prints it and writes a redacted command record.
 read -rsp 'Temporary vLLM API key: ' VLLM_API_KEY && printf '\n'
 export VLLM_API_KEY
 export VLLM_MODEL='Qwen/Qwen3-8B'
+# Pin the exact immutable Hugging Face commit SHA (or an immutable release tag).
+export QWEN_MODEL_REVISION='<immutable-model-commit-sha>'
 export VLLM_PORT=8000
 export RUN_TIMEOUT_SECONDS=1800
 ```
@@ -76,17 +78,24 @@ scripts/run_remote_qwen.sh
 Do not start either matrix until all of these exist and are internally
 consistent:
 
-- `artifacts/runs/qwen-smoke/environment.json`, `commands.txt`, `vllm.log`,
-  `gpu-before.csv`, and `gpu-after.csv`;
+- `artifacts/runs/qwen-smoke/environment.json`, `commands.txt`, `status.json`,
+  `run.stdout.log`, `run.stderr.log`, `vllm.log`, `gpu-before.csv`, and
+  `gpu-after.csv`;
 - `episodes.jsonl`, `metrics.json`, and `run_manifest.json`;
 - exactly 10 episodes, with provider/model identity and no credential text;
 - measured `plan_valid_rate`, `tool_success_rate`,
   `constraint_satisfaction_rate`, `fallback_rate`, `latency_p50_ms`,
   `latency_p95_ms`, and `total_tokens`.
 
-The manifest and environment sidecar capture package/runtime versions, model,
-configuration and case fingerprints. vLLM logs are the source for serving
-throughput details. If tokens/s is absent from the log, report it as unavailable.
+The replayable `commands.txt` captures the effective executable, immutable
+revision, API model, host/port, dtype, GPU-memory utilization, timeout,
+config/case/data/output paths, and the Qwen non-thinking provider setting. It
+references `VLLM_API_KEY` without recording its value. `status.json` records
+success/failure, exit code, start/end timestamps, and duration even when the
+health check or evaluation fails. The manifest and environment sidecar capture
+package/runtime versions, model, configuration and case fingerprints. vLLM
+logs are the source for serving throughput details. If tokens/s is absent from
+the log, report it as unavailable.
 
 ## 50+20 matrices after smoke approval
 

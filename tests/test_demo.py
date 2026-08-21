@@ -1,5 +1,6 @@
 import builtins
 import importlib
+from types import SimpleNamespace
 
 from recagent_eval import demo
 from recagent_eval.demo import (
@@ -124,10 +125,28 @@ def test_empty_demo_input_is_actionable_and_does_not_call_agent() -> None:
     assert agent.calls == 0
 
 
-def test_diagnostics_include_plan_trace_sources_scores_and_provider() -> None:
-    result = SessionAwareAgent().recommend("space", PreferenceState())
+def test_empty_demo_input_serializes_existing_session_preferences() -> None:
+    agent = SessionAwareAgent()
+    first = handle_message("space movies", None, agent=agent, provider_status=_status())
 
-    diagnostics = serialize_diagnostics(result, _status())
+    blank = handle_message("  ", first.session, agent=agent, provider_status=_status())
+
+    assert blank.session == first.session
+    assert blank.diagnostics["preference_state"]["liked_genres"] == ["Sci-Fi"]
+    assert agent.calls == 1
+
+
+def test_diagnostics_include_plan_trace_sources_scores_and_provider() -> None:
+    agent = SessionAwareAgent()
+    agent.ranker = SimpleNamespace(kind="lambdamart", artifact_id="sha256:abc123abc123")
+    agent.semantic = SimpleNamespace(
+        kind="dense",
+        model_name="sentence-transformers/all-MiniLM-L6-v2",
+        model_revision="immutable-revision",
+    )
+    result = agent.recommend("space", PreferenceState())
+
+    diagnostics = serialize_diagnostics(result, _status(), agent=agent)
 
     assert diagnostics["preference_state"]["liked_genres"] == ["Sci-Fi"]
     assert diagnostics["validated_tool_plan"]["steps"][-1]["tool"] == "explain"
@@ -143,6 +162,15 @@ def test_diagnostics_include_plan_trace_sources_scores_and_provider() -> None:
     assert diagnostics["latency_ms"] == 12.5
     assert diagnostics["fallback_used"] is False
     assert diagnostics["errors"] == []
+    assert diagnostics["pipeline"] == {
+        "ranker": {"kind": "lambdamart", "artifact_id": "sha256:abc123abc123"},
+        "semantic": {
+            "kind": "dense",
+            "model": "sentence-transformers/all-MiniLM-L6-v2",
+            "revision": "immutable-revision",
+        },
+    }
+    assert "/" not in diagnostics["pipeline"]["ranker"]["artifact_id"]
 
 
 def test_no_key_demo_provider_uses_visible_offline_fallback() -> None:
@@ -187,7 +215,7 @@ def test_demo_ranker_config_loads_validated_lambdamart_for_explanations(
         f"ranker:\n  kind: lambdamart\n  model_path: {model_path}\n",
         encoding="utf-8",
     )
-    artifact = object()
+    artifact = SimpleNamespace(model_checksum="a" * 64)
     estimator = object()
     monkeypatch.setattr(
         "recagent_eval.demo.parse_ranker_artifact", lambda raw: artifact
@@ -204,6 +232,14 @@ def test_demo_ranker_config_loads_validated_lambdamart_for_explanations(
 
     assert isinstance(agent.ranker, LearnedRanker)
     assert agent.ranker.estimator is estimator
+    identity = serialize_diagnostics(
+        RecommendationResult(), _status(), agent=agent
+    )["pipeline"]
+    assert identity["ranker"] == {
+        "kind": "lambdamart",
+        "artifact_id": "sha256:aaaaaaaaaaaa",
+    }
+    assert str(model_path) not in str(identity)
 
 
 def test_demo_module_import_does_not_require_gradio(monkeypatch) -> None:

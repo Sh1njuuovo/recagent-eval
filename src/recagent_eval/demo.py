@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
@@ -78,7 +79,12 @@ def handle_message(
     """Process one request without retaining mutable cross-session state."""
     current = _session_from_value(session)
     if not message.strip():
-        diagnostics = _empty_diagnostics(provider_status, "Please enter a movie request.")
+        diagnostics = _empty_diagnostics(
+            provider_status,
+            current.preference_state,
+            agent,
+            "Please enter a movie request.",
+        )
         return DemoTurn(
             output="Please enter a movie request so I can recommend something.",
             session=current,
@@ -99,7 +105,7 @@ def handle_message(
     return DemoTurn(
         output=output,
         session=updated,
-        diagnostics=serialize_diagnostics(result, provider_status),
+        diagnostics=serialize_diagnostics(result, provider_status, agent=agent),
     )
 
 
@@ -110,6 +116,8 @@ def reset_session() -> DemoSessionState:
 def serialize_diagnostics(
     result: RecommendationResult,
     provider_status: ProviderStatus,
+    *,
+    agent: DemoAgent | None = None,
 ) -> dict[str, Any]:
     sources_by_movie: dict[int, list[str]] = {}
     for trace in result.traces:
@@ -144,6 +152,7 @@ def serialize_diagnostics(
         "tool_traces": [trace.model_dump(mode="json") for trace in result.traces],
         "recommendations": recommendations,
         "provider": provider,
+        "pipeline": _pipeline_identity(agent),
         "fallback_used": provider_status.fallback or result.fallback_used,
         "errors": [error[:500] for error in result.errors],
         "latency_ms": result.latency_ms,
@@ -216,6 +225,7 @@ def _build_agent(
             estimator_from_artifact(artifact),
             legal_train_rows=split.train,
         )
+        ranker.artifact_id = f"sha256:{artifact.model_checksum[:12]}"
     else:
         ranker = HybridRanker(
             config.weights if config is not None else (0.7, 0.3, 0.0),
@@ -286,6 +296,7 @@ def build_demo(
                 key: diagnostics[key]
                 for key in (
                     "provider",
+                    "pipeline",
                     "fallback_used",
                     "errors",
                     "latency_ms",
@@ -349,13 +360,19 @@ def _session_from_value(
     return DemoSessionState.model_validate(dict(session))
 
 
-def _empty_diagnostics(status: ProviderStatus, error: str) -> dict[str, Any]:
+def _empty_diagnostics(
+    status: ProviderStatus,
+    state: PreferenceState,
+    agent: DemoAgent,
+    error: str,
+) -> dict[str, Any]:
     return {
-        "preference_state": PreferenceState().model_dump(mode="json"),
+        "preference_state": state.model_dump(mode="json"),
         "validated_tool_plan": None,
         "tool_traces": [],
         "recommendations": [],
         "provider": asdict(status),
+        "pipeline": _pipeline_identity(agent),
         "fallback_used": status.fallback,
         "errors": [error],
         "latency_ms": 0.0,
@@ -363,6 +380,45 @@ def _empty_diagnostics(status: ProviderStatus, error: str) -> dict[str, Any]:
         "prompt_tokens": 0,
         "completion_tokens": 0,
     }
+
+
+def _pipeline_identity(agent: DemoAgent | None) -> dict[str, Any]:
+    if agent is None:
+        return {
+            "ranker": {"kind": "unknown", "artifact_id": None},
+            "semantic": {"kind": "unknown", "model": None, "revision": None},
+        }
+    ranker = getattr(agent, "ranker", None)
+    semantic = getattr(agent, "semantic", None)
+    ranker_kind = str(getattr(ranker, "kind", type(ranker).__name__ if ranker else "unknown"))
+    artifact_id = getattr(ranker, "artifact_id", None)
+    artifact_digest = artifact_id.removeprefix("sha256:") if isinstance(artifact_id, str) else ""
+    if (
+        not isinstance(artifact_id, str)
+        or not artifact_id.startswith("sha256:")
+        or not 12 <= len(artifact_digest) <= 64
+        or any(character not in "0123456789abcdef" for character in artifact_digest)
+    ):
+        artifact_id = None
+    semantic_kind = str(
+        getattr(semantic, "kind", type(semantic).__name__ if semantic else "unknown")
+    )
+    model = _safe_model_identity(getattr(semantic, "model_name", None))
+    revision = _safe_model_identity(getattr(semantic, "model_revision", None))
+    return {
+        "ranker": {"kind": ranker_kind, "artifact_id": artifact_id},
+        "semantic": {"kind": semantic_kind, "model": model, "revision": revision},
+    }
+
+
+def _safe_model_identity(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value)
+    if Path(text).is_absolute() or text.startswith(("./", "../", "~")):
+        digest = hashlib.sha256(text.encode()).hexdigest()[:12]
+        return f"local-model:sha256:{digest}"
+    return text[:200]
 
 
 def main() -> None:
