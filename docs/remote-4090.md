@@ -53,6 +53,9 @@ export VLLM_MODEL='Qwen/Qwen3-8B'
 export QWEN_MODEL_REVISION='<immutable-model-commit-sha>'
 export VLLM_PORT=8000
 export RUN_TIMEOUT_SECONDS=1800
+export QWEN_OUTPUT_ROOT='artifacts/runs/qwen-smoke'
+# Optional immutable label; omit it for a UTC timestamp + PID run ID.
+export QWEN_RUN_ID='qwen3-8b-smoke-rev0123456-attempt01'
 ```
 
 The server binds only to `127.0.0.1`. From the laptop, open a separate terminal
@@ -75,12 +78,18 @@ captures the environment and GPU snapshots, and kills vLLM on exit.
 scripts/run_remote_qwen.sh
 ```
 
+The script atomically creates `$QWEN_OUTPUT_ROOT/$QWEN_RUN_ID`. If the run ID
+is omitted, it generates a UTC timestamp plus process ID. An existing run
+directory is always rejected before `commands.txt` or any metric can be
+written, so retries cannot append to or mix with prior evidence. Choose a new
+immutable-safe `QWEN_RUN_ID` for every explicit retry.
+
 Do not start either matrix until all of these exist and are internally
 consistent:
 
-- `artifacts/runs/qwen-smoke/environment.json`, `commands.txt`, `status.json`,
-  `run.stdout.log`, `run.stderr.log`, `vllm.log`, `gpu-before.csv`, and
-  `gpu-after.csv`;
+- `$QWEN_OUTPUT_ROOT/$QWEN_RUN_ID/environment.json`, `commands.txt`,
+  `status.json`, `run.stdout.log`, `run.stderr.log`, `vllm.log`,
+  `gpu-before.csv`, and `gpu-after.csv`;
 - `episodes.jsonl`, `metrics.json`, and `run_manifest.json`;
 - exactly 10 episodes, with provider/model identity and no credential text;
 - measured `plan_valid_rate`, `tool_success_rate`,
@@ -92,7 +101,8 @@ revision, API model, host/port, dtype, GPU-memory utilization, timeout,
 config/case/data/output paths, and the Qwen non-thinking provider setting. It
 references `VLLM_API_KEY` without recording its value. `status.json` records
 success/failure, exit code, start/end timestamps, and duration even when the
-health check or evaluation fails. The manifest and environment sidecar capture
+health check or evaluation fails; it also records the resolved run ID and run
+directory. The manifest and environment sidecar capture
 package/runtime versions, model, configuration and case fingerprints. vLLM
 logs are the source for serving throughput details. If tokens/s is absent from
 the log, report it as unavailable.

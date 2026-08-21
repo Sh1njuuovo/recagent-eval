@@ -1,8 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-output_dir="${QWEN_OUTPUT_DIR:-artifacts/runs/qwen-smoke}"
-mkdir -p "$output_dir"
+output_root="${QWEN_OUTPUT_ROOT:-artifacts/runs/qwen-smoke}"
+run_id="${QWEN_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-$$}"
+if [[ ! "$run_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+  echo "QWEN_RUN_ID must contain only letters, digits, dot, underscore, or hyphen" >&2
+  exit 2
+fi
+mkdir -p "$output_root"
+output_root=$(cd "$output_root" && pwd -P)
+output_dir="$output_root/$run_id"
+if ! mkdir "$output_dir"; then
+  echo "Evidence run directory already exists; refusing reuse: $output_dir" >&2
+  exit 2
+fi
 started_epoch=$(date +%s)
 started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 qwen_server_pid=""
@@ -31,8 +42,9 @@ finalize() {
   if [[ "$exit_code" -ne 0 ]]; then
     final_status="failed"
   fi
-  printf '{\n  "status": "%s",\n  "exit_code": %d,\n  "started_at": "%s",\n  "finished_at": "%s",\n  "duration_seconds": %d\n}\n' \
+  printf '{\n  "status": "%s",\n  "exit_code": %d,\n  "started_at": "%s",\n  "finished_at": "%s",\n  "duration_seconds": %d,\n  "run_id": "%s",\n  "run_dir": "%s"\n}\n' \
     "$final_status" "$exit_code" "$started_at" "$finished_at" "$duration_seconds" \
+    "$run_id" "$output_dir" \
     > "$output_dir/status.json"
   if [[ ! -f "$output_dir/environment.json" ]]; then
     printf '{"capture_status":"unavailable","exit_code":%d}\n' "$exit_code" \

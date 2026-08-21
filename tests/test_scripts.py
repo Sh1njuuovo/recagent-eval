@@ -25,6 +25,8 @@ def test_remote_qwen_script_is_loopback_secret_safe_and_venv_only() -> None:
     assert "require_env VLLM_API_KEY" in script
     assert "require_env VLLM_MODEL" in script
     assert "require_env QWEN_MODEL_REVISION" in script
+    assert "QWEN_OUTPUT_ROOT" in script
+    assert "QWEN_RUN_ID" in script
     assert "Qwen/Qwen3-8B" in script
     assert "--host 127.0.0.1" in script
     assert "VLLM_BASE_URL=\"http://127.0.0.1:" in script
@@ -57,6 +59,8 @@ def test_remote_runbook_documents_forwarding_evidence_and_pending_results() -> N
         "127.0.0.1",
         "Qwen/Qwen3-8B",
         "QWEN_MODEL_REVISION",
+        "QWEN_OUTPUT_ROOT",
+        "QWEN_RUN_ID",
         "Apache-2.0",
         "10-case",
         "50+20",
@@ -97,7 +101,9 @@ def test_remote_script_failure_records_exact_args_and_final_evidence(tmp_path: P
     stub_dir.mkdir()
     logs = tmp_path / "stub-logs"
     logs.mkdir()
-    output = tmp_path / "run output"
+    output_root = tmp_path / "run output"
+    run_id = "failed-run-001"
+    output = output_root / run_id
 
     _write_executable(
         bin_dir / "python",
@@ -138,18 +144,21 @@ echo 'Stub RTX 4090, 555.1, 24564 MiB, 10 MiB'
         "QWEN_MODEL_REVISION": "0123456789abcdef0123456789abcdef01234567",
         "RUN_TIMEOUT_SECONDS": "91",
         "VLLM_PORT": "8123",
-        "QWEN_OUTPUT_DIR": str(output),
+        "QWEN_OUTPUT_ROOT": str(output_root),
+        "QWEN_RUN_ID": run_id,
         "REAL_PYTHON": sys.executable,
         "STUB_LOG": str(logs),
     }
-    invalid_revision_output = tmp_path / "invalid revision"
+    invalid_revision_root = tmp_path / "invalid revision"
+    invalid_revision_output = invalid_revision_root / "invalid-revision-001"
     invalid_revision = subprocess.run(
         ["bash", str(Path("scripts/run_remote_qwen.sh").resolve())],
         cwd=Path.cwd(),
         env={
             **env,
             "QWEN_MODEL_REVISION": "main",
-            "QWEN_OUTPUT_DIR": str(invalid_revision_output),
+            "QWEN_OUTPUT_ROOT": str(invalid_revision_root),
+            "QWEN_RUN_ID": "invalid-revision-001",
         },
         capture_output=True,
         text=True,
@@ -216,9 +225,28 @@ echo 'Stub RTX 4090, 555.1, 24564 MiB, 10 MiB'
     assert status["duration_seconds"] >= 0
     assert status["started_at"]
     assert status["finished_at"]
+    assert status["run_id"] == run_id
+    assert status["run_dir"] == str(output)
     assert (output / "gpu-after.csv").exists()
+    assert not (output / "metrics.json").exists()
     assert "simulated-evaluation-failure" in (output / "run.stderr.log").read_text()
     assert "must-not-appear" not in (output / "run.stderr.log").read_text()
+
+    stale_metrics = output / "metrics.json"
+    stale_metrics.write_text('{"stale":true}\n')
+    original_commands = (output / "commands.txt").read_bytes()
+    duplicate = subprocess.run(
+        ["bash", str(Path("scripts/run_remote_qwen.sh").resolve())],
+        cwd=Path.cwd(),
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert duplicate.returncode != 0
+    assert "already exists" in duplicate.stderr
+    assert stale_metrics.read_text() == '{"stale":true}\n'
+    assert (output / "commands.txt").read_bytes() == original_commands
 
     _write_executable(
         bin_dir / "recagent-eval",
@@ -228,8 +256,13 @@ echo simulated-evaluation-success
 exit 0
 """,
     )
-    success_output = tmp_path / "successful run"
-    success_env = {**env, "QWEN_OUTPUT_DIR": str(success_output)}
+    success_root = tmp_path / "successful runs"
+    success_output = success_root / "success-run-001"
+    success_env = {
+        **env,
+        "QWEN_OUTPUT_ROOT": str(success_root),
+        "QWEN_RUN_ID": "success-run-001",
+    }
     success = subprocess.run(
         ["bash", str(Path("scripts/run_remote_qwen.sh").resolve())],
         cwd=Path.cwd(),
@@ -248,6 +281,25 @@ exit 0
     assert "simulated-evaluation-success" in (
         success_output / "run.stdout.log"
     ).read_text()
+
+    default_root = tmp_path / "default runs"
+    default_env = {
+        key: value for key, value in success_env.items() if key != "QWEN_RUN_ID"
+    }
+    default_env["QWEN_OUTPUT_ROOT"] = str(default_root)
+    for _ in range(2):
+        default_run = subprocess.run(
+            ["bash", str(Path("scripts/run_remote_qwen.sh").resolve())],
+            cwd=Path.cwd(),
+            env=default_env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert default_run.returncode == 0
+    default_dirs = sorted(path for path in default_root.iterdir() if path.is_dir())
+    assert len(default_dirs) == 2
+    assert default_dirs[0].name != default_dirs[1].name
 
 
 def _write_executable(path: Path, content: str) -> None:
