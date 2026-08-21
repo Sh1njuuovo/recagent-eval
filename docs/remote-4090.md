@@ -49,7 +49,7 @@ prints it and writes a redacted command record.
 read -rsp 'Temporary vLLM API key: ' VLLM_API_KEY && printf '\n'
 export VLLM_API_KEY
 export VLLM_MODEL='Qwen/Qwen3-8B'
-# Pin the exact immutable Hugging Face commit SHA (or an immutable release tag).
+# Pin the exact immutable Hugging Face commit SHA (40 or 64 lowercase hex).
 export QWEN_MODEL_REVISION='<immutable-model-commit-sha>'
 export VLLM_PORT=8000
 export RUN_TIMEOUT_SECONDS=1800
@@ -84,6 +84,15 @@ directory is always rejected before `commands.txt` or any metric can be
 written, so retries cannot append to or mix with prior evidence. Choose a new
 immutable-safe `QWEN_RUN_ID` for every explicit retry.
 
+Before launch, the script acquires an exclusive `flock` token for
+`127.0.0.1:$VLLM_PORT` under `QWEN_LOCK_ROOT` (defaulting to a private temporary
+lock directory), validates that the port is an integer in `1..65535`, and
+probes that the loopback port is unoccupied. The lock remains held until vLLM
+is stopped. A stale or unrelated server therefore cannot satisfy the run.
+After `/health`, the script queries `/v1/models`, requires the exact
+`Qwen/Qwen3-8B` identity, and confirms the launched PID is still alive before
+evaluation. `RUN_TIMEOUT_SECONDS` must be a positive integer.
+
 Do not start either matrix until all of these exist and are internally
 consistent:
 
@@ -106,6 +115,11 @@ directory. The manifest and environment sidecar capture
 package/runtime versions, model, configuration and case fingerprints. vLLM
 logs are the source for serving throughput details. If tokens/s is absent from
 the log, report it as unavailable.
+
+`replay.sh` reproduces server background launch, redirected vLLM logs, PID
+cleanup, health wait, exact model verification, and evaluation. Set a fresh
+`REPLAY_OUTPUT_DIR` plus `VLLM_API_KEY` before using it; it refuses an existing
+replay directory.
 
 ## 50+20 matrices after smoke approval
 

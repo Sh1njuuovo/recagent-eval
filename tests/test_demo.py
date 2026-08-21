@@ -2,6 +2,8 @@ import builtins
 import importlib
 from types import SimpleNamespace
 
+import pytest
+
 from recagent_eval import demo
 from recagent_eval.demo import (
     DemoSessionState,
@@ -171,6 +173,38 @@ def test_diagnostics_include_plan_trace_sources_scores_and_provider() -> None:
         },
     }
     assert "/" not in diagnostics["pipeline"]["ranker"]["artifact_id"]
+
+
+@pytest.mark.parametrize(
+    "unsafe_model",
+    (
+        "/srv/private/model",
+        r"C:\Users\name\private-model",
+        r"\\server\share\private-model",
+        "~/private-model",
+    ),
+)
+def test_diagnostics_hash_path_like_provider_and_semantic_models(unsafe_model) -> None:
+    agent = SessionAwareAgent()
+    agent.ranker = SimpleNamespace(kind="minmax_linear")
+    agent.semantic = SimpleNamespace(
+        kind="dense", model_name=unsafe_model, model_revision=unsafe_model
+    )
+    status = ProviderStatus("vllm", "vllm/qwen", unsafe_model)
+
+    diagnostics = serialize_diagnostics(
+        RecommendationResult(), status, agent=agent
+    )
+
+    rendered = str(diagnostics)
+    assert unsafe_model not in rendered
+    assert diagnostics["provider"]["model"].startswith("local-model:sha256:")
+    assert diagnostics["pipeline"]["semantic"]["model"].startswith(
+        "local-model:sha256:"
+    )
+    assert diagnostics["pipeline"]["semantic"]["revision"].startswith(
+        "local-model:sha256:"
+    )
 
 
 def test_no_key_demo_provider_uses_visible_offline_fallback() -> None:

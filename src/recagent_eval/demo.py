@@ -5,7 +5,7 @@ import hashlib
 import os
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any, Protocol
 
 from pydantic import BaseModel, Field
@@ -142,7 +142,7 @@ def serialize_diagnostics(
                 "reason": movie.reason,
             }
         )
-    provider = asdict(provider_status)
+    provider = _safe_provider_status(provider_status)
     provider["fallback"] = provider_status.fallback or result.fallback_used
     return {
         "preference_state": result.preference_state.model_dump(mode="json"),
@@ -371,7 +371,7 @@ def _empty_diagnostics(
         "validated_tool_plan": None,
         "tool_traces": [],
         "recommendations": [],
-        "provider": asdict(status),
+        "provider": _safe_provider_status(status),
         "pipeline": _pipeline_identity(agent),
         "fallback_used": status.fallback,
         "errors": [error],
@@ -411,11 +411,21 @@ def _pipeline_identity(agent: DemoAgent | None) -> dict[str, Any]:
     }
 
 
+def _safe_provider_status(status: ProviderStatus) -> dict[str, Any]:
+    provider = asdict(status)
+    provider["model"] = _safe_model_identity(status.model)
+    return provider
+
+
 def _safe_model_identity(value: Any) -> str | None:
     if value is None:
         return None
     text = str(value)
-    if Path(text).is_absolute() or text.startswith(("./", "../", "~")):
+    if (
+        Path(text).is_absolute()
+        or PureWindowsPath(text).is_absolute()
+        or text.startswith(("./", "../", "~", "\\\\", "//"))
+    ):
         digest = hashlib.sha256(text.encode()).hexdigest()[:12]
         return f"local-model:sha256:{digest}"
     return text[:200]

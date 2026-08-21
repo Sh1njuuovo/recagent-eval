@@ -27,6 +27,8 @@ def test_remote_qwen_script_is_loopback_secret_safe_and_venv_only() -> None:
     assert "require_env QWEN_MODEL_REVISION" in script
     assert "QWEN_OUTPUT_ROOT" in script
     assert "QWEN_RUN_ID" in script
+    assert "QWEN_LOCK_ROOT" in script
+    assert "flock -n" in script
     assert "Qwen/Qwen3-8B" in script
     assert "--host 127.0.0.1" in script
     assert "VLLM_BASE_URL=\"http://127.0.0.1:" in script
@@ -101,7 +103,7 @@ def test_remote_script_failure_records_exact_args_and_final_evidence(tmp_path: P
     stub_dir.mkdir()
     logs = tmp_path / "stub-logs"
     logs.mkdir()
-    output_root = tmp_path / "run output"
+    output_root = tmp_path / 'run "quoted"\nroot'
     run_id = "failed-run-001"
     output = output_root / run_id
 
@@ -109,9 +111,13 @@ def test_remote_script_failure_records_exact_args_and_final_evidence(tmp_path: P
         bin_dir / "python",
         """#!/usr/bin/env bash
 if [[ "${1:-}" == "-m" ]]; then
-  printf '%s\\n' "$@" > "$STUB_LOG/serve.args"
+  printf '%s\\0' "$@" > "$STUB_LOG/serve.args"
   trap 'exit 0' TERM INT
   while true; do /bin/sleep 1; done
+fi
+if [[ "${1:-}" == "-" && "${2:-}" == "--port-check" ]]; then
+  if [[ "${STUB_PORT_OCCUPIED:-0}" == 1 ]]; then exit 1; fi
+  exit 0
 fi
 exec "$REAL_PYTHON" "$@"
 """,
@@ -119,7 +125,7 @@ exec "$REAL_PYTHON" "$@"
     _write_executable(
         bin_dir / "recagent-eval",
         """#!/usr/bin/env bash
-printf '%s\\n' "$@" > "$STUB_LOG/evaluate.args"
+printf '%s\\0' "$@" > "$STUB_LOG/evaluate.args"
 echo simulated-evaluation-failure >&2
 exit 7
 """,
@@ -130,7 +136,23 @@ exit 7
 echo 'Stub RTX 4090, 555.1, 24564 MiB, 10 MiB'
 """,
     )
-    _write_executable(stub_dir / "curl", "#!/usr/bin/env bash\nexit 0\n")
+    _write_executable(
+        stub_dir / "curl",
+        """#!/usr/bin/env bash
+if [[ "$*" == *"/v1/models"* ]]; then
+  printf '{"data":[{"id":"%s"}]}\\n' "${STUB_MODEL_ID:-Qwen/Qwen3-8B}"
+else
+  echo ok
+fi
+""",
+    )
+    _write_executable(
+        stub_dir / "flock",
+        """#!/usr/bin/env bash
+if [[ "${STUB_LOCK_FAIL:-0}" == 1 ]]; then exit 1; fi
+exit 0
+""",
+    )
     _write_executable(
         stub_dir / "timeout",
         "#!/usr/bin/env bash\nshift\nexec \"$@\"\n",
@@ -143,12 +165,36 @@ echo 'Stub RTX 4090, 555.1, 24564 MiB, 10 MiB'
         "VLLM_MODEL": "Qwen/Qwen3-8B",
         "QWEN_MODEL_REVISION": "0123456789abcdef0123456789abcdef01234567",
         "RUN_TIMEOUT_SECONDS": "91",
-        "VLLM_PORT": "8123",
+        "VLLM_PORT": "18123",
         "QWEN_OUTPUT_ROOT": str(output_root),
         "QWEN_RUN_ID": run_id,
+        "QWEN_LOCK_ROOT": str(tmp_path / "locks"),
         "REAL_PYTHON": sys.executable,
         "STUB_LOG": str(logs),
     }
+    invalid_numeric_values = (
+        ("VLLM_PORT", "0"),
+        ("VLLM_PORT", "65536"),
+        ("VLLM_PORT", "--url=http://evil"),
+        ("RUN_TIMEOUT_SECONDS", "0"),
+        ("RUN_TIMEOUT_SECONDS", "1.5"),
+    )
+    for index, (name, value) in enumerate(invalid_numeric_values):
+        rejected = subprocess.run(
+            ["bash", str(Path("scripts/run_remote_qwen.sh").resolve())],
+            cwd=Path.cwd(),
+            env={
+                **env,
+                name: value,
+                "QWEN_OUTPUT_ROOT": str(tmp_path / "invalid numeric"),
+                "QWEN_RUN_ID": f"invalid-numeric-{index}",
+            },
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert rejected.returncode == 2
+
     invalid_revision_root = tmp_path / "invalid revision"
     invalid_revision_output = invalid_revision_root / "invalid-revision-001"
     invalid_revision = subprocess.run(
@@ -165,7 +211,23 @@ echo 'Stub RTX 4090, 555.1, 24564 MiB, 10 MiB'
         check=False,
     )
     assert invalid_revision.returncode == 2
-    assert json.loads((invalid_revision_output / "status.json").read_text())["status"] == "failed"
+    assert not invalid_revision_output.exists()
+
+    tag_output_root = tmp_path / "tag revision"
+    tag_revision = subprocess.run(
+        ["bash", str(Path("scripts/run_remote_qwen.sh").resolve())],
+        cwd=Path.cwd(),
+        env={
+            **env,
+            "QWEN_MODEL_REVISION": "release-1",
+            "QWEN_OUTPUT_ROOT": str(tag_output_root),
+            "QWEN_RUN_ID": "tag-revision-001",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert tag_revision.returncode == 2
 
     result = subprocess.run(
         ["bash", str(Path("scripts/run_remote_qwen.sh").resolve())],
@@ -177,8 +239,8 @@ echo 'Stub RTX 4090, 555.1, 24564 MiB, 10 MiB'
     )
 
     assert result.returncode == 7
-    serve_args = (logs / "serve.args").read_text().splitlines()
-    evaluate_args = (logs / "evaluate.args").read_text().splitlines()
+    serve_args = _nul_args(logs / "serve.args")
+    evaluate_args = _nul_args(logs / "evaluate.args")
     assert serve_args == [
         "-m",
         "vllm.entrypoints.openai.api_server",
@@ -191,7 +253,7 @@ echo 'Stub RTX 4090, 555.1, 24564 MiB, 10 MiB'
         "--host",
         "127.0.0.1",
         "--port",
-        "8123",
+        env["VLLM_PORT"],
         "--api-key",
         "must-not-appear",
         "--dtype",
@@ -214,10 +276,15 @@ echo 'Stub RTX 4090, 555.1, 24564 MiB, 10 MiB'
     ]
     commands = (output / "commands.txt").read_text()
     assert "must-not-appear" not in commands
-    assert "QWEN_MODEL_REVISION" in commands
+    assert env["QWEN_MODEL_REVISION"] in commands
     assert "enable_thinking" in commands
     assert subprocess.run(
         ["bash", "-n", str(output / "commands.txt")], check=False
+    ).returncode == 0
+    replay_source = (output / "replay.sh").read_text()
+    assert "must-not-appear" not in replay_source
+    assert subprocess.run(
+        ["bash", "-n", str(output / "replay.sh")], check=False
     ).returncode == 0
     status = json.loads((output / "status.json").read_text())
     assert status["status"] == "failed"
@@ -248,10 +315,74 @@ echo 'Stub RTX 4090, 555.1, 24564 MiB, 10 MiB'
     assert stale_metrics.read_text() == '{"stale":true}\n'
     assert (output / "commands.txt").read_bytes() == original_commands
 
+    collision_root = tmp_path / "port collision"
+    (logs / "serve.args").unlink(missing_ok=True)
+    (logs / "evaluate.args").unlink(missing_ok=True)
+    collision = subprocess.run(
+        ["bash", str(Path("scripts/run_remote_qwen.sh").resolve())],
+        cwd=Path.cwd(),
+        env={
+            **env,
+            "VLLM_PORT": "18124",
+            "QWEN_OUTPUT_ROOT": str(collision_root),
+            "QWEN_RUN_ID": "collision-001",
+            "STUB_PORT_OCCUPIED": "1",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert collision.returncode != 0
+    assert "occupied" in collision.stderr
+    assert not (logs / "serve.args").exists()
+    assert not (logs / "evaluate.args").exists()
+    assert not (collision_root / "collision-001" / "commands.txt").exists()
+
+    mismatch_root = tmp_path / "model mismatch"
+    (logs / "evaluate.args").unlink(missing_ok=True)
+    mismatch = subprocess.run(
+        ["bash", str(Path("scripts/run_remote_qwen.sh").resolve())],
+        cwd=Path.cwd(),
+        env={
+            **env,
+            "VLLM_PORT": "18125",
+            "QWEN_OUTPUT_ROOT": str(mismatch_root),
+            "QWEN_RUN_ID": "mismatch-001",
+            "STUB_MODEL_ID": "wrong-model",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert mismatch.returncode != 0
+    assert "model identity" in mismatch.stderr
+    assert not (logs / "evaluate.args").exists()
+
+    locked_root = tmp_path / "locked endpoint"
+    (logs / "serve.args").unlink(missing_ok=True)
+    locked = subprocess.run(
+        ["bash", str(Path("scripts/run_remote_qwen.sh").resolve())],
+        cwd=Path.cwd(),
+        env={
+            **env,
+            "VLLM_PORT": "18126",
+            "QWEN_OUTPUT_ROOT": str(locked_root),
+            "QWEN_RUN_ID": "locked-001",
+            "STUB_LOCK_FAIL": "1",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert locked.returncode != 0
+    assert "lock" in locked.stderr.lower()
+    assert not (logs / "serve.args").exists()
+    assert not (logs / "evaluate.args").exists()
+
     _write_executable(
         bin_dir / "recagent-eval",
         """#!/usr/bin/env bash
-printf '%s\\n' "$@" > "$STUB_LOG/evaluate.args"
+printf '%s\\0' "$@" > "$STUB_LOG/evaluate.args"
 echo simulated-evaluation-success
 exit 0
 """,
@@ -282,6 +413,23 @@ exit 0
         success_output / "run.stdout.log"
     ).read_text()
 
+    replay_output = tmp_path / "replay output"
+    replay_env = {
+        **success_env,
+        "REPLAY_OUTPUT_DIR": str(replay_output),
+        "VLLM_PORT": "18127",
+    }
+    replay = subprocess.run(
+        ["bash", str(success_output / "replay.sh")],
+        cwd=Path.cwd(),
+        env=replay_env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert replay.returncode == 0, replay.stderr
+    assert (logs / "evaluate.args").exists()
+
     default_root = tmp_path / "default runs"
     default_env = {
         key: value for key, value in success_env.items() if key != "QWEN_RUN_ID"
@@ -305,6 +453,10 @@ exit 0
 def _write_executable(path: Path, content: str) -> None:
     path.write_text(content)
     path.chmod(0o755)
+
+
+def _nul_args(path: Path) -> list[str]:
+    return [item.decode() for item in path.read_bytes().split(b"\0") if item]
 
 
 def test_candidate_score_script_runs_portably_without_taste(tmp_path: Path) -> None:
