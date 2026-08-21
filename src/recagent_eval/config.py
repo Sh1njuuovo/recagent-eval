@@ -38,6 +38,23 @@ def load_experiment_config(path: Path) -> ExperimentConfig:
     )
     if evidence_path_value is not None and not learned_evidence_path:
         raise ValueError("ranker.evidence_path must not be empty")
+    learned_values = {
+        name: (
+            str(ranker_payload.get(name)).strip()
+            if ranker_payload.get(name) is not None
+            else None
+        )
+        for name in (
+            "dataset_fingerprint",
+            "candidate_policy_fingerprint",
+            "config_fingerprint",
+            "case_fingerprint",
+            "gate_fingerprint",
+            "consumption_dir",
+        )
+    }
+    if any(value == "" for value in learned_values.values()):
+        raise ValueError("learned ranker provenance values must not be empty")
     if "weights" in ranker_payload:
         route_weights = tuple(float(value) for value in ranker_payload["weights"])
         if any(value < 0 for value in route_weights):
@@ -99,5 +116,13 @@ def load_experiment_config(path: Path) -> ExperimentConfig:
         semantic_device=semantic_device,
         learned_model_path=learned_model_path,
         learned_evidence_path=learned_evidence_path,
+        learned_dataset_fingerprint=learned_values["dataset_fingerprint"],
+        learned_candidate_policy_fingerprint=learned_values[
+            "candidate_policy_fingerprint"
+        ],
+        learned_config_fingerprint=learned_values["config_fingerprint"],
+        learned_case_fingerprint=learned_values["case_fingerprint"],
+        learned_gate_fingerprint=learned_values["gate_fingerprint"],
+        learned_consumption_dir=learned_values["consumption_dir"],
         seed=int(payload.get("seed", 42)),
     )

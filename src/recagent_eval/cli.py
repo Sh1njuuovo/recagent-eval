@@ -28,6 +28,7 @@ from recagent_eval.data import (
 )
 from recagent_eval.dataset import download_movielens_1m
 from recagent_eval.lambdamart_pipeline import (
+    build_validation_rows,
     candidate_policy_fingerprint,
     lambdamart_config_fingerprint,
     ranking_dataset_fingerprint,
@@ -65,6 +66,7 @@ from recagent_eval.tuning import (
 from recagent_eval.v2_selection import (
     LearnedValidationEvidence,
     consume_frozen_authorization,
+    consumption_marker_path,
     validate_learned_gate,
 )
 
@@ -386,6 +388,16 @@ def select_ranker_command(
     elif selected_kind == "lambdamart":
         ranker_payload["model_path"] = config.learned_model_path
         ranker_payload["evidence_path"] = config.learned_evidence_path
+        ranker_payload["dataset_fingerprint"] = learned_evidence.dataset_fingerprint
+        ranker_payload["candidate_policy_fingerprint"] = (
+            learned_evidence.candidate_policy_fingerprint
+        )
+        ranker_payload["config_fingerprint"] = learned_evidence.config_fingerprint
+        ranker_payload["case_fingerprint"] = learned_evidence.case_fingerprint
+        ranker_payload["gate_fingerprint"] = learned_evidence.evidence_fingerprint
+        ranker_payload["consumption_dir"] = (
+            config.learned_consumption_dir or "artifacts/frozen-consumption"
+        )
     payload["ranker"] = ranker_payload
     config_output.parent.mkdir(parents=True, exist_ok=True)
     config_output.write_text(
@@ -459,7 +471,7 @@ def evaluate_ranker(
         Path,
         typer.Option(
             "--evidence",
-            help="Validation evidence; LambdaMART frozen use is consumed once beside this file",
+            help="Validation evidence; registered LambdaMART frozen identity is consumed once",
         ),
     ],
     cases_path: Annotated[Path, typer.Option("--cases")],
@@ -548,8 +560,36 @@ def _evaluate_learned_ranker(
 ) -> None:
     if config.learned_model_path is None:
         raise typer.BadParameter("ranker.model_path is required when ranker.kind is lambdamart")
+    if (
+        config.learned_dataset_fingerprint is None
+        or config.learned_config_fingerprint is None
+        or config.learned_case_fingerprint is None
+        or config.learned_candidate_policy_fingerprint is None
+        or config.learned_gate_fingerprint is None
+        or config.learned_consumption_dir is None
+    ):
+        raise typer.BadParameter(
+            "LambdaMART frozen evaluation requires registered dataset/config/case "
+            "fingerprints and ranker.consumption_dir"
+        )
     try:
-        evidence = LearnedValidationEvidence.model_validate_json(evidence_path.read_text())
+        evidence_bytes = evidence_path.read_bytes()
+        consume_frozen_authorization(
+            consumption_marker_path(
+                Path(config.learned_consumption_dir),
+                case_fingerprint=config.learned_case_fingerprint,
+                dataset_fingerprint=config.learned_dataset_fingerprint,
+                config_fingerprint=config.learned_config_fingerprint,
+            ),
+            evidence_hash=hashlib.sha256(evidence_bytes).hexdigest(),
+            case_fingerprint=config.learned_case_fingerprint,
+        )
+    except (OSError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    try:
+        evidence = LearnedValidationEvidence.model_validate_json(evidence_bytes)
+        if evidence.evidence_fingerprint != config.learned_gate_fingerprint:
+            raise ValueError("LambdaMART validation evidence fingerprint mismatch")
         movies, ratings = _load_dataset(data_dir)
         split = leakage_safe_ranking_split(ratings)
         dataset_fingerprint = ranking_dataset_fingerprint(movies, split)
@@ -561,16 +601,6 @@ def _evaluate_learned_ranker(
             expected_candidate_policy_fingerprint=candidate_policy_fingerprint(config),
             expected_config_fingerprint=lambdamart_config_fingerprint(config),
             expected_case_fingerprint=fixed_case_fingerprint,
-        )
-        validate_learned_gate(
-            evidence,
-            dataset_fingerprint=dataset_fingerprint,
-            feature_fingerprint=FEATURE_SCHEMA_FINGERPRINT,
-            model_fingerprint=artifact.model_checksum,
-            candidate_policy_fingerprint=candidate_policy_fingerprint(config),
-            case_fingerprint=fixed_case_fingerprint,
-            config_fingerprint=lambdamart_config_fingerprint(config),
-            artifact_provenance=artifact.model_dump(mode="python"),
         )
     except (OSError, ValueError) as exc:
         raise typer.BadParameter(str(exc)) from exc
@@ -595,12 +625,41 @@ def _evaluate_learned_ranker(
             raise typer.BadParameter(str(exc)) from exc
     else:
         semantic = TfidfSemanticRetriever.fit(movies)
-    evidence_hash = hashlib.sha256(evidence_path.read_bytes()).hexdigest()
-    consume_frozen_authorization(
-        evidence_path.with_name(f"{evidence_path.name}.frozen-consumed.json"),
-        evidence_hash=evidence_hash,
-        case_fingerprint=fixed_case_fingerprint,
+    replay_rows = build_validation_rows(
+        movies,
+        split,
+        semantic,
+        config,
+        ranker,
+        max_users=artifact.validation_user_count,
     )
+    canonical_replay = json.dumps(
+        replay_rows, sort_keys=True, separators=(",", ":")
+    )
+    canonical_evidence = json.dumps(
+        evidence.per_user_rows, sort_keys=True, separators=(",", ":")
+    )
+    replay_fingerprint = hashlib.sha256(canonical_replay.encode()).hexdigest()
+    if (
+        canonical_replay != canonical_evidence
+        or replay_fingerprint != artifact.validation_rows_fingerprint
+    ):
+        raise typer.BadParameter(
+            "LambdaMART validation replay does not match recorded per-user evidence"
+        )
+    try:
+        validate_learned_gate(
+            evidence,
+            dataset_fingerprint=dataset_fingerprint,
+            feature_fingerprint=FEATURE_SCHEMA_FINGERPRINT,
+            model_fingerprint=artifact.model_checksum,
+            candidate_policy_fingerprint=candidate_policy_fingerprint(config),
+            case_fingerprint=fixed_case_fingerprint,
+            config_fingerprint=lambdamart_config_fingerprint(config),
+            artifact_provenance=artifact.model_dump(mode="python"),
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
     metrics = evaluate_frozen_cases(
         movies,
         split.legal_retrieval_train,

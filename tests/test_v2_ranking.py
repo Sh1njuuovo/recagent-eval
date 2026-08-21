@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -8,11 +9,11 @@ import pytest
 
 from recagent_eval.candidate_features import (
     FEATURE_NAMES,
-    FEATURE_SCHEMA_FINGERPRINT,
     build_candidate_feature_rows,
 )
 from recagent_eval.data import Movie, Rating, leakage_safe_ranking_split
 from recagent_eval.learned_ranking import (
+    DEFAULT_PARAMETER_GRID,
     CandidateQuery,
     LearnedRanker,
     RankerArtifact,
@@ -22,6 +23,57 @@ from recagent_eval.learned_ranking import (
     save_ranker_artifact,
 )
 from recagent_eval.models import PreferenceState, ScoreBreakdown
+
+
+def _valid_artifact(**overrides) -> RankerArtifact:
+    fold_map = {1: 0, 2: 1, 3: 2}
+    cv_results = [
+        {"params": params, "mean_ndcg_at_10": 0.0, "mean_recall_at_10": 0.0}
+        for params in DEFAULT_PARAMETER_GRID
+    ] + [
+        {
+            "params": params,
+            "fold": fold,
+            "train_users": [user for user in fold_map if fold_map[user] != fold],
+            "validation_users": [user for user in fold_map if fold_map[user] == fold],
+            "ndcg_at_10": 0.0,
+            "recall_at_10": 0.0,
+        }
+        for params in DEFAULT_PARAMETER_GRID
+        for fold in range(3)
+    ]
+    values = {
+        "selected_params": {
+            "num_leaves": 15,
+            "learning_rate": 0.03,
+            "n_estimators": 100,
+            "min_child_samples": 50,
+        },
+        "dataset_fingerprint": "dataset",
+        "training_user_count": 3,
+        "training_group_count": 3,
+        "dependency_versions": {"lightgbm": "test"},
+        "model_string": "model contents",
+        "training_rows_fingerprint": "train",
+        "history_fingerprint": "history",
+        "fold_map_fingerprint": hashlib.sha256(
+            json.dumps(fold_map, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest(),
+        "group_fingerprint": "groups",
+        "candidate_policy_fingerprint": "policy",
+        "config_fingerprint": "config",
+        "metric_fingerprint": "metric",
+        "case_fingerprint": "cases",
+        "report_fingerprint": hashlib.sha256(
+            json.dumps(cv_results, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest(),
+        "cv_results": cv_results,
+        "fold_map": fold_map,
+        "validation_rows_fingerprint": "validation",
+        "validation_user_count": 3,
+    }
+    values.update(overrides)
+    return RankerArtifact(**values)
 
 
 def _ratings() -> list[Rating]:
@@ -175,17 +227,7 @@ def test_learned_ranker_supports_public_hybrid_rank_signature() -> None:
 
 
 def test_ranker_artifact_rejects_tampering(tmp_path: Path) -> None:
-    artifact = RankerArtifact(
-        feature_schema_version="candidate-features/v1",
-        feature_names=FEATURE_NAMES,
-        feature_fingerprint=FEATURE_SCHEMA_FINGERPRINT,
-        selected_params={"num_leaves": 15},
-        dataset_fingerprint="dataset",
-        training_user_count=2,
-        training_group_count=2,
-        dependency_versions={"lightgbm": "test"},
-        model_string="model contents",
-    )
+    artifact = _valid_artifact()
     path = tmp_path / "ranker.json"
     save_ranker_artifact(artifact, path)
     assert load_ranker_artifact(path, expected_dataset_fingerprint="dataset") == artifact
@@ -198,13 +240,7 @@ def test_ranker_artifact_rejects_tampering(tmp_path: Path) -> None:
 
 
 def test_ranker_artifact_rejects_missing_or_extra_provenance(tmp_path: Path) -> None:
-    artifact = RankerArtifact(
-        selected_params={"num_leaves": 15},
-        dataset_fingerprint="dataset",
-        training_user_count=1,
-        training_group_count=1,
-        model_string="model",
-    )
+    artifact = _valid_artifact(model_string="model")
     path = tmp_path / "ranker.json"
     save_ranker_artifact(artifact, path)
     payload = json.loads(path.read_text())

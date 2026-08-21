@@ -96,6 +96,12 @@ def cross_validate_lambdamart(
         held_out_recalls: list[float] = []
         for fold, (train_users, validation_users) in enumerate(folds):
             train_queries, validation_queries = fold_queries[fold]
+            train_query_users = [query.user_id for query in train_queries]
+            validation_query_users = [query.user_id for query in validation_queries]
+            if sorted(train_query_users) != sorted(train_users):
+                raise ValueError("fold builder training query users do not match assignment")
+            if sorted(validation_query_users) != sorted(validation_users):
+                raise ValueError("fold builder validation query users do not match assignment")
             if {query.user_id for query in train_queries} & {
                 query.user_id for query in validation_queries
             }:
@@ -275,6 +281,8 @@ class LearnedValidationEvidence(BaseModel):
     training_group_count: int
     dependency_versions: dict[str, str]
     fold_map: dict[int, int]
+    validation_rows_fingerprint: str
+    validation_user_count: int
 
 
 def build_validation_evidence(
@@ -301,6 +309,8 @@ def build_validation_evidence(
         "training_group_count": 0,
         "dependency_versions": {},
         "fold_map": {},
+        "validation_rows_fingerprint": "unspecified",
+        "validation_user_count": 0,
     }
     supplied_provenance = dict(provenance or {})
     provenance = {
@@ -411,6 +421,10 @@ def build_validation_evidence(
             int(user): int(fold)
             for user, fold in dict(provenance.get("fold_map", {})).items()
         },
+        validation_rows_fingerprint=str(
+            provenance.get("validation_rows_fingerprint", "unspecified")
+        ),
+        validation_user_count=int(provenance.get("validation_user_count", 0)),
     )
 
 
@@ -450,6 +464,8 @@ def validate_learned_gate(
                 "training_group_count": evidence.training_group_count,
                 "dependency_versions": evidence.dependency_versions,
                 "fold_map": evidence.fold_map,
+                "validation_rows_fingerprint": evidence.validation_rows_fingerprint,
+                "validation_user_count": evidence.validation_user_count,
             },
         )
     except (KeyError, TypeError, ValueError) as exc:
@@ -563,6 +579,8 @@ def validate_learned_gate(
             "training_group_count",
             "dependency_versions",
             "fold_map",
+            "validation_rows_fingerprint",
+            "validation_user_count",
         )
         differing = [
             name
@@ -584,6 +602,7 @@ def validate_learned_gate(
             evidence.metric_fingerprint,
             evidence.case_fingerprint,
             evidence.report_fingerprint,
+            evidence.validation_rows_fingerprint,
         )
         if any(value in {"", "unspecified"} for value in provenance_values):
             raise ValueError("validation evidence provenance is incomplete")
@@ -591,6 +610,8 @@ def validate_learned_gate(
             raise ValueError("validation evidence provenance is incomplete")
         if evidence.training_user_count <= 0 or evidence.training_group_count <= 0:
             raise ValueError("validation evidence provenance counts are incomplete")
+        if evidence.validation_user_count != len(evidence.per_user_rows):
+            raise ValueError("validation evidence validation-user count is inconsistent")
     if evidence.mean_lambdamart_ndcg_at_10 <= evidence.mean_itemcf_ndcg_at_10:
         raise ValueError("frozen test is locked: LambdaMART did not improve mean NDCG@10")
     if evidence.ndcg_delta_ci_lower <= 0:
@@ -645,6 +666,27 @@ def consume_frozen_authorization(
         stream.write("\n")
         stream.flush()
         os.fsync(stream.fileno())
+
+
+def consumption_marker_path(
+    directory: Path,
+    *,
+    case_fingerprint: str,
+    dataset_fingerprint: str,
+    config_fingerprint: str,
+) -> Path:
+    identity = hashlib.sha256(
+        json.dumps(
+            {
+                "case_fingerprint": case_fingerprint,
+                "dataset_fingerprint": dataset_fingerprint,
+                "config_fingerprint": config_fingerprint,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    return directory / f"{identity}.consumed.json"
 
 
 def _same(left: object, right: object) -> bool:

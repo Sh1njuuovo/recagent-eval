@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-import time
 from collections import Counter, defaultdict
 from collections.abc import Mapping
 from pathlib import Path
@@ -113,6 +112,12 @@ def train_lambdamart_pipeline(
         "case_fingerprint": registered_case_fingerprint,
         "report_fingerprint": _fingerprint(cv_results),
     }
+    learned = LearnedRanker(estimator, legal_train_rows=split.legal_retrieval_train)
+    rows = build_validation_rows(
+        movies, split, semantic, config, learned, max_users=max_users
+    )
+    provenance["validation_rows_fingerprint"] = _fingerprint(rows)
+    provenance["validation_user_count"] = len(rows)
     artifact = artifact_from_estimator(
         estimator,
         selected_params=cv.selected_params,
@@ -124,6 +129,49 @@ def train_lambdamart_pipeline(
     )
     save_ranker_artifact(artifact, model_output)
 
+    policy_fingerprint = candidate_policy_fingerprint(config)
+    evidence = build_validation_evidence(
+        rows,
+        dataset_fingerprint=dataset_fingerprint,
+        feature_fingerprint=FEATURE_SCHEMA_FINGERPRINT,
+        model_fingerprint=artifact.model_checksum,
+        candidate_policy_fingerprint=policy_fingerprint,
+        seed=seed,
+        provenance={
+            **provenance,
+            "selected_params": cv.selected_params,
+            "cv_results": cv_results,
+            "training_user_count": matrix.training_users,
+            "training_group_count": len(matrix.groups),
+            "dependency_versions": artifact.dependency_versions,
+        },
+    )
+    evidence_output.parent.mkdir(parents=True, exist_ok=True)
+    evidence_output.write_text(
+        json.dumps(evidence.model_dump(mode="json"), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return {
+        "selected_params": cv.selected_params,
+        "training_users": matrix.training_users,
+        "evaluation_users": matrix.evaluation_users,
+        "validation_users": len(rows),
+        "model_checksum": artifact.model_checksum,
+        "dataset_fingerprint": dataset_fingerprint,
+        "feature_fingerprint": FEATURE_SCHEMA_FINGERPRINT,
+        "candidate_policy_fingerprint": policy_fingerprint,
+    }
+
+
+def build_validation_rows(
+    movies: dict[int, Movie],
+    split: LeakageSafeRankingSplit,
+    semantic: SemanticRetriever,
+    config: ExperimentConfig,
+    learned: LearnedRanker,
+    *,
+    max_users: int,
+) -> list[dict[str, Any]]:
     validation_histories = _positive_histories(split.legal_retrieval_train, movies)
     validation_queries = build_candidate_queries(
         movies,
@@ -135,11 +183,9 @@ def train_lambdamart_pipeline(
         history_cap=config.semantic_profile_history_cap,
         max_users=max_users,
     )
-    learned = LearnedRanker(estimator, legal_train_rows=split.legal_retrieval_train)
     baseline = HybridRanker(kind="itemcf")
     rows: list[dict[str, Any]] = []
     for query in validation_queries:
-        started = time.perf_counter()
         feature_rows = query.features_by_movie
         learned_ids = [
             item.movie_id for item in learned.rank_feature_rows(movies, feature_rows, top_k=10)
@@ -181,41 +227,10 @@ def train_lambdamart_pipeline(
                 ),
                 "allowed_movie_ids": sorted(feature_rows),
                 "lambdamart_ranked_movie_ids": learned_ids,
-                "latency_ms": (time.perf_counter() - started) * 1000,
+                "latency_ms": 0.0,
             }
         )
-    policy_fingerprint = candidate_policy_fingerprint(config)
-    evidence = build_validation_evidence(
-        rows,
-        dataset_fingerprint=dataset_fingerprint,
-        feature_fingerprint=FEATURE_SCHEMA_FINGERPRINT,
-        model_fingerprint=artifact.model_checksum,
-        candidate_policy_fingerprint=policy_fingerprint,
-        seed=seed,
-        provenance={
-            **provenance,
-            "selected_params": cv.selected_params,
-            "cv_results": cv_results,
-            "training_user_count": matrix.training_users,
-            "training_group_count": len(matrix.groups),
-            "dependency_versions": artifact.dependency_versions,
-        },
-    )
-    evidence_output.parent.mkdir(parents=True, exist_ok=True)
-    evidence_output.write_text(
-        json.dumps(evidence.model_dump(mode="json"), indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    return {
-        "selected_params": cv.selected_params,
-        "training_users": matrix.training_users,
-        "evaluation_users": matrix.evaluation_users,
-        "validation_users": len(rows),
-        "model_checksum": artifact.model_checksum,
-        "dataset_fingerprint": dataset_fingerprint,
-        "feature_fingerprint": FEATURE_SCHEMA_FINGERPRINT,
-        "candidate_policy_fingerprint": policy_fingerprint,
-    }
+    return rows
 
 
 def build_candidate_queries(

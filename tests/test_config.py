@@ -56,6 +56,30 @@ def test_learned_ranker_paths_are_loaded(tmp_path: Path) -> None:
     assert config.learned_evidence_path == "artifacts/validation.json"
 
 
+def test_complete_learned_gate_config_round_trips(tmp_path: Path) -> None:
+    path = tmp_path / "selected.yaml"
+    path.write_text(
+        """ranker:
+  kind: lambdamart
+  model_path: model.json
+  evidence_path: evidence.json
+  dataset_fingerprint: dataset
+  candidate_policy_fingerprint: policy
+  config_fingerprint: config
+  case_fingerprint: cases
+  gate_fingerprint: gate
+  consumption_dir: artifacts/consumed
+"""
+    )
+    config = load_experiment_config(path)
+    assert config.learned_dataset_fingerprint == "dataset"
+    assert config.learned_candidate_policy_fingerprint == "policy"
+    assert config.learned_config_fingerprint == "config"
+    assert config.learned_case_fingerprint == "cases"
+    assert config.learned_gate_fingerprint == "gate"
+    assert config.learned_consumption_dir == "artifacts/consumed"
+
+
 def test_nested_rrf_config_is_validated(tmp_path: Path) -> None:
     path = tmp_path / "rrf.yaml"
     path.write_text("name: rrf\nranker:\n  kind: rrf\n  rrf_k: 30\n")

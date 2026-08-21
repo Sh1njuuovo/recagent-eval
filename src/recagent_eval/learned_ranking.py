@@ -240,21 +240,23 @@ class RankerArtifact(BaseModel):
     dataset_fingerprint: str
     training_user_count: int = Field(ge=0)
     training_group_count: int = Field(ge=0)
-    dependency_versions: dict[str, str] = Field(default_factory=dict)
+    dependency_versions: dict[str, str]
     created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
     model_string: str
     model_checksum: str = ""
-    training_rows_fingerprint: str = "unspecified"
-    history_fingerprint: str = "unspecified"
-    fold_map_fingerprint: str = "unspecified"
-    group_fingerprint: str = "unspecified"
-    candidate_policy_fingerprint: str = "unspecified"
-    config_fingerprint: str = "unspecified"
-    metric_fingerprint: str = "unspecified"
-    case_fingerprint: str = "unspecified"
-    report_fingerprint: str = "unspecified"
-    cv_results: list[dict[str, Any]] = Field(default_factory=list)
-    fold_map: dict[int, int] = Field(default_factory=dict)
+    training_rows_fingerprint: str
+    history_fingerprint: str
+    fold_map_fingerprint: str
+    group_fingerprint: str
+    candidate_policy_fingerprint: str
+    config_fingerprint: str
+    metric_fingerprint: str
+    case_fingerprint: str
+    report_fingerprint: str
+    cv_results: list[dict[str, Any]]
+    fold_map: dict[int, int]
+    validation_rows_fingerprint: str
+    validation_user_count: int = Field(gt=0)
 
     @model_validator(mode="after")
     def validate_contract(self) -> RankerArtifact:
@@ -266,6 +268,29 @@ class RankerArtifact(BaseModel):
             or self.feature_fingerprint != FEATURE_SCHEMA_FINGERPRINT
         ):
             raise ValueError("ranker artifact feature schema mismatch")
+        provenance_strings = (
+            self.dataset_fingerprint,
+            self.training_rows_fingerprint,
+            self.history_fingerprint,
+            self.fold_map_fingerprint,
+            self.group_fingerprint,
+            self.candidate_policy_fingerprint,
+            self.config_fingerprint,
+            self.metric_fingerprint,
+            self.case_fingerprint,
+            self.report_fingerprint,
+            self.validation_rows_fingerprint,
+        )
+        if any(not value or value == "unspecified" for value in provenance_strings):
+            raise ValueError("ranker artifact provenance must be non-empty")
+        if not self.dependency_versions or not self.fold_map:
+            raise ValueError("ranker artifact provenance must be non-empty")
+        try:
+            created = datetime.fromisoformat(self.created_at)
+        except ValueError as exc:
+            raise ValueError("ranker artifact created_at is invalid") from exc
+        if created.tzinfo is None or created.utcoffset() != UTC.utcoffset(created):
+            raise ValueError("ranker artifact created_at must be UTC")
         expected = hashlib.sha256(self.model_string.encode()).hexdigest()
         if self.model_checksum and self.model_checksum != expected:
             raise ValueError("ranker artifact model checksum mismatch")
@@ -318,6 +343,8 @@ class RankerArtifact(BaseModel):
             ).hexdigest()
             if fold_map_hash != self.fold_map_fingerprint:
                 raise ValueError("ranker artifact fold-map fingerprint mismatch")
+        else:
+            raise ValueError("ranker artifact CV results are incomplete")
         return self
 
 
@@ -426,6 +453,8 @@ def load_ranker_artifact(
             "report_fingerprint",
             "cv_results",
             "fold_map",
+            "validation_rows_fingerprint",
+            "validation_user_count",
         }
         missing = sorted(required - set(payload))
         if missing:

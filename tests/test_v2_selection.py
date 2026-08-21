@@ -13,6 +13,7 @@ from recagent_eval.v2_selection import (
     LearnedValidationEvidence,
     build_validation_evidence,
     consume_frozen_authorization,
+    consumption_marker_path,
     cross_validate_lambdamart,
     paired_bootstrap_ndcg,
     validate_learned_gate,
@@ -244,6 +245,32 @@ def test_frozen_authorization_fails_closed_on_partial_marker(tmp_path) -> None:
     with pytest.raises(ValueError, match="invalid"):
         consume_frozen_authorization(
             marker, evidence_hash="only", case_fingerprint="cases"
+        )
+
+
+def test_consumption_marker_identity_is_independent_of_evidence_path(tmp_path) -> None:
+    first = consumption_marker_path(
+        tmp_path, case_fingerprint="case", dataset_fingerprint="data", config_fingerprint="cfg"
+    )
+    second = consumption_marker_path(
+        tmp_path, case_fingerprint="case", dataset_fingerprint="data", config_fingerprint="cfg"
+    )
+    assert first == second
+    consume_frozen_authorization(first, evidence_hash="same", case_fingerprint="case")
+    with pytest.raises(ValueError, match="already consumed"):
+        consume_frozen_authorization(second, evidence_hash="same", case_fingerprint="case")
+
+
+def test_fold_builder_cannot_omit_assigned_validation_user() -> None:
+    with pytest.raises(ValueError, match="validation query users"):
+        cross_validate_lambdamart(
+            _queries(),
+            estimator_factory=_Estimator,
+            parameter_grid=({"num_leaves": 15},),
+            fold_query_builder=lambda train, validation: (
+                [query for query in _queries() if query.user_id in train],
+                [],
+            ),
         )
 
 

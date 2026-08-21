@@ -7,6 +7,10 @@ from typer.testing import CliRunner
 
 from recagent_eval.cli import app
 from recagent_eval.data import Movie, Rating
+from recagent_eval.v2_selection import (
+    consume_frozen_authorization,
+    consumption_marker_path,
+)
 
 
 def test_smoke_command_runs_offline_end_to_end(tmp_path) -> None:
@@ -125,6 +129,58 @@ def test_generic_evaluate_rejects_lambdamart_before_loading_artifact(tmp_path) -
 
     assert result.exit_code != 0
     assert "generic evaluate cannot authorize LambdaMART" in result.output
+
+
+def test_consumed_frozen_identity_rejects_before_any_dataset_or_model_load(
+    tmp_path, monkeypatch
+) -> None:
+    consumption_dir = tmp_path / "consumed"
+    evidence = tmp_path / "copied-evidence.json"
+    evidence.write_text("{}")
+    config = tmp_path / "selected.yaml"
+    config.write_text(
+        f"""ranker:
+  kind: lambdamart
+  model_path: {tmp_path / 'missing-model.json'}
+  evidence_path: {evidence}
+  dataset_fingerprint: dataset
+  candidate_policy_fingerprint: policy
+  config_fingerprint: config
+  case_fingerprint: cases
+  gate_fingerprint: gate
+  consumption_dir: {consumption_dir}
+"""
+    )
+    marker = consumption_marker_path(
+        consumption_dir,
+        case_fingerprint="cases",
+        dataset_fingerprint="dataset",
+        config_fingerprint="config",
+    )
+    consume_frozen_authorization(
+        marker,
+        evidence_hash=hashlib.sha256(evidence.read_bytes()).hexdigest(),
+        case_fingerprint="cases",
+    )
+
+    def forbidden_loader(_path):
+        raise AssertionError("dataset loader must not run after consumed claim")
+
+    monkeypatch.setattr("recagent_eval.cli._load_dataset", forbidden_loader)
+    result = CliRunner().invoke(
+        app,
+        [
+            "evaluate-ranker",
+            "--config",
+            str(config),
+            "--evidence",
+            str(evidence),
+            "--cases",
+            str(tmp_path / "missing-cases.json"),
+        ],
+    )
+    assert result.exit_code != 0
+    assert "already consumed" in result.output
 
 
 def test_build_embeddings_uses_injected_sentence_encoder(tmp_path, monkeypatch) -> None:

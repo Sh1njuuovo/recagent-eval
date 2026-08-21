@@ -65,6 +65,7 @@ class ExperimentConfig:
     learned_config_fingerprint: str | None = None
     learned_case_fingerprint: str | None = None
     learned_gate_fingerprint: str | None = None
+    learned_consumption_dir: str | None = None
     seed: int = 42
 
 
