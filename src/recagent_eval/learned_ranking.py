@@ -129,6 +129,12 @@ def make_lgbm_ranker(params: Mapping[str, int | float], *, seed: int = 42) -> An
         random_state=seed,
         deterministic=True,
         force_col_wise=True,
+        # Single-threaded training avoids the macOS crash that occurs when torch
+        # has already loaded its own OpenMP runtime in the dense pipeline: the
+        # two libomp copies fight over thread suspension state and LightGBM's
+        # worker threads dereference a null pointer. See the torch-import
+        # regression test in tests/test_v2_ranking.py.
+        n_jobs=1,
         verbosity=-1,
         **dict(params),
     )
@@ -475,7 +481,15 @@ class _BoosterEstimator:
         self.booster = booster
 
     def predict(self, features: Sequence[Sequence[float]], *, pred_contrib: bool = False) -> Any:
-        return self.booster.predict(features, pred_contrib=pred_contrib)
+        return self.booster.predict(
+            features,
+            pred_contrib=pred_contrib,
+            # Raw Booster.predict does not inherit the trained n_jobs value and
+            # defaults to every core; pin it to one thread for the same reason
+            # as the factory: torch's OpenMP runtime makes multi-threaded
+            # LightGBM prediction segfault in the dense pipeline.
+            num_threads=1,
+        )
 
 
 def save_ranker_artifact(artifact: RankerArtifact, path: Path) -> None:

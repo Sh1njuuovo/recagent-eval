@@ -3,6 +3,9 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import subprocess
+import sys
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -304,3 +307,72 @@ def test_real_lightgbm_ranker_smoke_uses_query_groups() -> None:
     LearnedRanker(estimator).fit(matrix)
 
     assert len(estimator.predict(matrix.features)) == len(matrix.labels)
+
+
+def test_make_lgbm_ranker_does_not_crash_after_torch_import() -> None:
+    """Regression: the dense pipeline imports torch before LambdaMART training.
+
+    torch and LightGBM load separate OpenMP runtimes on macOS; multi-threaded
+    LightGBM then dereferences a null suspension pointer inside libomp and the
+    whole process dies with a segmentation fault. The factory must keep training
+    single-threaded so it never enters the conflicting OpenMP parallel path.
+    """
+    try:
+        import torch  # noqa: F401
+    except ImportError:
+        pytest.skip("torch is not installed")
+    script = textwrap.dedent(
+        """
+        import torch  # noqa: F401
+        from recagent_eval.learned_ranking import (
+            _BoosterEstimator,
+            CandidateQuery,
+            build_training_matrix,
+            make_lgbm_ranker,
+        )
+
+        matrix = build_training_matrix(
+            [
+                CandidateQuery(
+                    user,
+                    user * 10,
+                    {
+                        user * 10: (1.0,) + (0.0,) * 9,
+                        user * 10 + 1: (0.0,) * 10,
+                    },
+                )
+                for user in range(1, 4)
+            ]
+        )
+        estimator = make_lgbm_ranker(
+            {
+                "num_leaves": 3,
+                "learning_rate": 0.05,
+                "n_estimators": 5,
+                "min_child_samples": 1,
+            },
+            seed=7,
+        )
+        estimator.fit(
+            list(matrix.features),
+            list(matrix.labels),
+            group=list(matrix.groups),
+        )
+        estimator.predict(list(matrix.features), pred_contrib=True)
+        _BoosterEstimator(estimator.booster_).predict(
+            list(matrix.features),
+            pred_contrib=True,
+        )
+        """
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert result.returncode == 0, (
+        f"LightGBM crashed after torch import with exit code {result.returncode}:\n"
+        f"{result.stderr}"
+    )
