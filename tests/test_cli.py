@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 import yaml
+from rich.console import Console
 from typer.testing import CliRunner
 
 from recagent_eval.cases import EvaluationCase
@@ -390,11 +391,13 @@ def test_prepare_cases_writes_generated_cases_and_rejects_shortfall(
 
 
 def test_tune_and_select_retrieval_write_frozen_artifacts(tmp_path, monkeypatch) -> None:
-    # Pin the rendered terminal width so Typer/Rich error panels do not wrap or
-    # ellipsize the message on narrow CI runners; the assertion below checks the
-    # exact error text and must be independent of the host terminal width.
-    monkeypatch.setenv("COLUMNS", "200")
-    monkeypatch.setenv("LINES", "50")
+    # Render CLI errors through a fixed-width console so Typer/Rich does not wrap
+    # or ellipsize the message on narrow CI runners; the message assertion below
+    # must be independent of the host terminal width.
+    monkeypatch.setattr(
+        "typer.rich_utils._get_rich_console",
+        lambda stderr=False: Console(stderr=stderr, width=200, highlight=False),
+    )
     movies, ratings = _tiny_dataset()
     monkeypatch.setattr("recagent_eval.cli._load_dataset", lambda path: (movies, ratings))
     monkeypatch.setattr(
@@ -463,6 +466,7 @@ def test_tune_and_select_retrieval_write_frozen_artifacts(tmp_path, monkeypatch)
     assert yaml.safe_load(tuned_config.read_text())["weights"] == [0.7, 0.2, 0.1]
     assert missing_config.exit_code != 0
     assert "requires --config" in missing_config.output
+    assert not (tmp_path / "invalid.yaml").exists()
     assert select_result.exit_code == 0, select_result.output
     assert json.loads(evidence.read_text())["selection"]["retrieval_top_k"] == 20
     assert yaml.safe_load(selected_config.read_text())["semantic_profile_history_cap"] == 7
