@@ -52,6 +52,7 @@ from recagent_eval.ranker_selection import (
     select_ranker as select_ranker_evidence,
 )
 from recagent_eval.ranking import HybridRanker
+from recagent_eval.recall_sweep import run_recall_sweep
 from recagent_eval.retrieval import (
     DEFAULT_DENSE_MODEL,
     DenseSemanticRetriever,
@@ -481,6 +482,91 @@ def train_ranker(
     except (RuntimeError, ValueError) as exc:
         raise typer.BadParameter(str(exc)) from exc
     typer.echo(json.dumps(summary, indent=2, sort_keys=True))
+
+
+@app.command("ablate-candidates")
+def ablate_candidates(
+    config_path: Annotated[Path, typer.Option("--config")],
+    data_dir: Annotated[Path, typer.Option()] = Path("data/raw/ml-1m"),
+    output: Annotated[Path, typer.Option()] = Path(
+        "artifacts/experiments/v2-recall-sweep/recall.json"
+    ),
+    max_users: Annotated[int, typer.Option(min=3)] = 500,
+) -> None:
+    """Measure dense/ItemCF/union candidate recall across candidate variants."""
+    config = _validated_config(config_path)
+    movies, ratings = _load_dataset(data_dir)
+    split = leakage_safe_ranking_split(ratings)
+    if output.exists():
+        raise typer.BadParameter(
+            f"refusing to overwrite existing recall evidence: {output}"
+        )
+    try:
+        if config.semantic_kind == "dense":
+            if config.semantic_cache_path is None:
+                raise ValueError(
+                    "semantic.cache_path is required for dense recall sweeps"
+                )
+            semantic = DenseSemanticRetriever.load(
+                Path(config.semantic_cache_path),
+                movies=movies,
+                model_name=config.semantic_model_name,
+                model_revision=config.semantic_model_revision,
+                device=config.semantic_device,
+            )
+        else:
+            semantic = TfidfSemanticRetriever.fit(movies)
+        dataset_fingerprint = ranker_dataset_fingerprint(
+            movies,
+            split,
+            max_users=max_users,
+            retrieval_top_k=config.retrieval_top_k,
+            history_cap=config.semantic_profile_history_cap,
+        )
+        results, gate = run_recall_sweep(
+            movies,
+            split,
+            semantic,
+            retrieval_top_k=config.retrieval_top_k,
+            max_users=max_users,
+            dataset_fingerprint=dataset_fingerprint,
+        )
+    except (OSError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    evidence = {
+        "schema_version": "candidate-recall-sweep/v1",
+        "dataset_fingerprint": dataset_fingerprint,
+        "retrieval_top_k": config.retrieval_top_k,
+        "max_users": max_users,
+        "variants": [
+            {
+                "variant": {
+                    "name": result.variant.name,
+                    "semantic_top_k": result.variant.semantic_top_k,
+                    "history_cap": result.variant.history_cap,
+                    "query_style": result.variant.query_style,
+                },
+                "user_count": result.user_count,
+                "dense_recall": result.dense_recall,
+                "itemcf_recall": result.itemcf_recall,
+                "union_recall": result.union_recall,
+                "fingerprint": result.fingerprint,
+            }
+            for result in results
+        ],
+        "gate": {
+            "baseline": gate.baseline.variant.name,
+            "winner": gate.winner.variant.name if gate.winner is not None else None,
+            "passed": gate.passed,
+            "reason": gate.reason,
+        },
+    }
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(
+        json.dumps(evidence, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    typer.echo(json.dumps(evidence["gate"], indent=2, sort_keys=True))
 
 
 @app.command("evaluate-ranker")

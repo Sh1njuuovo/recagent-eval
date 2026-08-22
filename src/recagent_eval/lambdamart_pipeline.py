@@ -4,7 +4,7 @@ import hashlib
 import json
 import math
 from collections import Counter, defaultdict
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -260,7 +260,18 @@ def build_candidate_queries(
     history_cap: int,
     max_users: int,
     states: Mapping[int, PreferenceState] | None = None,
+    semantic_top_k: int | None = None,
+    semantic_query_builder: Callable[[PreferenceState, dict[int, Movie], int], str]
+    | None = None,
 ) -> list[CandidateQuery]:
+    if semantic_top_k is not None and semantic_top_k <= 0:
+        raise ValueError("semantic_top_k must be positive")
+    dense_top_k = retrieval_top_k if semantic_top_k is None else semantic_top_k
+    query_builder = semantic_query_builder or (
+        lambda state, movies, history_cap: build_semantic_profile(
+            "", state, movies, history_cap=history_cap
+        )
+    )
     itemcf = ItemCFRetriever.fit(legal_train_rows)
     queries: list[CandidateQuery] = []
     for user_id, target in sorted(targets.items())[:max_users]:
@@ -281,8 +292,8 @@ def build_candidate_queries(
         )
         dense_scores = dict(
             semantic.retrieve(
-                build_semantic_profile("", state, movies, history_cap=history_cap),
-                top_k=retrieval_top_k,
+                query_builder(state, movies, history_cap),
+                top_k=dense_top_k,
                 allowed_ids=allowed_ids,
             )
         )
