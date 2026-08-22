@@ -272,7 +272,7 @@ def build_demo(
     with gr.Blocks(title="RecAgent-Eval") as blocks:
         gr.Markdown("# RecAgent-Eval\nSession-isolated, explainable movie recommendations.")
         session_state = gr.State(reset_session().model_dump(mode="json"))
-        chatbot = gr.Chatbot(type="messages", label="Conversation")
+        chatbot = gr.Chatbot(label="Conversation")
         message = gr.Textbox(label="Movie request", placeholder="Try: thoughtful space movies")
         with gr.Row():
             submit = gr.Button("Recommend", variant="primary")

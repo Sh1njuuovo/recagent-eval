@@ -3,7 +3,7 @@
 > 从可运行的对话推荐原型，构建可评测、可解释、可复现、可投递的
 > 搜推 × LLM Agent 项目。
 
-更新日期：2026-08-10
+更新日期：2026-08-22
 
 ## 1. 方法论定位
 
@@ -21,8 +21,9 @@ RecAgent-Eval 不把大语言模型当作推荐排序器，而把它放在更适
 
 > **LLM 与推荐解耦，硬约束优先，多阶段指标诊断，验证集门禁，失败驱动迭代，Claim-to-Evidence 可追溯。**
 
-这份文档同时描述当前 v1 的真实状态和目标 v2 的方法。凡标记为“目标”的内容
-都不是当前已实现结果，只有通过预先定义的实验门槛后才能进入项目结论。
+这份文档描述当前真实状态：v1（DeepSeek 矩阵）和 v2（dense 召回 +
+LambdaMART 证据契约）都已实现。凡标记为“待验证”或“下一步”的内容仍是计划，
+只有通过预先定义的实验门槛后才能进入项目结论。
 
 ## 2. 项目要解决的问题
 
@@ -119,8 +120,8 @@ LLM 输出类型化 `ToolPlan`，可用工具被限制为 `lookup`、`hard_filte
 ### 4.4 召回与排序职责分离
 
 召回答“目标是否进入候选集”，排序回答“进入候选集后能否进入前十”。v1 使用
-ItemCF 和标题/类型 TF-IDF 双路召回；v2 目标是在相同评测纪律下增加 sentence
-embedding 路线和轻量可学习重排器。
+ItemCF 和标题/类型 TF-IDF 双路召回；v2 增加了 `all-MiniLM-L6-v2` dense 路线
+和十特征 LambdaMART 可学习重排器，评测纪律不变。
 
 候选合并后保留来源、原始分数、route rank 和偏好匹配特征。排序器只能读取训练或
 验证阶段合法生成的特征，不能接触测试目标。
@@ -220,33 +221,44 @@ MovieLens 用户交互按时间顺序切分。训练历史用于 ItemCF、用户
 RRF 和 percentile fusion 也未通过验证门禁。因此下一步合理实验是增加能判断候选质量的
 特征和正则化重排器，而不是继续尝试更多无监督分数混合公式。
 
-## 6. v1 证据与 v2 目标的边界
+## 6. v1 证据与 v2 证据的边界
 
 ### 6.1 v1 已验证事实
 
-- 79 个测试通过，当前 line coverage 为 90%，GitHub Actions 已成功运行。
+- 229 个测试通过，当前 line coverage 为 90%。
 - 约束感知 DeepSeek 评测中，结构化方案的计划合法率、pipeline、工具执行和硬约束指标达到 100%。
 - 正式矩阵中，ItemCF route candidate recall 为 0.78，完整双路 union recall 为 0.88。
 - 完整方案 Recall@10 为 0.04、NDCG@10 为 0.0149，没有超过结构化 ItemCF。
 - 500 用户验证消融中 ItemCF NDCG@10 为 0.033388；新测试的 RRF 和 genuine percentile fusion 未通过门禁。
 - 冻结测试保持锁定，没有为寻找更好结果而重复运行。
 
-### 6.2 v1 不能宣称的内容
+### 6.2 v2 已验证事实
+
+- dense 缓存（`all-MiniLM-L6-v2`，3,883×384）构建成功，schema/指纹/修订校验
+  与稳定加载通过。
+- 真实训练中的 LightGBM 段错误已根因定位（torch/LightGBM/scikit-learn 三份
+  `libomp.dylib` 共存）并修复，两个子进程回归测试守护；30-user 与 500-user
+  训练均完成并发布 bundle。
+- 500 用户验证：约束满足率 100%；LambdaMART NDCG@10 0.0327 vs ItemCF 0.0334，
+  bootstrap 95% CI [−0.0146, 0.0129] 跨零；并集候选召回 77.6%、dense 28.8%。
+- 无 API Key 的离线 Demo 已可运行，并生成本地截图（rule-based 标注）。
+
+### 6.3 不能宣称的内容
 
 - 不能宣称双路召回提升了最终推荐质量。
 - 不能宣称当前系统超过 ItemCF 或流行度基线。
-- 不能把 TF-IDF 描述为 learned semantic embedding。
-- 不能声称 learned reranker、Qwen/vLLM 4090 实验或置信区间已经完成。
+- 不能声称 LambdaMART 超过 ItemCF：500 用户验证是负结果，frozen 门保持锁定。
+- 不能把 rule-based Demo 表述成 LLM 效果。
+- 不能声称 Qwen/vLLM 4090 实验已完成或报告其吞吐/显存。
 - 不能把 50 个固定案例的结果泛化为所有电影推荐场景。
 
-### 6.3 v2 待验证目标
+### 6.4 v2 剩余待验证/下一步
 
-- 缓存式 sentence embedding 召回，在无测试泄漏条件下提高有效候选覆盖。
-- 使用 route score/rank、popularity、genre/year match、explicit preference 和 history
-  similarity 等特征训练轻量、正则化、可解释的重排器。
-- 扩大纯推荐离线用户评测，增加 folds/seeds、bootstrap 区间和用户分组分析。
-- 提供无 API Key 的离线 Demo，并可视化 PreferenceState、ToolPlan、轨迹和分数分解。
-- 仅在离线门禁通过后进行必要的 DeepSeek 复评；Qwen smoke 与主结果分开报告。
+- 提高 dense 候选召回（当前仅 28.8%）与并集候选召回（77.6%），例如扩充
+  dense 通道的 top-k、改进 item text schema 或增加候选策略。
+- 在候选召回改善后重新评估分数校准与 LambdaMART 特征质量，只有离线 NDCG
+  改善才考虑 frozen 重跑。
+- Qwen smoke 与主结果分开报告；Qwen/vLLM 4090 冒烟待服务器空闲。
 
 ## 7. 工程方法论
 
