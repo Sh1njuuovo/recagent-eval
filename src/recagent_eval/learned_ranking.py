@@ -469,11 +469,20 @@ def artifact_from_estimator(
 
 
 def estimator_from_artifact(artifact: RankerArtifact) -> Any:
+    return _BoosterEstimator(_booster_from_model_string(artifact.model_string))
+
+
+def _booster_from_model_string(model_string: str) -> Any:
     try:
         import lightgbm as lgb
     except ImportError as exc:  # pragma: no cover
         raise RuntimeError("loading LambdaMART requires the optional 'ml' dependencies") from exc
-    return _BoosterEstimator(lgb.Booster(model_str=artifact.model_string))
+    # torch (loaded by the dense pipeline) brings its own libomp copy; when two
+    # OpenMP runtimes coexist, LightGBM's parallel model-loading region spawns
+    # worker threads that dereference a null suspension pointer. Cap OMP
+    # threads before construction so the loader never enters that parallel path.
+    os.environ["OMP_NUM_THREADS"] = "1"
+    return lgb.Booster(model_str=model_string)
 
 
 class _BoosterEstimator:

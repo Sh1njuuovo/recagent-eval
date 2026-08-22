@@ -376,3 +376,73 @@ def test_make_lgbm_ranker_does_not_crash_after_torch_import() -> None:
         f"LightGBM crashed after torch import with exit code {result.returncode}:\n"
         f"{result.stderr}"
     )
+
+
+def test_booster_from_model_string_does_not_crash_after_torch_import() -> None:
+    """Regression: loading a saved Booster after torch import must not crash.
+
+    The dense demo builds the semantic retriever before the learned ranker, so
+    the process can construct the LambdaMART Booster after torch has already
+    loaded its own OpenMP runtime. LightGBM's parallel model-loading region then
+    dereferences a null suspension pointer inside libomp. The loader must cap
+    OMP threads before construction regardless of import order.
+    """
+    try:
+        import torch  # noqa: F401
+    except ImportError:
+        pytest.skip("torch is not installed")
+    script = textwrap.dedent(
+        """
+        from recagent_eval.learned_ranking import (
+            CandidateQuery,
+            _booster_from_model_string,
+            build_training_matrix,
+            make_lgbm_ranker,
+        )
+
+        matrix = build_training_matrix(
+            [
+                CandidateQuery(
+                    user,
+                    user * 10,
+                    {
+                        user * 10: (1.0,) + (0.0,) * 9,
+                        user * 10 + 1: (0.0,) * 10,
+                    },
+                )
+                for user in range(1, 4)
+            ]
+        )
+        estimator = make_lgbm_ranker(
+            {
+                "num_leaves": 3,
+                "learning_rate": 0.05,
+                "n_estimators": 5,
+                "min_child_samples": 1,
+            },
+            seed=7,
+        )
+        estimator.fit(
+            list(matrix.features),
+            list(matrix.labels),
+            group=list(matrix.groups),
+        )
+        model_string = str(estimator.booster_.model_to_string())
+
+        import torch  # noqa: F401
+
+        booster = _booster_from_model_string(model_string)
+        booster.predict(list(matrix.features), num_threads=1, pred_contrib=True)
+        """
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert result.returncode == 0, (
+        "Booster loading crashed after torch import with exit code "
+        f"{result.returncode}:\n{result.stderr}"
+    )
