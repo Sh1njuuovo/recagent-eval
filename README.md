@@ -13,11 +13,13 @@ and frozen-test evaluation.
 reach 100%; dense retrieval and a leakage-safe LambdaMART pipeline run end to
 end on real MovieLens-1M data. A candidate-recall sweep found the dense top-k
 is the dominant lever (union recall 77.6% → 87.8%, dense 28.8% → 61.2% with
-`semantic.top_k=1500`). Even with that candidate policy, the 500-user LambdaMART
-validation kept constraint satisfaction at 100% but did not beat ItemCF NDCG@10
-(0.0299 vs 0.0334, bootstrap 95% CI crosses zero), so the frozen test stays
-locked; the negative result is preserved and the bottleneck is now the learned
-ranker's feature quality/calibration rather than candidate recall.
+`semantic.top_k=1500`). Ranking diagnostics show the target still ranks deep
+(median ~172) and only the raw ItemCF score separates targets from negatives;
+percentile calibration of route scores was tested and made ranking worse
+(recall@10 0.066 → 0.038). All 500-user LambdaMART validations keep constraint
+satisfaction at 100% but do not beat ItemCF NDCG@10, so the frozen test stays
+locked; negative results are preserved and the bottleneck is ranking depth
+rather than candidate recall.
 
 RecAgent-Eval makes one separation explicit:
 
@@ -35,6 +37,8 @@ See [NOTICE](NOTICE) for attribution.
 - [Offline ranker gate](reports/experiments/offline-ranker-selection.md)
 - [v2 dense LambdaMART validation](reports/experiments/v2-dense-lambdamart-500user.md)
 - [v2 recall-1500 LambdaMART validation](reports/experiments/v2-dense-lambdamart-recall1500.md)
+- [v2 ranker diagnostics](reports/experiments/v2-ranker-diagnostics.md)
+- [v2 percentile-calibrated validation](reports/experiments/v2-dense-lambdamart-recall1500-percentile.md)
 - [Ten-minute demo script](docs/demo-script.md)
 - [Core code walkthrough](docs/core-code-walkthrough.md)
 - [Interview pack](reports/interview-pack/interview-pack.md)
@@ -275,6 +279,30 @@ ranking gate (NDCG@10 0.0299 vs ItemCF 0.0334, bootstrap CI crosses zero), so
 the frozen test remains locked and the negative result is preserved in
 [v2-dense-lambdamart-recall1500.md](reports/experiments/v2-dense-lambdamart-recall1500.md).
 
+### Ranking diagnostics and score calibration
+
+`diagnose-ranker` writes a read-only per-user ranking diagnostic over the same
+validation set:
+
+```bash
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+  uv run recagent-eval diagnose-ranker \
+  --config configs/v2_dense_recall1500.yaml \
+  --data-dir data/raw/ml-1m \
+  --cases cases/fixed_cases.json \
+  --model artifacts/experiments/v2-recall-1500/model.json \
+  --output artifacts/experiments/v2-ranker-diagnostics/diagnostics.json \
+  --max-users 500
+```
+
+The diagnostic shows the target's median rank is ~172 in both ItemCF and
+LambdaMART, and only `itemcf_score`/popularity separate targets from negatives;
+dense score features are anti-predictive on this set. A percentile calibration
+variant (`ranker.score_calibration=percentile`) was evaluated and made ranking
+worse (LambdaMART recall@10 0.066 → 0.038), so it is recorded as a falsified
+hypothesis; both the diagnostics and the percentile negative result are
+preserved in the reports linked above.
+
 The [archived first DeepSeek report](reports/experiments/deepseek-formal.md)
 documents the invalid-label and policy-drift failures that motivated the revised
 evaluator. The fingerprints differ, so the two result tables are not merged.
@@ -311,9 +339,10 @@ regressions. Current line coverage is 90%.
   model load caps `OMP_NUM_THREADS`. This is a documented local-runtime guard,
   not a model-quality change.
 - The v2 LambdaMART validations did not pass the ItemCF gate. Widening the
-  dense top-k fixed candidate recall (union 87.8%), but the learned ranker
-  still underperforms ItemCF at Top-10; the remaining bottleneck is feature
-  quality/calibration of the learned ranker.
+  dense top-k fixed candidate recall (union 87.8%), but the target still ranks
+  deep (median ~172), so Top-10 NDCG is bounded; percentile score calibration
+  was tested and hurt ranking. The remaining bottleneck is ranking depth and
+  separating features beyond the raw ItemCF score.
 - The unstructured no-memory baseline falls back to popularity retrieval, so its
   strong NDCG on 50 fixed cases should not be generalized beyond this matrix.
 - MovieLens data is downloaded separately and remains subject to GroupLens

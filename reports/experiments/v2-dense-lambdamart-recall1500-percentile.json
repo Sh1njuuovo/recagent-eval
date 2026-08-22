@@ -1,0 +1,46 @@
+{
+  "aggregates": {
+    "dense_candidate_recall": 0.612,
+    "itemcf_candidate_recall": 0.696,
+    "itemcf_hit_at_10": 0.064,
+    "itemcf_ndcg_at_10": 0.033388484023395205,
+    "itemcf_recall_at_10": 0.064,
+    "lambdamart_hit_at_10": 0.038,
+    "lambdamart_ndcg_at_10": 0.02074191793207754,
+    "lambdamart_recall_at_10": 0.038,
+    "latency_ms": 0.0,
+    "union_candidate_recall": 0.878
+  },
+  "bootstrap_resamples": 2000,
+  "candidate_policy": "semantic_top_k=1500",
+  "candidate_policy_fingerprint": "0a3b3ec8b38365988c03c0b9d3d85c584611899dd0c0aafd723b2e1e50fa3d5b",
+  "case_fingerprint": "bc2f622cd9311bca8509a46f0ee516355bc64db7d91f809273a35d97ce304d88",
+  "config_fingerprint": "032c2eda24e3c28490ed02797f3b049c6140d1da9a49d23f43fc70ba31754ae7",
+  "constraint_satisfaction_rate": 1.0,
+  "dataset_fingerprint": "0d2c756a78f02a8ea8680bd216364a6ab7afffc2ae1a26df0611591147897eac",
+  "dependency_versions": {
+    "lightgbm": "4.7.0",
+    "numpy": "2.5.1",
+    "scikit-learn": "1.9.0"
+  },
+  "evidence_fingerprint": "be72a00fcacee23a6fbbf8a49482d67789afbac0fea9040b3ff1d3962e9e588b",
+  "mean_itemcf_ndcg_at_10": 0.033388484023395205,
+  "mean_lambdamart_ndcg_at_10": 0.02074191793207754,
+  "mean_ndcg_delta": -0.012646566091317667,
+  "model_fingerprint": "87dd45de49c5bc8de46d4bda9b5f558a16b57d861197f5b5dfb52d03d3092b87",
+  "ndcg_delta_ci_lower": -0.02663732300022808,
+  "ndcg_delta_ci_upper": 0.0004487287655599339,
+  "run_tag": "v2-recall-1500-percentile",
+  "schema_version": "lambdamart-validation/v1",
+  "score_calibration": "raw",
+  "seed": 42,
+  "selected_params": {
+    "learning_rate": 0.05,
+    "min_child_samples": 50,
+    "n_estimators": 100,
+    "num_leaves": 15
+  },
+  "status": "validation-complete",
+  "training_user_count": 447,
+  "validation_user_count": 500
+}

@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import json
+from types import SimpleNamespace
+
+from recagent_eval.data import Movie, Rating
 from recagent_eval.ranker_diagnostics import (
     DiagnosticUserRow,
     aggregate_diagnostics,
@@ -113,3 +117,90 @@ def test_diagnose_ranker_cli_refuses_overwrite(tmp_path, monkeypatch) -> None:
     assert response.exit_code != 0
     assert "refusing to overwrite" in response.output
     assert output.read_text() == "existing"
+
+
+class _FakeEstimator:
+    def predict(self, features, *, pred_contrib=False):
+        if pred_contrib:
+            return [[*row, 0.25] for row in features]
+        return [sum(row) + 0.25 for row in features]
+
+
+def test_diagnose_ranker_cli_writes_evidence(tmp_path, monkeypatch) -> None:
+    from typer.testing import CliRunner
+
+    import recagent_eval.cli as cli
+    from recagent_eval.cli import app
+
+    movies = {
+        movie_id: Movie(
+            movie_id,
+            f"Movie {movie_id}",
+            ("Drama",) if movie_id % 2 else ("Comedy",),
+            1990 + movie_id,
+        )
+        for movie_id in range(1, 9)
+    }
+    ratings = [
+        Rating(user_id, movie_id, 5, movie_id)
+        for user_id in range(1, 7)
+        for movie_id in range(1, 6)
+    ]
+    monkeypatch.setattr(cli, "_load_dataset", lambda path: (movies, ratings))
+    monkeypatch.setattr(
+        cli,
+        "parse_ranker_artifact",
+        lambda data: SimpleNamespace(model_checksum="abc123"),
+    )
+    monkeypatch.setattr(cli, "estimator_from_artifact", lambda artifact: _FakeEstimator())
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        "name: diagnose\nretrieval_top_k: 8\nsemantic_profile_history_cap: 2\n"
+        "semantic:\n  kind: tfidf\n"
+    )
+    cases = tmp_path / "cases.json"
+    cases.write_text(
+        json.dumps(
+            [
+                {
+                    "case_id": "single-001",
+                    "user_id": 1,
+                    "turns": ["x"],
+                    "relevant_movie_ids": [1],
+                }
+            ]
+        )
+    )
+    model = tmp_path / "model.json"
+    model.write_text("{}")
+    output = tmp_path / "diagnostics.json"
+    response = CliRunner().invoke(
+        app,
+        [
+            "diagnose-ranker",
+            "--config",
+            str(config),
+            "--data-dir",
+            str(tmp_path),
+            "--cases",
+            str(cases),
+            "--model",
+            str(model),
+            "--output",
+            str(output),
+            "--max-users",
+            "6",
+        ],
+    )
+    assert response.exit_code == 0, response.output
+    evidence = json.loads(output.read_text())
+    assert evidence["schema_version"] == "ranker-diagnostics/v1"
+    assert evidence["summary"]["user_count"] == 6
+    assert evidence["summary"]["present_user_count"] == 6
+    assert set(evidence["fingerprints"]) == {
+        "case",
+        "candidate_policy",
+        "dataset",
+        "feature_schema",
+        "model",
+    }
