@@ -8,6 +8,8 @@ htmlcov/
 data/raw/
 data/processed/
 artifacts/runs/
+artifacts/embeddings/
+artifacts/experiments/
 .env
 .DS_Store
 .worktrees/
