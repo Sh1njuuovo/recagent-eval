@@ -19,6 +19,27 @@ class ProviderMustNotBeCalled:
         raise AssertionError("provider must not be called")
 
 
+def test_run_experiment_always_rejects_direct_lambdamart_calls(tmp_path: Path) -> None:
+    config = ExperimentConfig(name="bypass", ranker_kind="lambdamart")
+    for case_id in ("arbitrary-a", "arbitrary-b"):
+        with pytest.raises(ValueError, match="dedicated frozen learned"):
+            run_experiment(
+                movies={},
+                ratings=[],
+                cases=[
+                    EvaluationCase(
+                        case_id=case_id,
+                        user_id=1,
+                        turns=("x",),
+                        relevant_movie_ids={999},
+                    )
+                ],
+                provider=ProviderMustNotBeCalled(),
+                config=config,
+                output_dir=tmp_path / case_id,
+            )
+
+
 def test_run_experiment_rejects_ineligible_labels_before_provider_call(
     tmp_path: Path,
 ) -> None:
@@ -91,6 +112,10 @@ def test_run_experiment_writes_reproducible_records_and_metrics(
         "rrf_k": 60,
         "weights": [0.5, 0.3, 0.2],
     }
+    assert manifest["provider"] == {
+        "kind": "rule-based",
+        "model": "deterministic-offline",
+    }
 
 
 def test_case_fingerprint_payload_sorts_set_like_fields() -> None:
@@ -110,6 +135,45 @@ def test_case_fingerprint_payload_sorts_set_like_fields() -> None:
     assert payload[0]["relevant_movie_ids"] == [2, 9]
     assert payload[0]["initial_state"]["liked_movie_ids"] == [1, 7]
     assert payload[0]["initial_state"]["liked_genres"] == ["Action", "Sci-Fi"]
+
+
+def test_disabled_semantic_retrieval_never_builds_or_loads_dense(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "recagent_eval.runner.DenseSemanticRetriever.fit",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("dense fit called")),
+    )
+    monkeypatch.setattr(
+        "recagent_eval.runner.DenseSemanticRetriever.load",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("dense load called")),
+    )
+    movies = {
+        1: Movie(1, "One", ("Drama",), 2000),
+        2: Movie(2, "Two", ("Drama",), 2001),
+    }
+    case = EvaluationCase(
+        case_id="disabled-dense",
+        user_id=1,
+        turns=("recommend drama",),
+        relevant_movie_ids={2},
+        initial_state=PreferenceState(liked_movie_ids={1}),
+    )
+
+    run_experiment(
+        movies=movies,
+        ratings=[Rating(1, 1, 5, 1), Rating(1, 2, 5, 2)],
+        cases=[case],
+        provider=RuleBasedProvider(),
+        config=ExperimentConfig(
+            name="disabled-dense",
+            semantic_kind="dense",
+            semantic_cache_path="missing.npz",
+            enable_semantic_retrieval=False,
+        ),
+        output_dir=tmp_path,
+    )
 
 
 def test_multi_turn_run_aggregates_calls_and_traces(tmp_path: Path) -> None:

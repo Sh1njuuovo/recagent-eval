@@ -12,7 +12,9 @@ from recagent_eval.models import (
     ScoreBreakdown,
 )
 
-RankerKind = Literal["itemcf", "minmax_linear", "rrf", "percentile_linear"]
+RankerKind = Literal[
+    "itemcf", "minmax_linear", "rrf", "percentile_linear", "lambdamart"
+]
 
 
 @dataclass(frozen=True)

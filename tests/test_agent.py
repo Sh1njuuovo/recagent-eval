@@ -1,5 +1,7 @@
 from collections import deque
 
+import httpx
+
 from recagent_eval.agent import (
     AgentConfig,
     RecommendationAgent,
@@ -7,7 +9,12 @@ from recagent_eval.agent import (
 )
 from recagent_eval.data import Movie, Rating
 from recagent_eval.models import PreferenceState
-from recagent_eval.provider import LLMResponse, ProviderError, TokenUsage
+from recagent_eval.provider import (
+    LLMResponse,
+    OpenAICompatibleProvider,
+    ProviderError,
+    TokenUsage,
+)
 from recagent_eval.ranking import HybridRanker
 from recagent_eval.retrieval import ItemCFRetriever, TfidfSemanticRetriever
 
@@ -231,6 +238,34 @@ def test_agent_repairs_once_then_uses_deterministic_fallback() -> None:
     assert result.plan_valid is False
     assert result.movies[0].movie_id == 2
     assert len(result.errors) == 2
+
+
+def test_remote_timeout_uses_deterministic_fallback_without_secret_leakage() -> None:
+    secret = "remote-api-secret"
+
+    def timeout_handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("timed out", request=request)
+
+    provider = OpenAICompatibleProvider(
+        base_url="http://127.0.0.1:8000/v1",
+        api_key=secret,
+        model="Qwen/Qwen3-8B",
+        max_retries=0,
+        transport=httpx.MockTransport(timeout_handler),
+    )
+    agent = make_agent(provider)  # type: ignore[arg-type]
+
+    result = agent.recommend("recommend a movie", PreferenceState(liked_movie_ids={1}))
+
+    assert result.fallback_used is True
+    assert result.plan_valid is False
+    assert result.movies[0].movie_id == 2
+    assert all(secret not in error for error in result.errors)
+    assert {trace.tool for trace in result.traces} >= {
+        "hard_filter",
+        "itemcf_retrieve",
+        "rerank",
+    }
 
 
 def test_successful_repair_counts_as_valid_without_fallback() -> None:

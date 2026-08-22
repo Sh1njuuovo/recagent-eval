@@ -1,0 +1,245 @@
+{
+  "candidates": [
+    {
+      "name": "RecAI / InteRecAgent",
+      "repo_url": "https://github.com/microsoft/RecAI/tree/main/InteRecAgent",
+      "license": "MIT",
+      "license_score": 4,
+      "stars": 1200,
+      "last_commit": "2026-01-27",
+      "matched_jd_terms": [
+        "LLM Agent",
+        "query",
+        "retrieval",
+        "ranking",
+        "recommendation",
+        "evaluation"
+      ],
+      "jd_match_score": 30,
+      "runnable_score": 17,
+      "resource_fit_score": 9,
+      "taste_tags": [
+        "search-recommendation",
+        "llm-agent",
+        "retrieval-ranking",
+        "remote-4090",
+        "interview-friendly",
+        "independent-project"
+      ],
+      "avoid_tags": [],
+      "project_taste_notes": "工具化推荐 Agent 与搜推交叉最直接，旧依赖需要定向重构。",
+      "mod_ideas": [
+        "provider abstraction",
+        "structured preference memory",
+        "hybrid reranking",
+        "offline evaluation"
+      ],
+      "risk_notes": [
+        "legacy dependencies",
+        "external prepared resources"
+      ],
+      "score": 88.6,
+      "raw_score": 101,
+      "max_raw_score": 114,
+      "score_breakdown": {
+        "jd_match": 30,
+        "license": 4,
+        "runnable": 17,
+        "resource_fit": 9,
+        "activity": 7,
+        "stars": 10,
+        "modification_space": 20,
+        "user_preference": 10,
+        "risk_penalty": -6
+      },
+      "matched_keywords": [
+        "LLM Agent",
+        "query",
+        "retrieval",
+        "ranking",
+        "recommendation",
+        "evaluation"
+      ],
+      "score_reasons": [
+        "JD match score from jd_match_score",
+        "license score from license_score",
+        "runnable score from runnable_score",
+        "resource fit score from resource_fit_score",
+        "active within 1 year",
+        "strong community signal",
+        "4 modification ideas",
+        "2 risk notes",
+        "user preference 10/10: 6 matches, 0 avoid matches"
+      ],
+      "taste_matches": [
+        "independent-project",
+        "interview-friendly",
+        "llm-agent",
+        "remote-4090",
+        "retrieval-ranking",
+        "search-recommendation"
+      ],
+      "taste_mismatches": [],
+      "user_preference_notes": [
+        "匹配用户偏好：independent-project, interview-friendly, llm-agent, remote-4090, retrieval-ranking, search-recommendation",
+        "user_preference=10/10"
+      ]
+    },
+    {
+      "name": "RecBole",
+      "repo_url": "https://github.com/RUCAIBox/RecBole",
+      "license": "MIT with academic-use notice",
+      "license_score": 3,
+      "stars": 4500,
+      "last_commit": "2025-02-23",
+      "matched_jd_terms": [
+        "recommendation",
+        "ranking",
+        "datasets",
+        "evaluation"
+      ],
+      "jd_match_score": 24,
+      "runnable_score": 18,
+      "resource_fit_score": 10,
+      "taste_tags": [
+        "search-recommendation",
+        "retrieval-ranking",
+        "remote-4090",
+        "interview-friendly"
+      ],
+      "avoid_tags": [],
+      "project_taste_notes": "推荐基线和评测成熟，但 LLM Agent 关联需要额外搭建。",
+      "mod_ideas": [
+        "agent integration",
+        "MovieLens baseline",
+        "hybrid reranking",
+        "evaluation table"
+      ],
+      "risk_notes": [
+        "weak native agent integration"
+      ],
+      "score": 82.46,
+      "raw_score": 94,
+      "max_raw_score": 114,
+      "score_breakdown": {
+        "jd_match": 24,
+        "license": 3,
+        "runnable": 18,
+        "resource_fit": 10,
+        "activity": 4,
+        "stars": 10,
+        "modification_space": 20,
+        "user_preference": 8,
+        "risk_penalty": -3
+      },
+      "matched_keywords": [
+        "recommendation",
+        "ranking",
+        "datasets",
+        "evaluation"
+      ],
+      "score_reasons": [
+        "JD match score from jd_match_score",
+        "license score from license_score",
+        "runnable score from runnable_score",
+        "resource fit score from resource_fit_score",
+        "active within 2 years",
+        "strong community signal",
+        "4 modification ideas",
+        "1 risk notes",
+        "user preference 8/10: 4 matches, 0 avoid matches"
+      ],
+      "taste_matches": [
+        "interview-friendly",
+        "remote-4090",
+        "retrieval-ranking",
+        "search-recommendation"
+      ],
+      "taste_mismatches": [],
+      "user_preference_notes": [
+        "匹配用户偏好：interview-friendly, remote-4090, retrieval-ranking, search-recommendation",
+        "user_preference=8/10"
+      ]
+    },
+    {
+      "name": "OpenOneRec",
+      "repo_url": "https://github.com/Kuaishou-OneRec/OpenOneRec",
+      "license": "not declared during audit",
+      "license_score": 0,
+      "stars": 885,
+      "last_commit": "2026-05-18",
+      "matched_jd_terms": [
+        "generative recommendation",
+        "LLM",
+        "ranking"
+      ],
+      "jd_match_score": 25,
+      "runnable_score": 4,
+      "resource_fit_score": 1,
+      "taste_tags": [
+        "search-recommendation",
+        "llm-agent",
+        "retrieval-ranking"
+      ],
+      "avoid_tags": [
+        "full-pretraining",
+        "multi-gpu"
+      ],
+      "project_taste_notes": "方向匹配，但资源与一周单卡约束冲突。",
+      "mod_ideas": [
+        "small-data smoke test",
+        "evaluation extraction"
+      ],
+      "risk_notes": [
+        "license unclear",
+        "distributed pretraining",
+        "100M interaction dataset",
+        "documentation incomplete"
+      ],
+      "score": 42.11,
+      "raw_score": 48,
+      "max_raw_score": 114,
+      "score_breakdown": {
+        "jd_match": 25,
+        "license": 0,
+        "runnable": 4,
+        "resource_fit": 1,
+        "activity": 10,
+        "stars": 8,
+        "modification_space": 10,
+        "user_preference": 2,
+        "risk_penalty": -12
+      },
+      "matched_keywords": [
+        "generative recommendation",
+        "LLM",
+        "ranking"
+      ],
+      "score_reasons": [
+        "JD match score from jd_match_score",
+        "license score from license_score",
+        "runnable score from runnable_score",
+        "resource fit score from resource_fit_score",
+        "active within 180 days",
+        "good community signal",
+        "2 modification ideas",
+        "4 risk notes",
+        "user preference 2/10: 3 matches, 2 avoid matches"
+      ],
+      "taste_matches": [
+        "llm-agent",
+        "retrieval-ranking",
+        "search-recommendation"
+      ],
+      "taste_mismatches": [
+        "full-pretraining",
+        "multi-gpu"
+      ],
+      "user_preference_notes": [
+        "匹配用户偏好：llm-agent, retrieval-ranking, search-recommendation",
+        "命中用户避雷项：full-pretraining, multi-gpu",
+        "user_preference=2/10"
+      ]
+    }
+  ]
+}

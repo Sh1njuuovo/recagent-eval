@@ -1,7 +1,7 @@
 {
   "candidates": [
     {
-      "name": "RecAI / InteRecAgent",
+      "name": "RecAI/InteRecAgent",
       "repo_url": "https://github.com/microsoft/RecAI/tree/main/InteRecAgent",
       "license": "MIT",
       "license_score": 4,
@@ -16,27 +16,24 @@
         "evaluation"
       ],
       "jd_match_score": 30,
+      "runnable": "README, app.py and run.sh were found in the checked-in audit; external prepared resources remain required",
       "runnable_score": 17,
+      "resources": "local refactor/smoke path is plausible; upstream dependencies and prepared resources require validation",
       "resource_fit_score": 9,
-      "taste_tags": [
-        "search-recommendation",
-        "llm-agent",
-        "retrieval-ranking",
-        "remote-4090",
-        "interview-friendly",
-        "independent-project"
-      ],
-      "avoid_tags": [],
-      "project_taste_notes": "工具化推荐 Agent 与搜推交叉最直接，旧依赖需要定向重构。",
       "mod_ideas": [
         "provider abstraction",
         "structured preference memory",
-        "hybrid reranking",
-        "offline evaluation"
+        "dense semantic retrieval and LambdaMART",
+        "leakage-safe offline evaluation"
       ],
       "risk_notes": [
         "legacy dependencies",
         "external prepared resources"
+      ],
+      "source_notes": [
+        "official project README: https://github.com/microsoft/RecAI/tree/main/InteRecAgent",
+        "repository structure and runnable signals: reports/audit/audit.json",
+        "community and activity metadata are a dated audit snapshot; the official repository URL is the refresh authority"
       ]
     },
     {
@@ -53,31 +50,30 @@
         "evaluation"
       ],
       "jd_match_score": 24,
+      "runnable": "historical shortlist audit rated the recommendation baseline and evaluation path highly; no run was repeated in this task",
       "runnable_score": 18,
+      "resources": "historical shortlist audit marked the baseline as CPU/single-GPU friendly",
       "resource_fit_score": 10,
-      "taste_tags": [
-        "search-recommendation",
-        "retrieval-ranking",
-        "remote-4090",
-        "interview-friendly"
-      ],
-      "avoid_tags": [],
-      "project_taste_notes": "推荐基线和评测成熟，但 LLM Agent 关联需要额外搭建。",
       "mod_ideas": [
         "agent integration",
         "MovieLens baseline",
-        "hybrid reranking",
+        "dense retrieval and LambdaMART",
         "evaluation table"
       ],
       "risk_notes": [
         "weak native agent integration"
+      ],
+      "source_notes": [
+        "official repository and README: https://github.com/RUCAIBox/RecBole",
+        "official documentation: https://recbole.io/docs/",
+        "community and activity metadata are a dated audit snapshot; no execution was repeated in this task"
       ]
     },
     {
       "name": "OpenOneRec",
       "repo_url": "https://github.com/Kuaishou-OneRec/OpenOneRec",
-      "license": "not declared during audit",
-      "license_score": 0,
+      "license": "Apache-2.0",
+      "license_score": 4,
       "stars": 885,
       "last_commit": "2026-05-18",
       "matched_jd_terms": [
@@ -86,27 +82,24 @@
         "ranking"
       ],
       "jd_match_score": 25,
+      "runnable": "historical shortlist audit found no bounded two-week full-run path",
       "runnable_score": 4,
+      "resources": "historical shortlist audit identified distributed pretraining and a 100M-interaction dataset",
       "resource_fit_score": 1,
-      "taste_tags": [
-        "search-recommendation",
-        "llm-agent",
-        "retrieval-ranking"
-      ],
-      "avoid_tags": [
-        "full-pretraining",
-        "multi-gpu"
-      ],
-      "project_taste_notes": "方向匹配，但资源与一周单卡约束冲突。",
       "mod_ideas": [
         "small-data smoke test",
         "evaluation extraction"
       ],
       "risk_notes": [
-        "license unclear",
         "distributed pretraining",
         "100M interaction dataset",
         "documentation incomplete"
+      ],
+      "source_notes": [
+        "official repository and README: https://github.com/Kuaishou-OneRec/OpenOneRec",
+        "official license: https://github.com/Kuaishou-OneRec/OpenOneRec/blob/main/LICENSE",
+        "resource and documentation risks were recorded from the official repository during the shortlist audit",
+        "community and activity metadata are a dated audit snapshot; no execution was repeated in this task"
       ]
     }
   ]

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import time
+from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -40,6 +43,21 @@ class LLMProvider(Protocol):
     ) -> LLMResponse: ...
 
 
+@dataclass(frozen=True)
+class ProviderStatus:
+    requested: str
+    active: str
+    model: str
+    fallback: bool = False
+    message: str = ""
+
+
+@dataclass(frozen=True)
+class ProviderSelection:
+    provider: LLMProvider
+    status: ProviderStatus
+
+
 class OpenAICompatibleProvider:
     """Small OpenAI-compatible client for DeepSeek and local vLLM endpoints."""
 
@@ -49,16 +67,26 @@ class OpenAICompatibleProvider:
         base_url: str,
         api_key: str,
         model: str,
+        provider_name: str = "openai-compatible",
         max_retries: int = 2,
         retry_backoff_seconds: float = 0.5,
+        extra_body: dict[str, Any] | None = None,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model
+        self.name = provider_name
         self.max_retries = max_retries
         self.retry_backoff_seconds = retry_backoff_seconds
         self._api_key = api_key
+        self._extra_body = _validated_extra_body(extra_body)
         self._transport = transport
+
+    def __repr__(self) -> str:
+        return (
+            f"{type(self).__name__}(base_url={self.base_url!r}, model={self.model!r}, "
+            f"max_retries={self.max_retries!r}, extra_body=<redacted>)"
+        )
 
     def chat(
         self,
@@ -74,6 +102,7 @@ class OpenAICompatibleProvider:
         }
         if response_schema is not None:
             payload["response_format"] = {"type": "json_object"}
+        payload.update(deepcopy(self._extra_body))
 
         last_error: ProviderError | None = None
         for attempt in range(self.max_retries + 1):
@@ -149,8 +178,28 @@ def _elapsed_ms(started: float) -> float:
     return (time.perf_counter() - started) * 1000
 
 
+def _validated_extra_body(value: dict[str, Any] | None) -> dict[str, Any]:
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise TypeError("extra_body must be a JSON-serializable mapping")
+    protected = {"model", "messages", "response_format", "temperature"} & set(value)
+    if protected:
+        fields = ", ".join(sorted(str(field) for field in protected))
+        raise ValueError(f"extra_body cannot override protected request fields: {fields}")
+    try:
+        copied = deepcopy(dict(value))
+        json.dumps(copied, allow_nan=False)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("extra_body must be a JSON-serializable mapping") from exc
+    return copied
+
+
 class RuleBasedProvider:
     """Offline provider used for deterministic smoke tests and CI."""
+
+    name = "rule-based"
+    model = "deterministic-offline"
 
     def chat(
         self,
@@ -175,3 +224,75 @@ class RuleBasedProvider:
             structured=plan,
             latency_ms=0.0,
         )
+
+
+def build_provider(
+    name: str,
+    *,
+    allow_fallback: bool = False,
+    environ: Mapping[str, str] | None = None,
+    transport: httpx.BaseTransport | None = None,
+) -> ProviderSelection:
+    """Build a provider, allowing an explicit offline fallback for interactive use."""
+    env = os.environ if environ is None else environ
+    normalized = name.strip().lower()
+    supported = {"rule-based", "deepseek", "vllm", "qwen"}
+    if normalized not in supported:
+        raise ValueError("provider must be rule-based, deepseek, vllm, or qwen")
+    if normalized == "rule-based":
+        return ProviderSelection(
+            RuleBasedProvider(),
+            ProviderStatus(normalized, "rule-based", "deterministic-offline"),
+        )
+    try:
+        if normalized == "deepseek":
+            key = _required_env(env, "DEEPSEEK_API_KEY")
+            model = env.get("DEEPSEEK_MODEL", "deepseek-chat")
+            provider = OpenAICompatibleProvider(
+                base_url=env.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1"),
+                api_key=key,
+                model=model,
+                provider_name="deepseek",
+                transport=transport,
+            )
+            return ProviderSelection(
+                provider,
+                ProviderStatus(normalized, "deepseek", model),
+            )
+        if normalized in {"vllm", "qwen"}:
+            base_url = _required_env(env, "VLLM_BASE_URL")
+            key = _required_env(env, "VLLM_API_KEY")
+            model = env.get("VLLM_MODEL", "Qwen/Qwen3-8B")
+            provider = OpenAICompatibleProvider(
+                base_url=base_url,
+                api_key=key,
+                model=model,
+                provider_name="vllm/qwen",
+                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+                transport=transport,
+            )
+            return ProviderSelection(
+                provider,
+                ProviderStatus(normalized, "vllm/qwen", model),
+            )
+        raise AssertionError("unreachable provider selection")
+    except ValueError as exc:
+        if not allow_fallback:
+            raise
+        return ProviderSelection(
+            RuleBasedProvider(),
+            ProviderStatus(
+                normalized,
+                "rule-based",
+                "deterministic-offline",
+                fallback=True,
+                message=f"{normalized} unavailable: {exc}; using rule-based provider",
+            ),
+        )
+
+
+def _required_env(environ: Mapping[str, str], name: str) -> str:
+    value = environ.get(name)
+    if not value:
+        raise ValueError(f"{name} is required for this provider")
+    return value

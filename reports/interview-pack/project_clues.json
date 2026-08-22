@@ -1,110 +1,71 @@
 {
   "notes_root": "reports",
+  "generated_at": "2026-08-20",
+  "generation_method": "deterministic active-manifest refresh; historical interview-pack prose preserved",
   "source_files": [
     "audit/audit.json",
     "audit/overview.md",
     "experiments/offline-rule-based.json",
     "experiments/offline-rule-based.md",
+    "experiments/deepseek-constraint-aware.json",
+    "experiments/deepseek-constraint-aware.md",
+    "experiments/offline-ranker-selection.md",
     "profile/candidates.json",
     "profile/jd.txt",
-    "profile/taste.json",
+    "profile/scoring-methodology.md",
     "ranking/candidate_score.json",
     "ranking/candidate_score.md"
   ],
   "metric_hits": [
     {
       "source": "experiments/offline-rule-based.md",
-      "text": "Recall@10"
+      "text": "| Full hybrid | **0.0800** | 0.0418 | **0.0800** | 100% | 100% | 0% | 100% |"
     },
     {
-      "source": "experiments/offline-rule-based.md",
-      "text": "memory | 0.0600"
+      "source": "experiments/deepseek-constraint-aware.md",
+      "text": "| Full hybrid | 0.0400 | 0.0149 | 0.0400 | 0.7800 | 0.4400 | **0.8800** |"
     },
     {
-      "source": "experiments/offline-rule-based.md",
-      "text": "memory | 0.0600"
+      "source": "experiments/deepseek-constraint-aware.md",
+      "text": "| Structured + memory, ItemCF | **0.0600** | 0.0360 | **0.0600** | 0.7800 | 0.0000 | 0.7800 |"
     },
     {
-      "source": "experiments/offline-rule-based.md",
-      "text": "recall from 6%"
+      "source": "experiments/offline-ranker-selection.md",
+      "text": "| ItemCF | — | 0.064 | 0.033388 | 0.064 | 0.97 |"
     },
     {
       "source": "ranking/candidate_score.md",
-      "text": "gpu | license unclear; distributed pretraining; 100"
+      "text": "- 主项目推荐：`RecAI/InteRecAgent`，score=87.50"
     }
   ],
   "claim_lines": [
     {
       "source": "audit/audit.json",
-      "text": "\"README.md\": \"# Recommender AI Agent: Integrating Large Language Models for Interactive Recommendations\\nThis is the Repo for InteRecAgent, a interactive recommender agent, which applies Large Language Model(LLM) to bridge the gap between traditional recommend"
-    },
-    {
-      "source": "audit/audit.json",
-      "text": "\"demonstration/README.md\": \"# Demonstrations\\n\\n\\nDemonstration plays an import role in in-context learning for LLM. However, we could not put too many demonstrations in the prompt due to the limit \\nof tokens and the cost. Therefore, we want to build a demons"
-    },
-    {
-      "source": "audit/audit.json",
-      "text": "\"tests/README.md\": \"# Test Examples\\n\\nHere are some test examples/cases to test our Conversational Recommender System. Those examples are designed with different conditions:\\n\\n- Intention Only\\n    - Hard conditions only\\n    - Soft conditions only\\n    - Mi"
-    },
-    {
-      "source": "audit/overview.md",
-      "text": "## Notebook / Docker / Test 线索"
-    },
-    {
-      "source": "audit/overview.md",
-      "text": "- 找到最小可运行命令：API、页面、CLI、worker、测试、训练或 demo 至少一个。"
-    },
-    {
-      "source": "audit/overview.md",
-      "text": "- 确认 baseline/demo 是否能在本地、Docker、云服务器或 GPU 环境上跑通。"
-    },
-    {
-      "source": "experiments/offline-rule-based.json",
-      "text": "\"status\": \"pipeline-validation-only\","
-    },
-    {
-      "source": "experiments/offline-rule-based.json",
-      "text": "\"baseline\": {"
+      "text": "\"app.py\","
     },
     {
       "source": "experiments/offline-rule-based.md",
-      "text": "# Offline rule-based experiment"
+      "text": "This run validates data splitting, tools, retrieval, ranking, constraints,"
     },
     {
-      "source": "experiments/offline-rule-based.md",
-      "text": "## Result"
+      "source": "experiments/deepseek-constraint-aware.md",
+      "text": "The full system improves candidate union recall by 10 percentage points over the"
     },
     {
-      "source": "experiments/offline-rule-based.md",
-      "text": "- It does not meet the target `NDCG@10 >= ItemCF baseline`: the relevant item is"
+      "source": "experiments/offline-ranker-selection.md",
+      "text": "The frozen test remained locked. Neither Reciprocal Rank Fusion nor a genuine"
     },
     {
-      "source": "experiments/offline-rule-based.md",
-      "text": "- Next ranking experiment: calibrate per-source scores or train a small"
+      "source": "profile/jd.txt",
+      "text": "- 使用 Learning-to-Rank（如 LightGBM LambdaMART）完成候选排序和特征贡献解释；"
     },
     {
-      "source": "experiments/offline-rule-based.md",
-      "text": "validation-only linear/listwise reranker while keeping the same test split."
+      "source": "profile/scoring-methodology.md",
+      "text": "- Taste: disabled. No `taste.json` or `--taste` argument was used."
     },
     {
-      "source": "experiments/offline-rule-based.md",
-      "text": "integration test exposed the issue; candidates now require positive cosine"
-    },
-    {
-      "source": "profile/candidates.json",
-      "text": "\"MovieLens baseline\","
-    },
-    {
-      "source": "profile/candidates.json",
-      "text": "\"small-data smoke test\","
-    },
-    {
-      "source": "ranking/candidate_score.json",
-      "text": "\"MovieLens baseline\","
-    },
-    {
-      "source": "ranking/candidate_score.json",
-      "text": "\"small-data smoke test\","
+      "source": "ranking/candidate_score.md",
+      "text": "- 备选项目：`RecBole`，score=82.69"
     }
   ]
 }

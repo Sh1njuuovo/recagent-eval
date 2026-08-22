@@ -50,7 +50,39 @@ Weights were searched on at most 500 validation users with step 0.1 and frozen
 as `(0.7, 0.3, 0.0)`. The explicit preference score going to zero is an observed
 validation result, not a manually chosen success story.
 
-## 5. Evaluation and reproducibility
+## 5. Dense retrieval and leakage-safe LambdaMART (v2)
+
+The v2 path is the current focus. `DenseSemanticRetriever` stores
+`all-MiniLM-L6-v2` embeddings in a schema/fingerprint/revision-validated cache
+and returns deterministic NumPy cosine retrieval through the same
+`retrieve(query, top_k, allowed_ids)` contract as TF-IDF.
+
+`LeakageSafeRankingSplit` orders each user's ratings by timestamp: the
+penultimate positive item is the validation target and the latest is the test
+target; neither enters ItemCF training. `train-ranker` builds ten candidate
+features per movie, runs whole-user GroupKFold three-fold CV over a fixed
+sixteen-parameter grid, and publishes a model/evidence bundle whose fingerprints
+cover dataset, rows, history, folds, groups, candidate policy, config, metrics,
+cases, and validation replay. The frozen evaluation replays the validation rows
+from the artifact and compares them byte-for-byte with the recorded evidence.
+
+Key files: `learned_ranking.py` (schema, artifact, booster loading),
+`lambdamart_pipeline.py` (candidate construction and orchestration),
+`v2_selection.py` (grouped CV and evidence), and `bundle.py` (atomic single-use
+publication).
+
+## 6. Native crash lesson: three OpenMP runtimes
+
+The dense pipeline loads torch before LightGBM. On macOS arm64 this puts three
+`libomp.dylib` copies (torch's, LightGBM's, scikit-learn's) in one process;
+LightGBM's OpenMP worker threads then dereference a null suspension pointer in
+`__kmp_suspend_initialize_thread` and the process dies with exit 139. The fix
+pins `n_jobs=1` in the ranker factory, passes `num_threads=1` to raw Booster
+prediction, and caps `OMP_NUM_THREADS` before Booster construction. Two
+subprocess regression tests reproduce the crash boundary (torch imported, then
+train/predict/load) and guard the fix.
+
+## 7. Evaluation and reproducibility
 
 `run_experiment` runs every turn, writes sanitized JSONL episodes, aggregate
 metrics, and a manifest with Python/platform/config/data counts and a case

@@ -20,6 +20,12 @@ dependencies = [
 
 [project.optional-dependencies]
 demo = ["gradio>=5,<7"]
+# Shared approved ML stack: dense retrieval now, LambdaMART in a later task.
+ml = [
+  "lightgbm>=4.5,<5",
+  "scikit-learn>=1.5,<2",
+  "sentence-transformers>=3.3,<6",
+]
 dev = [
   "pytest>=8,<10",
   "pytest-cov>=5,<8",

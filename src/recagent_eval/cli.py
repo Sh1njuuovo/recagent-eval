@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 from pathlib import Path
 from typing import Annotated
 
 import typer
 import yaml
 
+from recagent_eval.bundle import load_ranker_bundle
+from recagent_eval.candidate_features import FEATURE_SCHEMA_FINGERPRINT
 from recagent_eval.cases import (
     EvaluationCase,
     generate_cases,
@@ -21,12 +22,25 @@ from recagent_eval.data import (
     Movie,
     Rating,
     chronological_split,
+    leakage_safe_ranking_split,
     load_movielens_movies,
     load_movielens_ratings,
 )
 from recagent_eval.dataset import download_movielens_1m
+from recagent_eval.lambdamart_pipeline import (
+    build_validation_rows,
+    candidate_policy_fingerprint,
+    lambdamart_config_fingerprint,
+    ranking_dataset_fingerprint,
+    train_lambdamart_pipeline,
+)
+from recagent_eval.learned_ranking import (
+    LearnedRanker,
+    estimator_from_artifact,
+    parse_ranker_artifact,
+)
 from recagent_eval.models import PreferenceState
-from recagent_eval.provider import OpenAICompatibleProvider, RuleBasedProvider
+from recagent_eval.provider import RuleBasedProvider, build_provider
 from recagent_eval.ranker_selection import (
     RankerSelectionEvidence,
     build_ranker_ablation,
@@ -38,11 +52,24 @@ from recagent_eval.ranker_selection import (
     select_ranker as select_ranker_evidence,
 )
 from recagent_eval.ranking import HybridRanker
+from recagent_eval.retrieval import (
+    DEFAULT_DENSE_MODEL,
+    DenseSemanticRetriever,
+    TfidfSemanticRetriever,
+)
 from recagent_eval.runner import ExperimentConfig, case_fingerprint, run_experiment
+from recagent_eval.safe_io import ensure_distinct_files
 from recagent_eval.tuning import (
     build_retrieval_ablation,
     select_retrieval_parameters,
     tune_on_validation,
+)
+from recagent_eval.v2_selection import (
+    LearnedValidationEvidence,
+    assert_frozen_authorization_available,
+    consume_frozen_authorization,
+    consumption_marker_path,
+    validate_learned_gate,
 )
 
 app = typer.Typer(no_args_is_help=True, help="Evaluate a conversational movie recommender.")
@@ -54,6 +81,51 @@ def download_data(
 ) -> None:
     path = download_movielens_1m(output)
     typer.echo(f"MovieLens 1M ready at {path}")
+
+
+@app.command("build-embeddings")
+def build_embeddings(
+    data_dir: Annotated[Path, typer.Option(help="MovieLens 1M directory")] = Path("data/raw/ml-1m"),
+    output: Annotated[Path, typer.Option(help="Dense embedding NPZ cache")] = Path(
+        "artifacts/embeddings/movielens.npz"
+    ),
+    model_name: Annotated[str, typer.Option()] = DEFAULT_DENSE_MODEL,
+    model_revision: Annotated[str | None, typer.Option()] = None,
+    device: Annotated[str, typer.Option(help="cpu or cuda")] = "cpu",
+    force: Annotated[bool, typer.Option("--force", help="Rebuild a matching cache")] = False,
+) -> None:
+    if device not in {"cpu", "cuda"}:
+        raise typer.BadParameter("device must be cpu or cuda")
+    movies_path = data_dir / "movies.dat"
+    if not movies_path.exists():
+        raise typer.BadParameter(
+            f"MovieLens movies.dat missing under {data_dir}; run download-data first"
+        )
+    movies = load_movielens_movies(movies_path)
+    try:
+        if (output.exists() or Path(f"{output}.json").exists()) and not force:
+            manifest = DenseSemanticRetriever.validate_cache(
+                output,
+                movies=movies,
+                model_name=model_name,
+                model_revision=model_revision,
+                device=device,
+            )
+            typer.echo(
+                f"Reused {len(movies)} embeddings from {output} "
+                f"at revision {manifest['resolved_revision']}"
+            )
+            return
+        retriever = DenseSemanticRetriever.fit(
+            movies,
+            model_name=model_name,
+            model_revision=model_revision,
+            device=device,
+        )
+        retriever.save(output)
+    except (RuntimeError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(f"Wrote {len(movies)} embeddings to {output} at revision {retriever.model_revision}")
 
 
 @app.command("prepare-cases")
@@ -107,9 +179,7 @@ def tune(
             chronological_split(ratings),
             step=step,
             retrieval_top_k=config.retrieval_top_k if config else 100,
-            semantic_profile_history_cap=(
-                config.semantic_profile_history_cap if config else 20
-            ),
+            semantic_profile_history_cap=(config.semantic_profile_history_cap if config else 20),
         )
     )
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -129,9 +199,7 @@ def tune(
 
 @app.command("select-retrieval")
 def select_retrieval(
-    data_dir: Annotated[Path, typer.Option(help="MovieLens 1M directory")] = Path(
-        "data/raw/ml-1m"
-    ),
+    data_dir: Annotated[Path, typer.Option(help="MovieLens 1M directory")] = Path("data/raw/ml-1m"),
     evidence_output: Annotated[
         Path,
         typer.Option(help="Validation ablation JSON"),
@@ -159,9 +227,7 @@ def select_retrieval(
         "name": "structured-memory-hybrid-constraint-aware",
         "seed": 42,
         "retrieval_top_k": int(selection["retrieval_top_k"]),
-        "semantic_profile_history_cap": int(
-            selection["semantic_profile_history_cap"]
-        ),
+        "semantic_profile_history_cap": int(selection["semantic_profile_history_cap"]),
         "enable_memory": True,
         "enable_semantic_retrieval": True,
         "structured_planning": True,
@@ -186,16 +252,10 @@ def select_retrieval(
 @app.command("select-ranker")
 def select_ranker_command(
     config_path: Annotated[Path, typer.Option("--config")],
-    cases_path: Annotated[Path, typer.Option("--cases")] = Path(
-        "cases/fixed_cases.json"
-    ),
+    cases_path: Annotated[Path, typer.Option("--cases")] = Path("cases/fixed_cases.json"),
     data_dir: Annotated[Path, typer.Option()] = Path("data/raw/ml-1m"),
-    evidence_output: Annotated[Path, typer.Option()] = Path(
-        "artifacts/ranker_ablation.json"
-    ),
-    config_output: Annotated[Path, typer.Option()] = Path(
-        "configs/full_ranker_selected.yaml"
-    ),
+    evidence_output: Annotated[Path, typer.Option()] = Path("artifacts/ranker_ablation.json"),
+    config_output: Annotated[Path, typer.Option()] = Path("configs/full_ranker_selected.yaml"),
     max_users: int = 500,
 ) -> None:
     config = _validated_config(config_path)
@@ -215,6 +275,94 @@ def select_ranker_command(
         retrieval_top_k=config.retrieval_top_k,
         history_cap=config.semantic_profile_history_cap,
     )
+    learned_paths = (
+        config.learned_model_path,
+        config.learned_evidence_path,
+        config.learned_bundle_manifest_path,
+    )
+    if any(path is not None for path in learned_paths):
+        if any(path is None for path in learned_paths):
+            raise typer.BadParameter(
+                "ranker model, evidence, and bundle manifest paths must be configured together"
+            )
+        assert config.learned_model_path is not None
+        assert config.learned_evidence_path is not None
+        assert config.learned_bundle_manifest_path is not None
+        learned_split = leakage_safe_ranking_split(ratings)
+        learned_dataset_fingerprint = ranking_dataset_fingerprint(
+            movies, learned_split
+        )
+        registered_case_fingerprint = case_fingerprint(load_cases(cases_path))
+        try:
+            model_bytes, evidence_bytes = load_ranker_bundle(
+                Path(config.learned_model_path),
+                Path(config.learned_evidence_path),
+                Path(config.learned_bundle_manifest_path),
+            )
+            artifact = parse_ranker_artifact(
+                model_bytes,
+                expected_dataset_fingerprint=learned_dataset_fingerprint,
+                expected_candidate_policy_fingerprint=candidate_policy_fingerprint(
+                    config
+                ),
+                expected_config_fingerprint=lambdamart_config_fingerprint(config),
+                expected_case_fingerprint=registered_case_fingerprint,
+            )
+            learned_evidence = LearnedValidationEvidence.model_validate_json(
+                evidence_bytes
+            )
+            validate_learned_gate(
+                learned_evidence,
+                dataset_fingerprint=learned_dataset_fingerprint,
+                feature_fingerprint=FEATURE_SCHEMA_FINGERPRINT,
+                model_fingerprint=artifact.model_checksum,
+                candidate_policy_fingerprint=candidate_policy_fingerprint(config),
+                case_fingerprint=registered_case_fingerprint,
+                config_fingerprint=lambdamart_config_fingerprint(config),
+                artifact_provenance=artifact.model_dump(mode="python"),
+            )
+        except (OSError, ValueError) as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        rows.append(
+            {
+                "kind": "lambdamart",
+                "parameters": artifact.selected_params,
+                "recall_at_10": learned_evidence.aggregates["lambdamart_recall_at_10"],
+                "ndcg_at_10": learned_evidence.mean_lambdamart_ndcg_at_10,
+                "hit_rate_at_10": learned_evidence.aggregates["lambdamart_hit_at_10"],
+                "itemcf_candidate_recall": learned_evidence.aggregates["itemcf_candidate_recall"],
+                "semantic_candidate_recall": learned_evidence.aggregates["dense_candidate_recall"],
+                "union_candidate_recall": learned_evidence.aggregates["union_candidate_recall"],
+                "latency_ms_per_user": learned_evidence.aggregates["latency_ms"],
+                "users": len(learned_evidence.per_user_rows),
+                "validation_evidence_fingerprint": learned_evidence.evidence_fingerprint,
+            }
+        )
+        rows = [
+            {
+                "kind": "itemcf",
+                "parameters": {},
+                "recall_at_10": learned_evidence.aggregates[
+                    "itemcf_recall_at_10"
+                ],
+                "ndcg_at_10": learned_evidence.mean_itemcf_ndcg_at_10,
+                "hit_rate_at_10": learned_evidence.aggregates[
+                    "itemcf_hit_at_10"
+                ],
+                "itemcf_candidate_recall": learned_evidence.aggregates[
+                    "itemcf_candidate_recall"
+                ],
+                "semantic_candidate_recall": learned_evidence.aggregates[
+                    "dense_candidate_recall"
+                ],
+                "union_candidate_recall": learned_evidence.aggregates[
+                    "union_candidate_recall"
+                ],
+                "latency_ms_per_user": 0.0,
+                "users": len(learned_evidence.per_user_rows),
+            },
+            rows[-1],
+        ]
     fingerprint = ranker_dataset_fingerprint(
         movies,
         split,
@@ -252,6 +400,20 @@ def select_ranker_command(
         ranker_payload["rrf_k"] = int(parameters["rrf_k"])
     elif selected_kind == "percentile_linear":
         ranker_payload["weights"] = list(parameters["weights"])
+    elif selected_kind == "lambdamart":
+        ranker_payload["model_path"] = config.learned_model_path
+        ranker_payload["evidence_path"] = config.learned_evidence_path
+        ranker_payload["bundle_manifest_path"] = config.learned_bundle_manifest_path
+        ranker_payload["dataset_fingerprint"] = learned_evidence.dataset_fingerprint
+        ranker_payload["candidate_policy_fingerprint"] = (
+            learned_evidence.candidate_policy_fingerprint
+        )
+        ranker_payload["config_fingerprint"] = learned_evidence.config_fingerprint
+        ranker_payload["case_fingerprint"] = learned_evidence.case_fingerprint
+        ranker_payload["gate_fingerprint"] = learned_evidence.evidence_fingerprint
+        ranker_payload["consumption_dir"] = (
+            config.learned_consumption_dir or "artifacts/frozen-consumption"
+        )
     payload["ranker"] = ranker_payload
     config_output.parent.mkdir(parents=True, exist_ok=True)
     config_output.write_text(
@@ -264,10 +426,73 @@ def select_ranker_command(
     )
 
 
+@app.command("train-ranker")
+def train_ranker(
+    config_path: Annotated[Path, typer.Option("--config")],
+    data_dir: Annotated[Path, typer.Option()] = Path("data/raw/ml-1m"),
+    cases_path: Annotated[Path, typer.Option("--cases")] = Path(
+        "cases/fixed_cases.json"
+    ),
+    output: Annotated[Path, typer.Option(help="LambdaMART artifact JSON")] = Path(
+        "artifacts/lambdamart.json"
+    ),
+    evidence_output: Annotated[Path, typer.Option(help="Per-user validation evidence JSON")] = Path(
+        "artifacts/lambdamart-validation.json"
+    ),
+    bundle_manifest_output: Annotated[
+        Path, typer.Option(help="Atomic model/evidence bundle manifest JSON")
+    ] = Path("artifacts/lambdamart-bundle.json"),
+    max_users: Annotated[int, typer.Option(min=3)] = 500,
+) -> None:
+    config = _validated_config(config_path)
+    movies, ratings = _load_dataset(data_dir)
+    split = leakage_safe_ranking_split(ratings)
+    if len(split.ranker_targets) < 3:
+        raise typer.BadParameter("train-ranker requires at least three eligible users")
+    if not cases_path.exists():
+        raise typer.BadParameter(
+            "train-ranker requires a registered --cases file for frozen-test provenance"
+        )
+    try:
+        if config.semantic_kind == "dense":
+            if config.semantic_cache_path is None:
+                raise ValueError("semantic.cache_path is required for offline LambdaMART training")
+            semantic = DenseSemanticRetriever.load(
+                Path(config.semantic_cache_path),
+                movies=movies,
+                model_name=config.semantic_model_name,
+                model_revision=config.semantic_model_revision,
+                device=config.semantic_device,
+            )
+        else:
+            semantic = TfidfSemanticRetriever.fit(movies)
+        summary = train_lambdamart_pipeline(
+            movies,
+            split,
+            semantic,
+            config,
+            model_output=output,
+            evidence_output=evidence_output,
+            bundle_manifest_output=bundle_manifest_output,
+            max_users=max_users,
+            seed=config.seed,
+            registered_case_fingerprint=case_fingerprint(load_cases(cases_path)),
+        )
+    except (RuntimeError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(json.dumps(summary, indent=2, sort_keys=True))
+
+
 @app.command("evaluate-ranker")
 def evaluate_ranker(
     config_path: Annotated[Path, typer.Option("--config")],
-    evidence_path: Annotated[Path, typer.Option("--evidence")],
+    evidence_path: Annotated[
+        Path,
+        typer.Option(
+            "--evidence",
+            help="Validation evidence; registered LambdaMART frozen identity is consumed once",
+        ),
+    ],
     cases_path: Annotated[Path, typer.Option("--cases")],
     data_dir: Annotated[Path, typer.Option()] = Path("data/raw/ml-1m"),
     output: Annotated[Path, typer.Option()] = Path(
@@ -275,10 +500,17 @@ def evaluate_ranker(
     ),
 ) -> None:
     config = _validated_config(config_path)
-    try:
-        evidence = RankerSelectionEvidence.model_validate_json(
-            evidence_path.read_text()
+    if config.ranker_kind == "lambdamart":
+        _evaluate_learned_ranker(
+            config=config,
+            evidence_path=evidence_path,
+            cases_path=cases_path,
+            data_dir=data_dir,
+            output=output,
         )
+        return
+    try:
+        evidence = RankerSelectionEvidence.model_validate_json(evidence_path.read_text())
     except (OSError, ValueError) as exc:
         raise typer.BadParameter(str(exc)) from exc
     movies, ratings = _load_dataset(data_dir)
@@ -337,6 +569,174 @@ def evaluate_ranker(
     typer.echo(f"Frozen ranker test metrics written to {output}")
 
 
+def _evaluate_learned_ranker(
+    *,
+    config: ExperimentConfig,
+    evidence_path: Path,
+    cases_path: Path,
+    data_dir: Path,
+    output: Path,
+) -> None:
+    if config.learned_model_path is None:
+        raise typer.BadParameter("ranker.model_path is required when ranker.kind is lambdamart")
+    if config.learned_bundle_manifest_path is None:
+        raise typer.BadParameter(
+            "ranker.bundle_manifest_path is required when ranker.kind is lambdamart"
+        )
+    if (
+        config.learned_dataset_fingerprint is None
+        or config.learned_config_fingerprint is None
+        or config.learned_case_fingerprint is None
+        or config.learned_candidate_policy_fingerprint is None
+        or config.learned_gate_fingerprint is None
+        or config.learned_consumption_dir is None
+    ):
+        raise typer.BadParameter(
+            "LambdaMART frozen evaluation requires registered dataset/config/case "
+            "fingerprints and ranker.consumption_dir"
+        )
+    try:
+        marker_path = consumption_marker_path(
+            Path(config.learned_consumption_dir),
+            case_fingerprint=config.learned_case_fingerprint,
+            dataset_fingerprint=config.learned_dataset_fingerprint,
+            config_fingerprint=config.learned_config_fingerprint,
+        )
+        assert_frozen_authorization_available(
+            marker_path, case_fingerprint=config.learned_case_fingerprint
+        )
+        frozen_paths = {
+            "model": Path(config.learned_model_path),
+            "evidence": evidence_path,
+            "bundle manifest": Path(config.learned_bundle_manifest_path),
+            "frozen cases": cases_path,
+            "dataset directory": data_dir,
+            "frozen output": output,
+            "consumption marker": marker_path,
+        }
+        if config.semantic_cache_path is not None:
+            frozen_paths["semantic cache"] = Path(config.semantic_cache_path)
+        ensure_distinct_files(frozen_paths)
+        model_bytes, evidence_bytes = load_ranker_bundle(
+            Path(config.learned_model_path),
+            evidence_path,
+            Path(config.learned_bundle_manifest_path),
+            expected_metadata={
+                "run_fingerprint": config.learned_gate_fingerprint,
+                "config_fingerprint": config.learned_config_fingerprint,
+                "dataset_fingerprint": config.learned_dataset_fingerprint,
+                "candidate_policy_fingerprint": config.learned_candidate_policy_fingerprint,
+                "feature_fingerprint": FEATURE_SCHEMA_FINGERPRINT,
+            },
+        )
+    except (OSError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    try:
+        evidence = LearnedValidationEvidence.model_validate_json(evidence_bytes)
+        if evidence.evidence_fingerprint != config.learned_gate_fingerprint:
+            raise ValueError("LambdaMART validation evidence fingerprint mismatch")
+        movies, ratings = _load_dataset(data_dir)
+        split = leakage_safe_ranking_split(ratings)
+        dataset_fingerprint = ranking_dataset_fingerprint(movies, split)
+        fixed_case_fingerprint = config.learned_case_fingerprint
+        artifact = parse_ranker_artifact(
+            model_bytes,
+            expected_dataset_fingerprint=dataset_fingerprint,
+            expected_candidate_policy_fingerprint=candidate_policy_fingerprint(config),
+            expected_config_fingerprint=lambdamart_config_fingerprint(config),
+            expected_case_fingerprint=fixed_case_fingerprint,
+        )
+    except (OSError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    ranker = LearnedRanker(
+        estimator_from_artifact(artifact),
+        legal_train_rows=split.legal_retrieval_train,
+    )
+    if config.semantic_kind == "dense":
+        if config.semantic_cache_path is None:
+            raise typer.BadParameter(
+                "semantic.cache_path is required for frozen LambdaMART evaluation"
+            )
+        try:
+            semantic = DenseSemanticRetriever.load(
+                Path(config.semantic_cache_path),
+                movies=movies,
+                model_name=config.semantic_model_name,
+                model_revision=config.semantic_model_revision,
+                device=config.semantic_device,
+            )
+        except (OSError, ValueError) as exc:
+            raise typer.BadParameter(str(exc)) from exc
+    else:
+        semantic = TfidfSemanticRetriever.fit(movies)
+    replay_rows = build_validation_rows(
+        movies,
+        split,
+        semantic,
+        config,
+        ranker,
+        max_users=artifact.validation_user_count,
+    )
+    canonical_replay = json.dumps(
+        replay_rows, sort_keys=True, separators=(",", ":")
+    )
+    canonical_evidence = json.dumps(
+        evidence.per_user_rows, sort_keys=True, separators=(",", ":")
+    )
+    replay_fingerprint = hashlib.sha256(canonical_replay.encode()).hexdigest()
+    if (
+        canonical_replay != canonical_evidence
+        or replay_fingerprint != artifact.validation_rows_fingerprint
+    ):
+        raise typer.BadParameter(
+            "LambdaMART validation replay does not match recorded per-user evidence"
+        )
+    try:
+        validate_learned_gate(
+            evidence,
+            dataset_fingerprint=dataset_fingerprint,
+            feature_fingerprint=FEATURE_SCHEMA_FINGERPRINT,
+            model_fingerprint=artifact.model_checksum,
+            candidate_policy_fingerprint=candidate_policy_fingerprint(config),
+            case_fingerprint=fixed_case_fingerprint,
+            config_fingerprint=lambdamart_config_fingerprint(config),
+            artifact_provenance=artifact.model_dump(mode="python"),
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    try:
+        consume_frozen_authorization(
+            marker_path,
+            evidence_hash=hashlib.sha256(evidence_bytes).hexdigest(),
+            case_fingerprint=config.learned_case_fingerprint,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    cases = load_cases(cases_path)
+    if case_fingerprint(cases) != fixed_case_fingerprint:
+        raise typer.BadParameter("registered frozen case fingerprint mismatch")
+    metrics = evaluate_frozen_cases(
+        movies,
+        split.legal_retrieval_train,
+        cases,
+        ranker=ranker,
+        retrieval_top_k=config.retrieval_top_k,
+        history_cap=config.semantic_profile_history_cap,
+        semantic_retriever=semantic,
+    )
+    metrics.update(
+        {
+            "selection_margin": evidence.mean_ndcg_delta,
+            "selection_evidence_fingerprint": evidence.evidence_fingerprint,
+            "case_fingerprint": fixed_case_fingerprint,
+            "dataset_fingerprint": dataset_fingerprint,
+        }
+    )
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(metrics, indent=2, sort_keys=True) + "\n")
+    typer.echo(f"Frozen LambdaMART test metrics written to {output}")
+
+
 def _ranker_parameters(config: ExperimentConfig) -> dict[str, object]:
     if config.ranker_kind == "rrf":
         return {"rrf_k": config.rrf_k}
@@ -371,10 +771,15 @@ def evaluate(
     data_dir: Annotated[Path, typer.Option()] = Path("data/raw/ml-1m"),
     output: Annotated[Path, typer.Option()] = Path("artifacts/runs/latest"),
     provider_name: Annotated[
-        str, typer.Option("--provider", help="rule-based, deepseek, or vllm")
+        str, typer.Option("--provider", help="rule-based, deepseek, vllm, or qwen")
     ] = "rule-based",
 ) -> None:
     config = _validated_config(config_path)
+    if config.ranker_kind == "lambdamart":
+        raise typer.BadParameter(
+            "generic evaluate cannot authorize LambdaMART; use evaluate-ranker "
+            "with validation evidence and its one-time frozen-test marker"
+        )
     movies, ratings = _load_dataset(data_dir)
     split = chronological_split(ratings)
     provider = _provider(provider_name)
@@ -393,6 +798,32 @@ def evaluate(
 def show_config(config_path: Path) -> None:
     config = _validated_config(config_path)
     typer.echo(json.dumps(config.__dict__, indent=2))
+
+
+@app.command("demo")
+def demo_command(
+    data_dir: Annotated[Path, typer.Option()] = Path("data/raw/ml-1m"),
+    provider_name: Annotated[
+        str | None,
+        typer.Option("--provider", help="rule-based, deepseek, vllm, or qwen"),
+    ] = None,
+    semantic_config_path: Annotated[
+        Path | None,
+        typer.Option("--semantic-config", help="Semantic retrieval config YAML"),
+    ] = None,
+    ranker_config_path: Annotated[
+        Path | None,
+        typer.Option("--ranker-config", help="Demo ranker config YAML"),
+    ] = None,
+) -> None:
+    from recagent_eval.demo import launch
+
+    launch(
+        data_dir,
+        provider_name=provider_name,
+        semantic_config_path=semantic_config_path,
+        ranker_config_path=ranker_config_path,
+    )
 
 
 @app.command("smoke")
@@ -454,24 +885,10 @@ def _load_dataset(data_dir: Path) -> tuple[dict[int, Movie], list[Rating]]:
 
 
 def _provider(name: str):
-    if name == "rule-based":
-        return RuleBasedProvider()
-    if name == "deepseek":
-        key = os.environ.get("DEEPSEEK_API_KEY")
-        if not key:
-            raise typer.BadParameter("DEEPSEEK_API_KEY is required")
-        return OpenAICompatibleProvider(
-            base_url=os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1"),
-            api_key=key,
-            model=os.environ.get("DEEPSEEK_MODEL", "deepseek-chat"),
-        )
-    if name == "vllm":
-        return OpenAICompatibleProvider(
-            base_url=os.environ.get("VLLM_BASE_URL", "http://127.0.0.1:8000/v1"),
-            api_key=os.environ.get("VLLM_API_KEY", "local"),
-            model=os.environ.get("VLLM_MODEL", "Qwen/Qwen2.5-7B-Instruct"),
-        )
-    raise typer.BadParameter("provider must be rule-based, deepseek, or vllm")
+    try:
+        return build_provider(name).provider
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
 
 
 if __name__ == "__main__":

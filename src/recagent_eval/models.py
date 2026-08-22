@@ -114,6 +114,7 @@ class ScoreBreakdown(BaseModel):
     semantic: float = 0.0
     preference: float = 0.0
     final: float = 0.0
+    feature_contributions: dict[str, float] = Field(default_factory=dict)
 
 
 class RecommendedMovie(BaseModel):

@@ -8,5 +8,12 @@
 6. **评测**：`evaluation.py` 计算 Recall/NDCG/HitRate、计划合法率、工具成功率、约束与延迟；`runner.py` 落盘 episode、metrics 和 manifest。
 7. **测试**：provider 用真实 HTTP request 形状配合 `httpx.MockTransport`；其余模块尽量用真实小数据而非 mock。
 8. **失败案例**：重点讲零相似度候选和跨进程 hash 不稳定两个由测试发现的问题。
+9. **v2 dense + LambdaMART**：`retrieval.py` 的 `DenseSemanticRetriever` 做指纹校验
+   的缓存加载；`learned_ranking.py` 定义十特征 schema、artifact 与 Booster 加载；
+   `v2_selection.py` 做整用户 GroupKFold 三分 CV；`lambdamart_pipeline.py` 编排
+   候选构建、CV、最终训练、验证行回放与 bundle 发布。
+10. **原生崩溃复盘**：torch/LightGBM/scikit-learn 三份 `libomp.dylib` 共存导致
+    段错误；`n_jobs=1` + `num_threads=1` + 加载前 `OMP_NUM_THREADS=1` 修复，
+    两个子进程回归测试守护。
 
 完整版本见 `docs/core-code-walkthrough.md`。

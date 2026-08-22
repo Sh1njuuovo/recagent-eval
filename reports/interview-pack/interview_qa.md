@@ -47,3 +47,40 @@ manifest 和 episode 同时记录 LLM 延迟、工具延迟、调用次数和 to
 ## 12. 最大限制是什么？
 
 MovieLens 文本只有标题和类型，TF-IDF 语义较弱；50 个固定案例的 top-10 指标方差较大；无记忆基线会退化为流行度召回，在这组小样本上得到更高 NDCG，不能泛化为“不需要记忆”。当前也没有训练排序器。v1 故意不引入多 Agent 或大规模训练，优先保证证据链清楚且一周可完成。
+
+## 13. v2 为什么把语义通道换成 dense？缓存怎么做安全？
+
+MovieLens 只有标题和类型文本，TF-IDF 是词袋近似；`all-MiniLM-L6-v2` 提供更稳
+定的语义表征。缓存不是普通二进制文件：保存 schema 版本、模型名/修订 SHA、
+数据集指纹、维度、归一化校验和与库版本，加载时逐一校验，防止模型或数据被静默
+替换后污染评测。
+
+## 14. LambdaMART 怎么保证不漏标签、不偷看？
+
+三层隔离：时间切分（验证/测试目标都不进 ItemCF 训练）；整用户 GroupKFold 三分
+CV（同一用户不会同时出现在训练与验证 fold）；证据契约（bundle 记录训练行、
+历史、fold map、候选策略、配置、案例与验证回放行的指纹，frozen 评测把验证行
+重算并逐字节比对）。bundle 是单次消费、fail-closed，不能绕过门禁重放。
+
+## 15. 你实际 debug 过原生段错误吗？怎么做的？
+
+`train-ranker` 首次实跑直接 exit 139。我用 faulthandler 复现，再用 lldb 拿到
+原生栈，发现多个线程死在 `__kmp_suspend_initialize_thread`；`image list` 显示
+进程里同时有三份 `libomp.dylib`（torch、LightGBM、scikit-learn）。根因是
+LightGBM 的 OpenMP worker 线程 barrier 调用落入 torch 的 libomp，空指针崩溃。
+修复是 `n_jobs=1`、Booster 预测 `num_threads=1`、加载前 `OMP_NUM_THREADS=1`，
+并先写子进程回归测试看它崩，再让测试变绿。
+
+## 16. 500 用户验证没超过 ItemCF，为什么还写进简历？
+
+因为负结果是有信息量的证据：约束满足率 100% 证明评测契约工作；NDCG 未提升且
+bootstrap 95% CI 跨零，说明差异不显著；并集候选召回 77.6%、dense 仅 28.8%，
+把瓶颈定位在“候选进没进 Top-N”，而不是最终排序器。隐藏负结果反而会在追问中
+失去可信度；报告里同时给出复现命令和全部指纹。
+
+## 17. 固定单线程是不是在绕开问题？
+
+不是。根因是三个 OpenMP 运行时共存，任何 LightGBM 并行区都可能崩；单线程让
+LightGBM 不进入并行区，是确定性修复，不是把段错误吞掉或关掉门禁。回归测试在
+torch 已加载的子进程里做真实训练/预测/加载，换环境或依赖升级后会重新暴露问题。
+项目还保留了完整证据契约，门禁、bootstrap、证据回放和 frozen 标记一个都没动。

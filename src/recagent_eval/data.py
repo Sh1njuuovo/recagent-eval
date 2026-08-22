@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from collections import defaultdict
 from dataclasses import dataclass
@@ -31,6 +33,28 @@ class DatasetSplit:
     train: tuple[Rating, ...]
     validation_targets: dict[int, int]
     test_targets: dict[int, int]
+
+
+@dataclass(frozen=True)
+class LeakageSafeRankingSplit:
+    """Three-target split used only by the learned-ranking pipeline.
+
+    ``legal_retrieval_train`` may be used to fit retrieval for validation: it
+    includes the ranker target and excludes validation/frozen-test targets.
+    ``histories`` is the stricter per-query view used to construct ranker rows.
+    """
+
+    ranker_training_history: tuple[Rating, ...]
+    legal_retrieval_train: tuple[Rating, ...]
+    ranker_targets: dict[int, int]
+    validation_targets: dict[int, int]
+    test_targets: dict[int, int]
+    histories: dict[int, tuple[Rating, ...]]
+    input_fingerprint: str
+
+    @property
+    def train(self) -> tuple[Rating, ...]:
+        return self.ranker_training_history
 
 
 def load_movielens_movies(path: Path) -> dict[int, Movie]:
@@ -93,4 +117,101 @@ def chronological_split(
         train=tuple(sorted(train, key=lambda item: (item.user_id, item.timestamp))),
         validation_targets=validation_targets,
         test_targets=test_targets,
+    )
+
+
+def leakage_safe_ranking_split(
+    ratings: list[Rating] | tuple[Rating, ...],
+    *,
+    positive_threshold: int = 4,
+) -> LeakageSafeRankingSplit:
+    """Create deterministic ranker/validation/test targets without changing v1."""
+    ordered_input = sorted(
+        ratings,
+        key=lambda row: (
+            row.user_id,
+            row.timestamp,
+            row.movie_id,
+            row.rating,
+        ),
+    )
+    by_user: dict[int, list[Rating]] = defaultdict(list)
+    for row in ordered_input:
+        by_user[row.user_id].append(row)
+
+    history_rows: list[Rating] = []
+    retrieval_rows: list[Rating] = []
+    histories: dict[int, tuple[Rating, ...]] = {}
+    ranker_targets: dict[int, int] = {}
+    validation_targets: dict[int, int] = {}
+    test_targets: dict[int, int] = {}
+    for user_id in sorted(by_user):
+        rows = by_user[user_id]
+        positives = [row for row in rows if row.rating >= positive_threshold]
+        latest_by_movie: list[Rating] = []
+        seen_movies: set[int] = set()
+        for row in reversed(positives):
+            if row.movie_id not in seen_movies:
+                latest_by_movie.append(row)
+                seen_movies.add(row.movie_id)
+            if len(latest_by_movie) == 3:
+                break
+        if len(latest_by_movie) < 3:
+            history_rows.extend(rows)
+            retrieval_rows.extend(rows)
+            continue
+        ranker_row, validation_row, test_row = reversed(latest_by_movie)
+        target_movie_ids = {
+            ranker_row.movie_id,
+            validation_row.movie_id,
+            test_row.movie_id,
+        }
+        history = tuple(
+            row
+            for row in rows
+            if row.movie_id not in target_movie_ids
+            and (
+                row.timestamp < ranker_row.timestamp
+                or (
+                    row.timestamp == ranker_row.timestamp
+                    and (row.movie_id, row.rating)
+                    < (ranker_row.movie_id, ranker_row.rating)
+                )
+            )
+        )
+        # A row equal by value to a target is intentionally treated as a target;
+        # MovieLens has one interaction per user/movie, and this keeps duplicate
+        # input handling deterministic rather than dependent on object identity.
+        held_out = {ranker_row, validation_row, test_row}
+        validation_key = (
+            validation_row.timestamp,
+            validation_row.movie_id,
+            validation_row.rating,
+        )
+        legal_retrieval = [
+            row
+            for row in rows
+            if (row.timestamp, row.movie_id, row.rating) < validation_key
+            and row.movie_id
+            not in {validation_row.movie_id, test_row.movie_id}
+        ]
+        histories[user_id] = history
+        history_rows.extend(history)
+        retrieval_rows.extend(legal_retrieval)
+        ranker_targets[user_id] = ranker_row.movie_id
+        validation_targets[user_id] = validation_row.movie_id
+        test_targets[user_id] = test_row.movie_id
+        if len(held_out) != 3:
+            raise ValueError(f"ranking targets are not disjoint for user={user_id}")
+
+    payload = [[row.user_id, row.movie_id, row.rating, row.timestamp] for row in ordered_input]
+    fingerprint = hashlib.sha256(json.dumps(payload, separators=(",", ":")).encode()).hexdigest()
+    return LeakageSafeRankingSplit(
+        ranker_training_history=tuple(history_rows),
+        legal_retrieval_train=tuple(retrieval_rows),
+        ranker_targets=ranker_targets,
+        validation_targets=validation_targets,
+        test_targets=test_targets,
+        histories=histories,
+        input_fingerprint=fingerprint,
     )

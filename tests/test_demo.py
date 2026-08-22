@@ -1,9 +1,30 @@
-from recagent_eval.demo import format_recommendations
+import builtins
+import importlib
+import sys
+from types import SimpleNamespace
+
+import pytest
+
+from recagent_eval import demo
+from recagent_eval.demo import (
+    DemoSessionState,
+    build_agent,
+    format_recommendations,
+    handle_message,
+    reset_session,
+    select_demo_provider,
+    serialize_diagnostics,
+)
+from recagent_eval.learned_ranking import LearnedRanker
 from recagent_eval.models import (
+    PreferenceState,
     RecommendationResult,
     RecommendedMovie,
     ScoreBreakdown,
+    ToolPlan,
+    ToolTrace,
 )
+from recagent_eval.provider import ProviderStatus, RuleBasedProvider
 
 
 def test_demo_formatter_shows_scores_reasons_and_fallback_state() -> None:
@@ -26,3 +47,341 @@ def test_demo_formatter_shows_scores_reasons_and_fallback_state() -> None:
     assert "0.876" in text
     assert "Sci-Fi" in text
     assert "deterministic fallback" in text
+
+
+class SessionAwareAgent:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def recommend(self, message: str, state: PreferenceState) -> RecommendationResult:
+        self.calls += 1
+        genre = "Sci-Fi" if "space" in message.lower() else "Drama"
+        updated = state.model_copy(
+            update={"liked_genres": state.liked_genres | {genre}}
+        )
+        return RecommendationResult(
+            movies=[
+                RecommendedMovie(
+                    movie_id=2,
+                    title=f"{genre} Pick",
+                    genres=(genre,),
+                    score=ScoreBreakdown(
+                        final=0.8,
+                        itemcf=0.5,
+                        semantic=0.4,
+                        feature_contributions={"genre_match": 0.4, "bias": 0.1},
+                    ),
+                    reason=f"Matches {genre}.",
+                )
+            ],
+            preference_state=updated,
+            plan=ToolPlan.model_validate(
+                {
+                    "steps": [
+                        {"tool": "hard_filter"},
+                        {"tool": "itemcf_retrieve"},
+                        {"tool": "rerank"},
+                        {"tool": "explain"},
+                    ]
+                }
+            ),
+            traces=[
+                ToolTrace(tool="itemcf_retrieve", candidate_movie_ids=[2]),
+                ToolTrace(tool="rerank", candidate_movie_ids=[2]),
+            ],
+            latency_ms=12.5,
+        )
+
+
+def _status() -> ProviderStatus:
+    return ProviderStatus("rule-based", "rule-based", "deterministic-offline")
+
+
+def test_demo_sessions_remain_isolated_when_interleaved_and_reset() -> None:
+    agent = SessionAwareAgent()
+
+    first_a = handle_message("space movies", None, agent=agent, provider_status=_status())
+    first_b = handle_message("drama movies", None, agent=agent, provider_status=_status())
+    second_a = handle_message(
+        "space follow-up",
+        first_a.session.model_dump(mode="json"),
+        agent=agent,
+        provider_status=_status(),
+    )
+
+    assert first_a.session.preference_state.liked_genres == {"Sci-Fi"}
+    assert first_b.session.preference_state.liked_genres == {"Drama"}
+    assert second_a.session.preference_state.liked_genres == {"Sci-Fi"}
+    assert len(second_a.session.history) == 4
+    assert len(first_b.session.history) == 2
+    assert reset_session() == DemoSessionState()
+
+
+def test_empty_demo_input_is_actionable_and_does_not_call_agent() -> None:
+    agent = SessionAwareAgent()
+
+    turn = handle_message("   ", None, agent=agent, provider_status=_status())
+
+    assert "enter" in turn.output.lower()
+    assert turn.diagnostics["errors"]
+    assert turn.session == DemoSessionState()
+    assert agent.calls == 0
+
+
+def test_empty_demo_input_serializes_existing_session_preferences() -> None:
+    agent = SessionAwareAgent()
+    first = handle_message("space movies", None, agent=agent, provider_status=_status())
+
+    blank = handle_message("  ", first.session, agent=agent, provider_status=_status())
+
+    assert blank.session == first.session
+    assert blank.diagnostics["preference_state"]["liked_genres"] == ["Sci-Fi"]
+    assert agent.calls == 1
+
+
+def test_diagnostics_include_plan_trace_sources_scores_and_provider() -> None:
+    agent = SessionAwareAgent()
+    agent.ranker = SimpleNamespace(kind="lambdamart", artifact_id="sha256:abc123abc123")
+    agent.semantic = SimpleNamespace(
+        kind="dense",
+        model_name="sentence-transformers/all-MiniLM-L6-v2",
+        model_revision="immutable-revision",
+    )
+    result = agent.recommend("space", PreferenceState())
+
+    diagnostics = serialize_diagnostics(result, _status(), agent=agent)
+
+    assert diagnostics["preference_state"]["liked_genres"] == ["Sci-Fi"]
+    assert diagnostics["validated_tool_plan"]["steps"][-1]["tool"] == "explain"
+    assert diagnostics["tool_traces"][0]["tool"] == "itemcf_retrieve"
+    recommendation = diagnostics["recommendations"][0]
+    assert recommendation["candidate_sources"] == ["itemcf_retrieve", "rerank"]
+    assert recommendation["score_breakdown"]["final"] == 0.8
+    assert recommendation["top_feature_contributions"][0] == {
+        "feature": "genre_match",
+        "contribution": 0.4,
+    }
+    assert diagnostics["provider"]["active"] == "rule-based"
+    assert diagnostics["latency_ms"] == 12.5
+    assert diagnostics["fallback_used"] is False
+    assert diagnostics["errors"] == []
+    assert diagnostics["pipeline"] == {
+        "ranker": {"kind": "lambdamart", "artifact_id": "sha256:abc123abc123"},
+        "semantic": {
+            "kind": "dense",
+            "model": "sentence-transformers/all-MiniLM-L6-v2",
+            "revision": "immutable-revision",
+        },
+    }
+    assert "/" not in diagnostics["pipeline"]["ranker"]["artifact_id"]
+
+
+@pytest.mark.parametrize(
+    "unsafe_model",
+    (
+        "/srv/private/model",
+        r"C:\Users\name\private-model",
+        r"\\server\share\private-model",
+        "~/private-model",
+    ),
+)
+def test_diagnostics_hash_path_like_provider_and_semantic_models(unsafe_model) -> None:
+    agent = SessionAwareAgent()
+    agent.ranker = SimpleNamespace(kind="minmax_linear")
+    agent.semantic = SimpleNamespace(
+        kind="dense", model_name=unsafe_model, model_revision=unsafe_model
+    )
+    status = ProviderStatus("vllm", "vllm/qwen", unsafe_model)
+
+    diagnostics = serialize_diagnostics(
+        RecommendationResult(), status, agent=agent
+    )
+
+    rendered = str(diagnostics)
+    assert unsafe_model not in rendered
+    assert diagnostics["provider"]["model"].startswith("local-model:sha256:")
+    assert diagnostics["pipeline"]["semantic"]["model"].startswith(
+        "local-model:sha256:"
+    )
+    assert diagnostics["pipeline"]["semantic"]["revision"].startswith(
+        "local-model:sha256:"
+    )
+
+
+def test_no_key_demo_provider_uses_visible_offline_fallback() -> None:
+    selection = select_demo_provider("deepseek", environ={})
+
+    assert isinstance(selection.provider, RuleBasedProvider)
+    assert selection.status.fallback is True
+    assert "DEEPSEEK_API_KEY" in selection.status.message
+
+
+def test_no_key_demo_agent_builds_offline_from_local_data(tmp_path, monkeypatch) -> None:
+    (tmp_path / "movies.dat").write_text(
+        "1::Space One (2000)::Sci-Fi\n2::Drama One (2001)::Drama\n",
+        encoding="latin-1",
+    )
+    (tmp_path / "ratings.dat").write_text(
+        "1::1::5::1\n1::2::4::2\n2::1::5::1\n2::2::4::2\n",
+        encoding="latin-1",
+    )
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+
+    agent = build_agent(tmp_path, provider_name="deepseek")
+
+    assert isinstance(agent.provider, RuleBasedProvider)
+
+
+def test_demo_ranker_config_loads_validated_lambdamart_for_explanations(
+    tmp_path, monkeypatch
+) -> None:
+    (tmp_path / "movies.dat").write_text(
+        "1::Space One (2000)::Sci-Fi\n2::Drama One (2001)::Drama\n",
+        encoding="latin-1",
+    )
+    (tmp_path / "ratings.dat").write_text(
+        "1::1::5::1\n1::2::4::2\n2::1::5::1\n2::2::4::2\n",
+        encoding="latin-1",
+    )
+    model_path = tmp_path / "ranker.json"
+    model_path.write_bytes(b"validated-artifact")
+    config_path = tmp_path / "ranker.yaml"
+    config_path.write_text(
+        f"ranker:\n  kind: lambdamart\n  model_path: {model_path}\n",
+        encoding="utf-8",
+    )
+    artifact = SimpleNamespace(model_checksum="a" * 64)
+    estimator = object()
+    monkeypatch.setattr(
+        "recagent_eval.demo.parse_ranker_artifact", lambda raw: artifact
+    )
+    monkeypatch.setattr(
+        "recagent_eval.demo.estimator_from_artifact", lambda value: estimator
+    )
+
+    agent = build_agent(
+        tmp_path,
+        provider_name="rule-based",
+        ranker_config_path=config_path,
+    )
+
+    assert isinstance(agent.ranker, LearnedRanker)
+    assert agent.ranker.estimator is estimator
+    identity = serialize_diagnostics(
+        RecommendationResult(), _status(), agent=agent
+    )["pipeline"]
+    assert identity["ranker"] == {
+        "kind": "lambdamart",
+        "artifact_id": "sha256:aaaaaaaaaaaa",
+    }
+    assert str(model_path) not in str(identity)
+
+
+def test_demo_module_import_does_not_require_gradio(monkeypatch) -> None:
+    real_import = builtins.__import__
+
+    def without_gradio(name, *args, **kwargs):
+        if name == "gradio":
+            raise ImportError("optional dependency unavailable")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", without_gradio)
+    importlib.reload(demo)
+
+
+def test_build_demo_wires_submit_enter_and_reset_callbacks(monkeypatch, tmp_path) -> None:
+    components = []
+
+    class Component:
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
+            self.events = []
+            components.append(self)
+
+        def click(self, callback, inputs=None, outputs=None):
+            self.events.append(("click", callback, inputs, outputs))
+
+        def submit(self, callback, inputs=None, outputs=None):
+            self.events.append(("submit", callback, inputs, outputs))
+
+    class ContextComponent(Component):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def launch(self):
+            self.launched = True
+
+    fake_gradio = SimpleNamespace(
+        Blocks=ContextComponent,
+        Markdown=Component,
+        State=Component,
+        Chatbot=Component,
+        Textbox=Component,
+        Row=ContextComponent,
+        Button=Component,
+        JSON=Component,
+    )
+    agent = SessionAwareAgent()
+    selection = SimpleNamespace(provider=object(), status=_status())
+    monkeypatch.setitem(sys.modules, "gradio", fake_gradio)
+    monkeypatch.setattr(demo, "select_demo_provider", lambda name: selection)
+    monkeypatch.setattr(demo, "_build_agent", lambda *args, **kwargs: agent)
+
+    blocks = demo.build_demo(tmp_path, provider_name="rule-based")
+
+    submit_button = next(
+        component for component in components if component.args == ("Recommend",)
+    )
+    reset_button = next(
+        component for component in components if component.args == ("Reset session",)
+    )
+    textbox = next(
+        component
+        for component in components
+        if component.kwargs.get("label") == "Movie request"
+    )
+    submit_event = submit_button.events[0]
+    enter_event = textbox.events[0]
+    reset_event = reset_button.events[0]
+
+    assert blocks.kwargs == {"title": "RecAgent-Eval"}
+    assert submit_event[0] == "click"
+    assert enter_event[0] == "submit"
+    assert submit_event[1] is enter_event[1]
+    assert submit_event[2] == enter_event[2]
+    assert len(submit_event[3]) == 8
+
+    response = submit_event[1]("space movies", {})
+    assert response[0][-1]["role"] == "assistant"
+    assert response[1] == ""
+    assert response[3]["liked_genres"] == ["Sci-Fi"]
+    assert response[-1]["provider"]["active"] == "rule-based"
+    reset_values = reset_event[1]()
+    assert reset_values[:2] == ([], "")
+    assert reset_values[2] == reset_session().model_dump(mode="json")
+    assert reset_values[3:] == ({}, {}, [], [], {})
+
+
+def test_launch_builds_then_launches_blocks(monkeypatch, tmp_path) -> None:
+    blocks = SimpleNamespace(launch=lambda: setattr(blocks, "launched", True))
+    seen = {}
+
+    def fake_build(data_dir, **kwargs):
+        seen["data_dir"] = data_dir
+        seen.update(kwargs)
+        return blocks
+
+    monkeypatch.setattr(demo, "build_demo", fake_build)
+    demo.launch(
+        tmp_path,
+        provider_name="qwen",
+        semantic_config_path=tmp_path / "semantic.yaml",
+        ranker_config_path=tmp_path / "ranker.yaml",
+    )
+
+    assert blocks.launched is True
+    assert seen["provider_name"] == "qwen"
