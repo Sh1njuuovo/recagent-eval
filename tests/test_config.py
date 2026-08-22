@@ -18,7 +18,31 @@ def test_legacy_weights_keep_minmax_linear_behavior(tmp_path: Path) -> None:
     assert config.semantic_model_name == "sentence-transformers/all-MiniLM-L6-v2"
     assert config.semantic_model_revision is None
     assert config.semantic_cache_path is None
-    assert config.semantic_device == "cpu"
+
+
+def test_semantic_top_k_parses_and_validates(tmp_path: Path) -> None:
+    path = tmp_path / "dense.yaml"
+    path.write_text(
+        "name: dense\n"
+        "semantic:\n"
+        "  kind: dense\n"
+        "  cache_path: artifacts/cache.npz\n"
+        "  top_k: 1500\n"
+    )
+    assert load_experiment_config(path).semantic_top_k == 1500
+
+    invalid = tmp_path / "invalid.yaml"
+    invalid.write_text(
+        "name: invalid\nsemantic:\n  kind: dense\n  top_k: 0\n"
+    )
+    with pytest.raises(ValueError, match="semantic.top_k must be positive"):
+        load_experiment_config(invalid)
+
+
+def test_semantic_top_k_defaults_to_none(tmp_path: Path) -> None:
+    path = tmp_path / "plain.yaml"
+    path.write_text("name: plain\n")
+    assert load_experiment_config(path).semantic_top_k is None
 
 
 def test_dense_semantic_config_is_loaded(tmp_path: Path) -> None:

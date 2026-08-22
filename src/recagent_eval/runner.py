@@ -49,6 +49,7 @@ class ExperimentConfig:
     semantic_model_revision: str | None = None
     semantic_cache_path: str | None = None
     semantic_device: str = "cpu"
+    semantic_top_k: int | None = None
     learned_model_path: str | None = None
     learned_evidence_path: str | None = None
     learned_bundle_manifest_path: str | None = None

@@ -55,6 +55,7 @@ def train_lambdamart_pipeline(
         semantic,
         retrieval_top_k=config.retrieval_top_k,
         history_cap=config.semantic_profile_history_cap,
+        semantic_top_k=config.semantic_top_k,
         max_users=max_users,
     )
     cv = cross_validate_lambdamart(
@@ -197,6 +198,7 @@ def build_validation_rows(
         semantic,
         retrieval_top_k=config.retrieval_top_k,
         history_cap=config.semantic_profile_history_cap,
+        semantic_top_k=config.semantic_top_k,
         max_users=max_users,
     )
     baseline = HybridRanker(kind="itemcf")
@@ -338,6 +340,7 @@ def build_fold_queries(
         "semantic": semantic,
         "retrieval_top_k": config.retrieval_top_k,
         "history_cap": config.semantic_profile_history_cap,
+        "semantic_top_k": config.semantic_top_k,
     }
     return (
         build_candidate_queries(
@@ -369,6 +372,7 @@ def candidate_policy_fingerprint(config: ExperimentConfig) -> str:
         "semantic_model_name": config.semantic_model_name,
         "semantic_model_revision": config.semantic_model_revision,
         "semantic_cache_path": config.semantic_cache_path,
+        "semantic_top_k": config.semantic_top_k,
     }
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
@@ -384,6 +388,7 @@ def lambdamart_config_fingerprint(config: ExperimentConfig) -> str:
             "semantic_model_name": config.semantic_model_name,
             "semantic_model_revision": config.semantic_model_revision,
             "semantic_cache_path": config.semantic_cache_path,
+            "semantic_top_k": config.semantic_top_k,
             "seed": config.seed,
         }
     )

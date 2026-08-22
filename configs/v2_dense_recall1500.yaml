@@ -1,0 +1,22 @@
+name: v2-dense-lambdamart-recall1500
+seed: 42
+retrieval_top_k: 500
+semantic_profile_history_cap: 50
+enable_memory: true
+enable_semantic_retrieval: true
+structured_planning: true
+required_retrieval_tools:
+  - itemcf_retrieve
+  - semantic_retrieve
+weights:
+  - 0.7
+  - 0.3
+  - 0.0
+semantic:
+  kind: dense
+  model_name: sentence-transformers/all-MiniLM-L6-v2
+  cache_path: artifacts/embeddings/movielens-minilm.npz
+  device: cpu
+  top_k: 1500
+ranker:
+  kind: minmax_linear

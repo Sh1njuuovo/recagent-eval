@@ -108,3 +108,21 @@ def test_training_pipeline_publishes_bound_model_evidence_and_manifest(
             config_fingerprint=lambdamart_config_fingerprint(config),
             artifact_provenance=artifact.model_dump(mode="python"),
         )
+
+
+def test_candidate_policy_and_config_fingerprints_include_semantic_top_k() -> None:
+    base = ExperimentConfig(
+        name="dense",
+        semantic_kind="dense",
+        semantic_cache_path="cache.npz",
+        retrieval_top_k=500,
+    )
+    widened = ExperimentConfig(
+        name="dense",
+        semantic_kind="dense",
+        semantic_cache_path="cache.npz",
+        retrieval_top_k=500,
+        semantic_top_k=1500,
+    )
+    assert candidate_policy_fingerprint(base) != candidate_policy_fingerprint(widened)
+    assert lambdamart_config_fingerprint(base) != lambdamart_config_fingerprint(widened)

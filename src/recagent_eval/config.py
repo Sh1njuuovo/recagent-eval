@@ -104,6 +104,12 @@ def load_experiment_config(path: Path) -> ExperimentConfig:
     semantic_device = str(semantic_payload.get("device", "cpu"))
     if semantic_device not in {"cpu", "cuda"}:
         raise ValueError("semantic.device must be cpu or cuda")
+    semantic_top_k_value = semantic_payload.get("top_k")
+    semantic_top_k = (
+        int(semantic_top_k_value) if semantic_top_k_value is not None else None
+    )
+    if semantic_top_k is not None and semantic_top_k <= 0:
+        raise ValueError("semantic.top_k must be positive")
     return ExperimentConfig(
         name=str(payload.get("name") or path.stem),
         weights=weights,
@@ -120,6 +126,7 @@ def load_experiment_config(path: Path) -> ExperimentConfig:
         semantic_model_revision=semantic_model_revision,
         semantic_cache_path=semantic_cache_path,
         semantic_device=semantic_device,
+        semantic_top_k=semantic_top_k,
         learned_model_path=learned_model_path,
         learned_evidence_path=learned_evidence_path,
         learned_bundle_manifest_path=learned_bundle_manifest_path,
