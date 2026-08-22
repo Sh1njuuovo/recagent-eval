@@ -11,11 +11,13 @@ and frozen-test evaluation.
 
 **Verified evidence:** structured Agent reliability and hard-constraint metrics
 reach 100%; dense retrieval and a leakage-safe LambdaMART pipeline run end to
-end on real MovieLens-1M data. The 500-user LambdaMART validation kept
-constraint satisfaction at 100% but did not beat ItemCF NDCG@10
-(0.0327 vs 0.0334, bootstrap 95% CI crosses zero), so the frozen test stays
-locked; the negative result is preserved as evidence and the bottleneck is
-candidate recall (union 77.6%, dense 28.8%).
+end on real MovieLens-1M data. A candidate-recall sweep found the dense top-k
+is the dominant lever (union recall 77.6% → 87.8%, dense 28.8% → 61.2% with
+`semantic.top_k=1500`). Even with that candidate policy, the 500-user LambdaMART
+validation kept constraint satisfaction at 100% but did not beat ItemCF NDCG@10
+(0.0299 vs 0.0334, bootstrap 95% CI crosses zero), so the frozen test stays
+locked; the negative result is preserved and the bottleneck is now the learned
+ranker's feature quality/calibration rather than candidate recall.
 
 RecAgent-Eval makes one separation explicit:
 
@@ -32,6 +34,7 @@ See [NOTICE](NOTICE) for attribution.
 - [Formal DeepSeek evaluation](reports/experiments/deepseek-constraint-aware.md)
 - [Offline ranker gate](reports/experiments/offline-ranker-selection.md)
 - [v2 dense LambdaMART validation](reports/experiments/v2-dense-lambdamart-500user.md)
+- [v2 recall-1500 LambdaMART validation](reports/experiments/v2-dense-lambdamart-recall1500.md)
 - [Ten-minute demo script](docs/demo-script.md)
 - [Core code walkthrough](docs/core-code-walkthrough.md)
 - [Interview pack](reports/interview-pack/interview-pack.md)
@@ -252,6 +255,26 @@ negative result is preserved in
 and the JSON summary, and the evidence files live under
 `artifacts/experiments/v2-500/`.
 
+### Candidate-recall sweep and recall-1500 follow-up
+
+`ablate-candidates` measures dense/ItemCF/union candidate recall over the same
+500 validation users without training a ranker:
+
+```bash
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+  uv run recagent-eval ablate-candidates \
+  --config configs/v2_dense_validation.yaml \
+  --data-dir data/raw/ml-1m \
+  --output artifacts/experiments/v2-recall-sweep/recall.json \
+  --max-users 500
+```
+
+The sweep selected `semantic.top_k=1500` (dense recall 0.612, union recall
+0.878). Retraining under `configs/v2_dense_recall1500.yaml` still failed the
+ranking gate (NDCG@10 0.0299 vs ItemCF 0.0334, bootstrap CI crosses zero), so
+the frozen test remains locked and the negative result is preserved in
+[v2-dense-lambdamart-recall1500.md](reports/experiments/v2-dense-lambdamart-recall1500.md).
+
 The [archived first DeepSeek report](reports/experiments/deepseek-formal.md)
 documents the invalid-label and policy-drift failures that motivated the revised
 evaluator. The fingerprints differ, so the two result tables are not merged.
@@ -287,9 +310,10 @@ regressions. Current line coverage is 90%.
   conflicts with LightGBM's, so LambdaMART is pinned to a single thread and
   model load caps `OMP_NUM_THREADS`. This is a documented local-runtime guard,
   not a model-quality change.
-- The v2 LambdaMART validation did not pass the ItemCF gate: dense candidate
-  recall is only 28.8% and both rankers hit the top 10 for the same 6.4% of
-  users. The bottleneck is candidate construction before learned ranking.
+- The v2 LambdaMART validations did not pass the ItemCF gate. Widening the
+  dense top-k fixed candidate recall (union 87.8%), but the learned ranker
+  still underperforms ItemCF at Top-10; the remaining bottleneck is feature
+  quality/calibration of the learned ranker.
 - The unstructured no-memory baseline falls back to popularity retrieval, so its
   strong NDCG on 50 fixed cases should not be generalized beyond this matrix.
 - MovieLens data is downloaded separately and remains subject to GroupLens
