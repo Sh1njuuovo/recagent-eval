@@ -148,9 +148,13 @@ class LearnedRanker:
         estimator: RankerEstimator,
         *,
         legal_train_rows: Sequence[Rating] = (),
+        score_calibration: str = "raw",
     ):
+        if score_calibration not in {"raw", "percentile"}:
+            raise ValueError("score_calibration must be raw or percentile")
         self.estimator = estimator
         self.legal_train_rows = tuple(legal_train_rows)
+        self.score_calibration = score_calibration
 
     def fit(self, matrix: TrainingMatrix) -> LearnedRanker:
         if not matrix.groups:
@@ -183,6 +187,7 @@ class LearnedRanker:
             history=history,
             train_rows=self.legal_train_rows,
             state=state,
+            score_calibration=self.score_calibration,
         )
         return self.rank_feature_rows(
             movies,

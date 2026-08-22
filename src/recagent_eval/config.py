@@ -28,6 +28,11 @@ def load_experiment_config(path: Path) -> ExperimentConfig:
     rrf_k = int(ranker_payload.get("rrf_k", 60))
     if rrf_k <= 0:
         raise ValueError("ranker.rrf_k must be positive")
+    score_calibration = str(ranker_payload.get("score_calibration", "raw"))
+    if score_calibration not in {"raw", "percentile"}:
+        raise ValueError(
+            "ranker.score_calibration must be raw or percentile"
+        )
     model_path_value = ranker_payload.get("model_path")
     learned_model_path = str(model_path_value).strip() if model_path_value is not None else None
     if model_path_value is not None and not learned_model_path:
@@ -115,6 +120,7 @@ def load_experiment_config(path: Path) -> ExperimentConfig:
         weights=weights,
         ranker_kind=cast(RankerKind, ranker_kind),
         rrf_k=rrf_k,
+        score_calibration=score_calibration,
         retrieval_top_k=int(payload.get("retrieval_top_k", 100)),
         enable_memory=bool(payload.get("enable_memory", True)),
         enable_semantic_retrieval=bool(payload.get("enable_semantic_retrieval", True)),

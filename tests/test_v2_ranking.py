@@ -184,6 +184,98 @@ def test_feature_builder_rejects_nonfinite_with_context() -> None:
         )
 
 
+def test_score_calibration_raw_preserves_existing_feature_values() -> None:
+    movies = {
+        2: Movie(2, "Candidate", ("Drama",), 2000),
+        3: Movie(3, "Dense", ("Action",), None),
+    }
+    rows = build_candidate_feature_rows(
+        user_id=7,
+        movies=movies,
+        candidate_ids={2, 3},
+        itemcf_scores={2: 0.8},
+        dense_scores={3: 0.8},
+        history=(),
+        train_rows=(),
+        state=PreferenceState(),
+        score_calibration="raw",
+    )
+    assert rows[0].values[0] == 0.8
+    assert rows[0].values[2] == 0.0
+    assert rows[1].values[0] == 0.0
+    assert rows[1].values[2] == 0.8
+
+
+def test_score_calibration_percentile_uses_rank_percentile_with_ties() -> None:
+    movies = {
+        2: Movie(2, "M2", (), 2000),
+        3: Movie(3, "M3", (), 2000),
+        4: Movie(4, "M4", (), 2000),
+    }
+    rows = build_candidate_feature_rows(
+        user_id=7,
+        movies=movies,
+        candidate_ids={2, 3, 4},
+        itemcf_scores={2: 0.8, 3: 0.4, 4: 0.4},
+        dense_scores={2: 0.2, 4: 0.6},
+        history=(),
+        train_rows=(),
+        state=PreferenceState(),
+        score_calibration="percentile",
+    )
+    by_id = {row.movie_id: row.values for row in rows}
+    assert by_id[2][0] == pytest.approx(1.0)
+    assert by_id[3][0] == pytest.approx(2 / 3)
+    assert by_id[4][0] == pytest.approx(2 / 3)
+    assert by_id[2][2] == pytest.approx(0.5)
+    assert by_id[4][2] == pytest.approx(1.0)
+    assert by_id[3][2] == 0.0
+    # Reciprocal-rank and membership features stay on the raw route shape.
+    assert by_id[2][1] == pytest.approx(1.0)
+    assert by_id[3][1] == pytest.approx(0.5)
+    assert by_id[2][8] == 1.0
+    assert by_id[4][9] == 1.0
+
+
+def test_score_calibration_percentile_empty_route_is_zero() -> None:
+    rows = build_candidate_feature_rows(
+        user_id=7,
+        movies={2: Movie(2, "M2", (), 2000)},
+        candidate_ids={2},
+        itemcf_scores={2: 0.8},
+        dense_scores={},
+        history=(),
+        train_rows=(),
+        state=PreferenceState(),
+        score_calibration="percentile",
+    )
+    assert rows[0].values[2] == 0.0
+    assert rows[0].values[3] == 0.0
+
+
+def test_score_calibration_changes_candidate_policy_fingerprint() -> None:
+    from recagent_eval.lambdamart_pipeline import candidate_policy_fingerprint
+    from recagent_eval.runner import ExperimentConfig
+
+    raw = ExperimentConfig(
+        name="dense",
+        semantic_kind="dense",
+        semantic_cache_path="cache.npz",
+        retrieval_top_k=500,
+        semantic_top_k=1500,
+        score_calibration="raw",
+    )
+    percentile = ExperimentConfig(
+        name="dense",
+        semantic_kind="dense",
+        semantic_cache_path="cache.npz",
+        retrieval_top_k=500,
+        semantic_top_k=1500,
+        score_calibration="percentile",
+    )
+    assert candidate_policy_fingerprint(raw) != candidate_policy_fingerprint(percentile)
+
+
 class _FakeEstimator:
     def fit(self, features, labels, *, group):
         self.group = list(group)

@@ -224,6 +224,7 @@ def _build_agent(
         ranker = LearnedRanker(
             estimator_from_artifact(artifact),
             legal_train_rows=split.train,
+            score_calibration=config.score_calibration,
         )
         ranker.artifact_id = f"sha256:{artifact.model_checksum[:12]}"
     else:

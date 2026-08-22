@@ -51,8 +51,11 @@ def build_candidate_feature_rows(
     history: Iterable[Rating],
     train_rows: Iterable[Rating],
     state: PreferenceState,
+    score_calibration: str = "raw",
 ) -> tuple[CandidateFeatureRow, ...]:
     """Build fixed-order features exclusively from explicitly legal inputs."""
+    if score_calibration not in {"raw", "percentile"}:
+        raise ValueError("score_calibration must be raw or percentile")
     candidates = (
         set(itemcf_scores) | set(dense_scores) if candidate_ids is None else set(candidate_ids)
     )
@@ -64,6 +67,16 @@ def build_candidate_feature_rows(
     history_years = {movie.year for movie in history_movies if movie.year is not None}
     itemcf_ranks = _ranks(itemcf_scores)
     dense_ranks = _ranks(dense_scores)
+    itemcf_score_values = (
+        _route_percentile(itemcf_scores)
+        if score_calibration == "percentile"
+        else itemcf_scores
+    )
+    dense_score_values = (
+        _route_percentile(dense_scores)
+        if score_calibration == "percentile"
+        else dense_scores
+    )
 
     result: list[CandidateFeatureRow] = []
     for movie_id in sorted(candidates):
@@ -75,9 +88,9 @@ def build_candidate_feature_rows(
         genre_jaccard = len(history_genres & movie_genres) / len(union) if union else 0.0
         year_match = float(movie.year is not None and movie.year in history_years)
         values = (
-            float(itemcf_scores.get(movie_id, 0.0)),
+            float(itemcf_score_values.get(movie_id, 0.0)),
             1.0 / itemcf_ranks[movie_id] if movie_id in itemcf_ranks else 0.0,
-            float(dense_scores.get(movie_id, 0.0)),
+            float(dense_score_values.get(movie_id, 0.0)),
             1.0 / dense_ranks[movie_id] if movie_id in dense_ranks else 0.0,
             math.log1p(popularity[movie_id]),
             genre_jaccard,
@@ -107,6 +120,33 @@ def _ranks(scores: Mapping[int, float]) -> dict[int, int]:
             sorted(scores, key=lambda item: (-scores[item], item)), start=1
         )
     }
+
+
+def _route_percentile(scores: Mapping[int, float]) -> dict[int, float]:
+    """Map finite route scores to within-route rank percentiles.
+
+    Percentile is ``(rank_count - rank + 1) / rank_count`` with competition
+    ranking: equal scores share the same rank, ordered by movie ID for
+    determinism. Missing route members stay zero in the caller.
+    """
+    ordered = sorted(scores, key=lambda movie_id: (-scores[movie_id], movie_id))
+    count = len(ordered)
+    if count == 0:
+        return {}
+    result: dict[int, float] = {}
+    index = 0
+    while index < count:
+        end = index
+        while (
+            end < count
+            and scores[ordered[end]] == scores[ordered[index]]
+        ):
+            end += 1
+        percentile = (count - (index + 1) + 1) / count
+        for movie_id in ordered[index:end]:
+            result[movie_id] = percentile
+        index = end
+    return result
 
 
 def _preference_affinity(movie: Movie, state: PreferenceState) -> float:

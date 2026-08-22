@@ -41,6 +41,11 @@ from recagent_eval.learned_ranking import (
 )
 from recagent_eval.models import PreferenceState
 from recagent_eval.provider import RuleBasedProvider, build_provider
+from recagent_eval.ranker_diagnostics import (
+    aggregate_diagnostics,
+    build_diagnostic_queries,
+    build_user_diagnostics,
+)
 from recagent_eval.ranker_selection import (
     RankerSelectionEvidence,
     build_ranker_ablation,
@@ -567,6 +572,114 @@ def ablate_candidates(
         encoding="utf-8",
     )
     typer.echo(json.dumps(evidence["gate"], indent=2, sort_keys=True))
+
+
+@app.command("diagnose-ranker")
+def diagnose_ranker(
+    config_path: Annotated[Path, typer.Option("--config")],
+    data_dir: Annotated[Path, typer.Option()] = Path("data/raw/ml-1m"),
+    cases_path: Annotated[Path, typer.Option("--cases")] = Path(
+        "cases/fixed_cases.json"
+    ),
+    model_path: Annotated[Path, typer.Option("--model")] = Path(
+        "artifacts/experiments/v2-recall-1500/model.json"
+    ),
+    output: Annotated[Path, typer.Option()] = Path(
+        "artifacts/experiments/v2-ranker-diagnostics/diagnostics.json"
+    ),
+    max_users: Annotated[int, typer.Option(min=3)] = 500,
+) -> None:
+    """Write read-only ranking diagnostics for the validation user set."""
+    config = _validated_config(config_path)
+    if output.exists():
+        raise typer.BadParameter(
+            f"refusing to overwrite existing diagnostics artifact: {output}"
+        )
+    movies, ratings = _load_dataset(data_dir)
+    split = leakage_safe_ranking_split(ratings)
+    try:
+        if config.semantic_kind == "dense":
+            if config.semantic_cache_path is None:
+                raise ValueError(
+                    "semantic.cache_path is required for dense diagnostics"
+                )
+            semantic = DenseSemanticRetriever.load(
+                Path(config.semantic_cache_path),
+                movies=movies,
+                model_name=config.semantic_model_name,
+                model_revision=config.semantic_model_revision,
+                device=config.semantic_device,
+            )
+        else:
+            semantic = TfidfSemanticRetriever.fit(movies)
+        artifact = parse_ranker_artifact(Path(model_path).read_bytes())
+        learned = LearnedRanker(
+            estimator_from_artifact(artifact),
+            legal_train_rows=split.legal_retrieval_train,
+            score_calibration=config.score_calibration,
+        )
+        queries = build_diagnostic_queries(
+            movies,
+            split,
+            semantic,
+            retrieval_top_k=config.retrieval_top_k,
+            history_cap=config.semantic_profile_history_cap,
+            semantic_top_k=config.semantic_top_k,
+            score_calibration=config.score_calibration,
+            max_users=max_users,
+        )
+    except (OSError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    rows = build_user_diagnostics(queries, movies, learned)
+    dataset_fingerprint = ranker_dataset_fingerprint(
+        movies,
+        split,
+        max_users=max_users,
+        retrieval_top_k=config.retrieval_top_k,
+        history_cap=config.semantic_profile_history_cap,
+    )
+    summary = aggregate_diagnostics(
+        rows,
+        fingerprints={
+            "dataset": dataset_fingerprint,
+            "candidate_policy": candidate_policy_fingerprint(config),
+            "feature_schema": FEATURE_SCHEMA_FINGERPRINT,
+            "model": artifact.model_checksum,
+            "case": case_fingerprint(load_cases(cases_path)),
+        },
+    )
+    evidence = {
+        "schema_version": "ranker-diagnostics/v1",
+        "config_fingerprint": lambdamart_config_fingerprint(config),
+        "max_users": max_users,
+        "summary": {
+            "user_count": summary.user_count,
+            "present_user_count": summary.present_user_count,
+            "union_recall": summary.union_recall,
+            "itemcf_recall": summary.itemcf_recall,
+            "dense_recall": summary.dense_recall,
+            "itemcf_top10_hit": summary.itemcf_top10_hit,
+            "lambdamart_top10_hit": summary.lambdamart_top10_hit,
+            "itemcf_top10_hit_present": summary.itemcf_top10_hit_present,
+            "lambdamart_top10_hit_present": summary.lambdamart_top10_hit_present,
+            "itemcf_ndcg_at_10": summary.itemcf_ndcg_at_10,
+            "lambdamart_ndcg_at_10": summary.lambdamart_ndcg_at_10,
+            "itemcf_ndcg_at_10_present": summary.itemcf_ndcg_at_10_present,
+            "lambdamart_ndcg_at_10_present": summary.lambdamart_ndcg_at_10_present,
+            "target_itemcf_rank_quantiles": summary.target_itemcf_rank_quantiles,
+            "target_lambdamart_rank_quantiles": (
+                summary.target_lambdamart_rank_quantiles
+            ),
+            "feature_separation": summary.feature_separation,
+        },
+        "fingerprints": summary.fingerprints,
+    }
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(
+        json.dumps(evidence, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    typer.echo(json.dumps(evidence["summary"], indent=2, sort_keys=True))
 
 
 @app.command("evaluate-ranker")

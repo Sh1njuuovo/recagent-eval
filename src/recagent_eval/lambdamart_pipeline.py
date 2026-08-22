@@ -56,6 +56,7 @@ def train_lambdamart_pipeline(
         retrieval_top_k=config.retrieval_top_k,
         history_cap=config.semantic_profile_history_cap,
         semantic_top_k=config.semantic_top_k,
+        score_calibration=config.score_calibration,
         max_users=max_users,
     )
     cv = cross_validate_lambdamart(
@@ -118,7 +119,11 @@ def train_lambdamart_pipeline(
         "case_fingerprint": registered_case_fingerprint,
         "report_fingerprint": _fingerprint(cv_results),
     }
-    learned = LearnedRanker(estimator, legal_train_rows=split.legal_retrieval_train)
+    learned = LearnedRanker(
+        estimator,
+        legal_train_rows=split.legal_retrieval_train,
+        score_calibration=config.score_calibration,
+    )
     rows = build_validation_rows(
         movies, split, semantic, config, learned, max_users=max_users
     )
@@ -199,6 +204,7 @@ def build_validation_rows(
         retrieval_top_k=config.retrieval_top_k,
         history_cap=config.semantic_profile_history_cap,
         semantic_top_k=config.semantic_top_k,
+        score_calibration=config.score_calibration,
         max_users=max_users,
     )
     baseline = HybridRanker(kind="itemcf")
@@ -265,6 +271,7 @@ def build_candidate_queries(
     semantic_top_k: int | None = None,
     semantic_query_builder: Callable[[PreferenceState, dict[int, Movie], int], str]
     | None = None,
+    score_calibration: str = "raw",
 ) -> list[CandidateQuery]:
     if semantic_top_k is not None and semantic_top_k <= 0:
         raise ValueError("semantic_top_k must be positive")
@@ -307,6 +314,7 @@ def build_candidate_queries(
             history=history_rows,
             train_rows=legal_train_rows,
             state=state,
+            score_calibration=score_calibration,
         )
         queries.append(
             CandidateQuery(
@@ -341,6 +349,7 @@ def build_fold_queries(
         "retrieval_top_k": config.retrieval_top_k,
         "history_cap": config.semantic_profile_history_cap,
         "semantic_top_k": config.semantic_top_k,
+        "score_calibration": config.score_calibration,
     }
     return (
         build_candidate_queries(
@@ -373,6 +382,7 @@ def candidate_policy_fingerprint(config: ExperimentConfig) -> str:
         "semantic_model_revision": config.semantic_model_revision,
         "semantic_cache_path": config.semantic_cache_path,
         "semantic_top_k": config.semantic_top_k,
+        "score_calibration": config.score_calibration,
     }
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
@@ -389,6 +399,7 @@ def lambdamart_config_fingerprint(config: ExperimentConfig) -> str:
             "semantic_model_revision": config.semantic_model_revision,
             "semantic_cache_path": config.semantic_cache_path,
             "semantic_top_k": config.semantic_top_k,
+            "score_calibration": config.score_calibration,
             "seed": config.seed,
         }
     )

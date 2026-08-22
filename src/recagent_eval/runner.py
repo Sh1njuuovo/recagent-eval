@@ -38,6 +38,7 @@ class ExperimentConfig:
     weights: tuple[float, float, float] = (0.5, 0.3, 0.2)
     ranker_kind: RankerKind = "minmax_linear"
     rrf_k: int = 60
+    score_calibration: str = "raw"
     retrieval_top_k: int = 100
     enable_memory: bool = True
     enable_semantic_retrieval: bool = True

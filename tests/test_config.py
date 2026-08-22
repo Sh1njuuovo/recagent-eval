@@ -45,6 +45,30 @@ def test_semantic_top_k_defaults_to_none(tmp_path: Path) -> None:
     assert load_experiment_config(path).semantic_top_k is None
 
 
+def test_score_calibration_parses_and_validates(tmp_path: Path) -> None:
+    path = tmp_path / "calibrated.yaml"
+    path.write_text(
+        "name: calibrated\n"
+        "ranker:\n"
+        "  kind: minmax_linear\n"
+        "  score_calibration: percentile\n"
+    )
+    assert load_experiment_config(path).score_calibration == "percentile"
+
+    invalid = tmp_path / "invalid.yaml"
+    invalid.write_text(
+        "name: invalid\nranker:\n  score_calibration: bogus\n"
+    )
+    with pytest.raises(ValueError, match="score_calibration"):
+        load_experiment_config(invalid)
+
+
+def test_score_calibration_defaults_to_raw(tmp_path: Path) -> None:
+    path = tmp_path / "plain.yaml"
+    path.write_text("name: plain\n")
+    assert load_experiment_config(path).score_calibration == "raw"
+
+
 def test_dense_semantic_config_is_loaded(tmp_path: Path) -> None:
     path = tmp_path / "dense.yaml"
     path.write_text(
