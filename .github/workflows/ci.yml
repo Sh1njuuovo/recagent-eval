@@ -12,7 +12,7 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.11"
-      - run: uv sync --extra dev --locked
+      - run: uv sync --extra dev --extra ml --locked
       - run: uv run ruff check .
       - run: uv run pytest
       - run: uv run recagent-eval smoke --output artifacts/runs/ci-smoke

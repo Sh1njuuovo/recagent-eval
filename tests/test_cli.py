@@ -390,6 +390,11 @@ def test_prepare_cases_writes_generated_cases_and_rejects_shortfall(
 
 
 def test_tune_and_select_retrieval_write_frozen_artifacts(tmp_path, monkeypatch) -> None:
+    # Pin the rendered terminal width so Typer/Rich error panels do not wrap or
+    # ellipsize the message on narrow CI runners; the assertion below checks the
+    # exact error text and must be independent of the host terminal width.
+    monkeypatch.setenv("COLUMNS", "200")
+    monkeypatch.setenv("LINES", "50")
     movies, ratings = _tiny_dataset()
     monkeypatch.setattr("recagent_eval.cli._load_dataset", lambda path: (movies, ratings))
     monkeypatch.setattr(
