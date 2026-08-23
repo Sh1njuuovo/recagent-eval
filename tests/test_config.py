@@ -221,3 +221,35 @@ def test_latent_enabled_validates_artifact_path_and_params(tmp_path: Path) -> No
     )
     with pytest.raises(ValueError, match="top_k"):
         load_experiment_config(bad)
+
+
+@pytest.mark.parametrize(
+    ("document", "message"),
+    [
+        ("latent:\n  enabled: true\n  artifact_path: x.npz\n  rank: 0\n", "rank"),
+        ("latent:\n  enabled: true\n  artifact_path: x.npz\n  alpha: 0\n", "alpha"),
+        (
+            "latent:\n  enabled: true\n  artifact_path: x.npz\n"
+            "ranker:\n  negative_policy: bogus\n",
+            "negative_policy",
+        ),
+        (
+            "latent:\n  enabled: true\n  artifact_path: x.npz\n"
+            "ranker:\n  feature_version: v9\n",
+            "feature_version",
+        ),
+        (
+            "latent:\n  enabled: true\n  artifact_path: x.npz\n"
+            "ranker:\n  max_negatives: -1\n",
+            "max_negatives",
+        ),
+        ("ranker:\n  feature_version: v2\n", "latent"),
+    ],
+)
+def test_invalid_latent_config_is_rejected(
+    tmp_path: Path, document: str, message: str
+) -> None:
+    path = tmp_path / "bad.yaml"
+    path.write_text("name: bad\n" + document)
+    with pytest.raises(ValueError, match=message):
+        load_experiment_config(path)

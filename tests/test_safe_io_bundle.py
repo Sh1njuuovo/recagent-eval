@@ -251,3 +251,30 @@ def test_bundle_v2_requires_latent_paths_and_rejects_mismatch(tmp_path: Path) ->
             latent_path=latent_path,
             latent_manifest_path=other,
         )
+
+
+def test_bundle_v1_rejects_latent_checksum_in_manifest(tmp_path: Path) -> None:
+    model_path = tmp_path / "model.json"
+    evidence_path = tmp_path / "evidence.json"
+    manifest_path = tmp_path / "bundle.json"
+    publish_ranker_bundle(
+        b"m", b"e", model_path, evidence_path, manifest_path, _metadata()
+    )
+    payload = json.loads(manifest_path.read_text())
+    payload["latent_sha256"] = "a" * 64
+    manifest_path.write_text(json.dumps(payload))
+    with pytest.raises(ValueError, match="v1 cannot carry latent"):
+        load_ranker_bundle(model_path, evidence_path, manifest_path)
+
+
+def test_bundle_latent_members_must_be_paired(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="together"):
+        publish_ranker_bundle(
+            b"m",
+            b"e",
+            tmp_path / "m.json",
+            tmp_path / "e.json",
+            tmp_path / "b.json",
+            _metadata(),
+            latent_member=(tmp_path / "latent.npz", b"data"),
+        )

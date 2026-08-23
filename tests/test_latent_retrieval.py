@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from recagent_eval.data import Rating
-from recagent_eval.latent_retrieval import LatentFactorRetriever
+from recagent_eval.latent_retrieval import LatentFactorRetriever, _read_regular_file
 
 
 def _ratings() -> tuple[Rating, ...]:
@@ -99,3 +99,94 @@ def test_invalid_hyperparameters_fail() -> None:
         LatentFactorRetriever.fit(_ratings(), rank=0)
     with pytest.raises(ValueError, match="alpha"):
         LatentFactorRetriever.fit(_ratings(), alpha=0.0)
+    with pytest.raises(ValueError, match="alpha"):
+        LatentFactorRetriever.fit(_ratings(), alpha=float("nan"))
+    with pytest.raises(ValueError, match="lambda_reg"):
+        LatentFactorRetriever.fit(_ratings(), lambda_reg=-0.1)
+
+
+def test_fit_requires_positive_rows() -> None:
+    with pytest.raises(ValueError, match="at least one positive"):
+        LatentFactorRetriever.fit((Rating(1, 1, 2, 1),))
+
+
+def test_retrieve_unknown_history_returns_empty() -> None:
+    model = LatentFactorRetriever.fit(_ratings(), seed=42)
+    assert model.retrieve({9999}, top_k=5) == []
+
+
+def test_save_refuses_when_manifest_exists(tmp_path) -> None:
+    path = tmp_path / "latent.npz"
+    (tmp_path / "latent.npz.json").write_text("{}")
+    with pytest.raises(ValueError, match="overwrite"):
+        LatentFactorRetriever.fit(_ratings(), seed=42).save(path)
+
+
+def test_save_rejects_oversize_artifact(tmp_path, monkeypatch) -> None:
+    import recagent_eval.latent_retrieval as module
+
+    monkeypatch.setattr(module, "MAX_LATENT_ARTIFACT_BYTES", 1)
+    with pytest.raises(ValueError, match="too large"):
+        LatentFactorRetriever.fit(_ratings(), seed=42).save(tmp_path / "latent.npz")
+
+
+def test_load_rejects_missing_files_and_tampered_data(tmp_path) -> None:
+    path = tmp_path / "latent.npz"
+    model = LatentFactorRetriever.fit(_ratings(), seed=42)
+    model.save(path)
+    with pytest.raises(ValueError, match="latent artifact manifest"):
+        LatentFactorRetriever.load(tmp_path / "missing.npz")
+    data = path.read_bytes()
+    path.write_bytes(data[:-1] + bytes([data[-1] ^ 0xFF]))
+    with pytest.raises(ValueError, match="checksum"):
+        LatentFactorRetriever.load(path)
+
+
+def test_load_rejects_wrong_training_fingerprint(tmp_path) -> None:
+    path = tmp_path / "latent.npz"
+    model = LatentFactorRetriever.fit(_ratings(), seed=42)
+    model.save(path)
+    with pytest.raises(ValueError, match="training fingerprint"):
+        LatentFactorRetriever.load(path, expected_training_fingerprint="0" * 64)
+
+
+def test_load_rejects_unsafe_npz_contents(tmp_path, monkeypatch) -> None:
+    path = tmp_path / "latent.npz"
+    model = LatentFactorRetriever.fit(_ratings(), seed=42)
+    model.save(path)
+
+    class FakePayload:
+        files = {"item_ids", "item_factors", "evil"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    monkeypatch.setattr(
+        "recagent_eval.latent_retrieval.np.load", lambda *args, **kwargs: FakePayload()
+    )
+    with pytest.raises(ValueError, match="unsafe latent artifact"):
+        LatentFactorRetriever.load(path)
+
+
+def test_load_rejects_malformed_manifest_fields(tmp_path) -> None:
+    path = tmp_path / "latent.npz"
+    model = LatentFactorRetriever.fit(_ratings(), seed=42)
+    model.save(path)
+    manifest_path = tmp_path / "latent.npz.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["dtype"] = "float64"
+    manifest_path.write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="dtype"):
+        LatentFactorRetriever.load(path)
+
+
+def test_read_regular_file_rejects_nonregular_and_oversize(tmp_path) -> None:
+    with pytest.raises(ValueError, match="file type"):
+        _read_regular_file(tmp_path, max_bytes=10**6)
+    path = tmp_path / "value"
+    path.write_bytes(b"0123456789")
+    with pytest.raises(ValueError, match="too large"):
+        _read_regular_file(path, max_bytes=5)

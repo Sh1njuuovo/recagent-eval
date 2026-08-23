@@ -190,6 +190,7 @@ def train_lambdamart_pipeline(
         training_group_count=len(matrix.groups),
         provenance=provenance,
         cv_results=cv_results,
+        feature_version=config.ranker_feature_version,
         latent_artifact_checksum=latent_artifact_checksum,
         latent_provenance=latent_provenance,
     )

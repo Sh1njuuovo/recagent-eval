@@ -600,6 +600,7 @@ def artifact_from_estimator(
     training_group_count: int,
     provenance: Mapping[str, Any] | None = None,
     cv_results: Sequence[Mapping[str, Any]] = (),
+    feature_version: str = "v1",
     latent_artifact_checksum: str | None = None,
     latent_provenance: Mapping[str, Any] | None = None,
 ) -> RankerArtifact:
@@ -613,8 +614,19 @@ def artifact_from_estimator(
     model_string = str(booster.model_to_string())
     kwargs: dict[str, Any] = {}
     if latent_artifact_checksum is not None or latent_provenance is not None:
+        if feature_version not in {"v2", "v2b"}:
+            raise ValueError("latent artifact requires feature_version v2 or v2b")
+        feature_names, feature_fingerprint = _feature_schema(feature_version)
+        feature_schema_version = (
+            FEATURE_SCHEMA_VERSION_V2
+            if feature_version == "v2"
+            else FEATURE_SCHEMA_VERSION_V2B
+        )
         kwargs = {
             "schema_version": ARTIFACT_SCHEMA_VERSION_V2,
+            "feature_schema_version": feature_schema_version,
+            "feature_names": feature_names,
+            "feature_fingerprint": feature_fingerprint,
             "latent_artifact_checksum": latent_artifact_checksum,
             "latent_provenance": dict(latent_provenance or {}),
         }
@@ -769,7 +781,13 @@ def parse_ranker_artifact(
             "ranker artifact dataset fingerprint mismatch: "
             f"expected={expected_dataset_fingerprint}, actual={artifact.dataset_fingerprint}"
         )
-    if artifact.feature_fingerprint != expected_feature_fingerprint:
+    if artifact.schema_version == ARTIFACT_SCHEMA_VERSION:
+        if artifact.feature_fingerprint != expected_feature_fingerprint:
+            raise ValueError("ranker artifact feature fingerprint mismatch")
+    elif artifact.feature_fingerprint not in {
+        FEATURE_SCHEMA_FINGERPRINT_V2,
+        FEATURE_SCHEMA_FINGERPRINT_V2B,
+    }:
         raise ValueError("ranker artifact feature fingerprint mismatch")
     if (
         expected_candidate_policy_fingerprint is not None

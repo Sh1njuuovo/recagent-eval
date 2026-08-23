@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from recagent_eval.data import Movie, Rating, leakage_safe_ranking_split
 from recagent_eval.latent_diagnostics import (
     aggregate_latent_diagnostics,
@@ -71,3 +73,24 @@ def test_latent_diagnostics_aggregate_gate_fields() -> None:
     assert summary.latent_only_coverage >= 0.0
     assert summary.latent_present_user_count >= 0
     assert set(summary.target_latent_rank_quantiles) == {"p25", "p50", "p75"}
+
+
+def test_latent_user_rows_reject_non_v2_rows() -> None:
+    movies = _movies()
+    ratings = _ratings()
+    split = leakage_safe_ranking_split(ratings)
+    latent = LatentFactorRetriever.fit(split.legal_retrieval_train, seed=42)
+    queries = build_latent_diagnostic_queries(
+        movies,
+        split,
+        _semantic(),
+        latent=latent,
+        retrieval_top_k=5,
+        history_cap=5,
+        semantic_top_k=10,
+        latent_top_k=10,
+        feature_version="v1",
+        max_users=3,
+    )
+    with pytest.raises(ValueError, match="candidate-features/v2"):
+        build_latent_user_rows(queries)
