@@ -1225,3 +1225,68 @@ def test_evaluate_ranker_rejects_unregistered_case_fingerprint(
     assert result.exit_code != 0
     assert "case_fingerprint" in result.output
     assert not output.exists()
+
+
+def test_diagnose_latent_refuses_overwrite_and_requires_latent(
+    tmp_path, monkeypatch
+) -> None:
+    from recagent_eval.data import Movie, Rating
+
+    movies = {
+        movie_id: Movie(movie_id, f"M{movie_id}", ("Drama",), 1990 + movie_id)
+        for movie_id in range(1, 9)
+    }
+    ratings = [
+        Rating(user_id, movie_id, 5, movie_id * 10 + user_id)
+        for user_id in range(1, 8)
+        for movie_id in range(1, 9)
+    ]
+    monkeypatch.setattr(
+        "recagent_eval.cli._load_dataset", lambda _path: (movies, ratings)
+    )
+    config_path = tmp_path / "latent.yaml"
+    config_path.write_text(
+        "semantic:\n"
+        "  kind: tfidf\n"
+        "latent:\n"
+        "  enabled: true\n"
+        "  artifact_path: artifacts/experiments/x/latent.npz\n"
+        "ranker:\n"
+        "  feature_version: v2\n"
+    )
+    output = tmp_path / "diagnostics.json"
+    result = CliRunner().invoke(
+        app,
+        [
+            "diagnose-latent",
+            "--config",
+            str(config_path),
+            "--output",
+            str(output),
+        ],
+    )
+    assert result.exit_code == 0
+    result = CliRunner().invoke(
+        app,
+        [
+            "diagnose-latent",
+            "--config",
+            str(config_path),
+            "--output",
+            str(output),
+        ],
+    )
+    assert "refusing to overwrite" in result.output
+    disabled = tmp_path / "disabled.yaml"
+    disabled.write_text("semantic:\n  kind: tfidf\n")
+    result = CliRunner().invoke(
+        app,
+        [
+            "diagnose-latent",
+            "--config",
+            str(disabled),
+            "--output",
+            str(tmp_path / "d2.json"),
+        ],
+    )
+    assert "latent" in result.output.lower()

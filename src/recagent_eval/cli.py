@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from pathlib import Path
 from typing import Annotated
 
@@ -9,7 +10,10 @@ import typer
 import yaml
 
 from recagent_eval.bundle import load_ranker_bundle
-from recagent_eval.candidate_features import FEATURE_SCHEMA_FINGERPRINT
+from recagent_eval.candidate_features import (
+    FEATURE_SCHEMA_FINGERPRINT,
+    FEATURE_SCHEMA_FINGERPRINT_V2,
+)
 from recagent_eval.cases import (
     EvaluationCase,
     generate_cases,
@@ -34,6 +38,12 @@ from recagent_eval.lambdamart_pipeline import (
     ranking_dataset_fingerprint,
     train_lambdamart_pipeline,
 )
+from recagent_eval.latent_diagnostics import (
+    aggregate_latent_diagnostics,
+    build_latent_diagnostic_queries,
+    build_latent_user_rows,
+)
+from recagent_eval.latent_retrieval import LatentFactorRetriever
 from recagent_eval.learned_ranking import (
     LearnedRanker,
     estimator_from_artifact,
@@ -673,6 +683,119 @@ def diagnose_ranker(
                 summary.target_lambdamart_rank_quantiles
             ),
             "feature_separation": summary.feature_separation,
+        },
+        "fingerprints": summary.fingerprints,
+    }
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(
+        json.dumps(evidence, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    typer.echo(json.dumps(evidence["summary"], indent=2, sort_keys=True))
+
+
+@app.command("diagnose-latent")
+def diagnose_latent(
+    config_path: Annotated[Path, typer.Option("--config")],
+    data_dir: Annotated[Path, typer.Option()] = Path("data/raw/ml-1m"),
+    cases_path: Annotated[Path, typer.Option("--cases")] = Path(
+        "cases/fixed_cases.json"
+    ),
+    output: Annotated[Path, typer.Option()] = Path(
+        "artifacts/experiments/v2-latent-diagnostics/diagnostics.json"
+    ),
+    max_users: Annotated[int, typer.Option(min=3)] = 500,
+) -> None:
+    """Write read-only latent-route candidate diagnostics for validation users."""
+    config = _validated_config(config_path)
+    if not config.latent_enabled:
+        raise typer.BadParameter("diagnose-latent requires latent.enabled=true")
+    if config.ranker_feature_version not in {"v2", "v2b"}:
+        raise typer.BadParameter(
+            "diagnose-latent requires ranker.feature_version v2 or v2b"
+        )
+    if output.exists():
+        raise typer.BadParameter(
+            f"refusing to overwrite existing diagnostics artifact: {output}"
+        )
+    movies, ratings = _load_dataset(data_dir)
+    split = leakage_safe_ranking_split(ratings)
+    try:
+        if config.semantic_kind == "dense":
+            if config.semantic_cache_path is None:
+                raise ValueError(
+                    "semantic.cache_path is required for dense diagnostics"
+                )
+            semantic = DenseSemanticRetriever.load(
+                Path(config.semantic_cache_path),
+                movies=movies,
+                model_name=config.semantic_model_name,
+                model_revision=config.semantic_model_revision,
+                device=config.semantic_device,
+            )
+        else:
+            semantic = TfidfSemanticRetriever.fit(movies)
+        started = time.perf_counter()
+        latent = LatentFactorRetriever.fit(
+            split.legal_retrieval_train,
+            rank=config.latent_rank,
+            iterations=config.latent_iterations,
+            alpha=config.latent_alpha,
+            lambda_reg=config.latent_lambda_reg,
+            seed=config.latent_seed,
+        )
+        fit_seconds = time.perf_counter() - started
+        queries = build_latent_diagnostic_queries(
+            movies,
+            split,
+            semantic,
+            latent=latent,
+            retrieval_top_k=config.retrieval_top_k,
+            history_cap=config.semantic_profile_history_cap,
+            semantic_top_k=config.semantic_top_k,
+            latent_top_k=config.latent_top_k,
+            feature_version=config.ranker_feature_version,
+            max_users=max_users,
+        )
+    except (OSError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    rows = build_latent_user_rows(queries)
+    summary = aggregate_latent_diagnostics(
+        rows,
+        fingerprints={
+            "dataset": ranking_dataset_fingerprint(movies, split),
+            "diagnostic_dataset": ranker_dataset_fingerprint(
+                movies,
+                split,
+                max_users=max_users,
+                retrieval_top_k=config.retrieval_top_k,
+                history_cap=config.semantic_profile_history_cap,
+            ),
+            "candidate_policy": candidate_policy_fingerprint(config),
+            "feature_schema": FEATURE_SCHEMA_FINGERPRINT_V2,
+            "case": case_fingerprint(load_cases(cases_path)),
+        },
+        fit_seconds=fit_seconds,
+    )
+    evidence = {
+        "schema_version": "latent-diagnostics/v1",
+        "config_fingerprint": lambdamart_config_fingerprint(config),
+        "max_users": max_users,
+        "summary": {
+            "user_count": summary.user_count,
+            "latent_present_user_count": summary.latent_present_user_count,
+            "latent_recall_500_all": summary.latent_recall_500_all,
+            "latent_recall_100_all": summary.latent_recall_100_all,
+            "latent_recall_50_all": summary.latent_recall_50_all,
+            "latent_recall_10_all": summary.latent_recall_10_all,
+            "latent_recall_500_present": summary.latent_recall_500_present,
+            "latent_recall_10_present": summary.latent_recall_10_present,
+            "union_recall_three_route": summary.union_recall_three_route,
+            "latent_only_coverage": summary.latent_only_coverage,
+            "target_latent_rank_quantiles": summary.target_latent_rank_quantiles,
+            "overlap_itemcf_latent": summary.overlap_itemcf_latent,
+            "overlap_dense_latent": summary.overlap_dense_latent,
+            "fit_seconds": summary.fit_seconds,
         },
         "fingerprints": summary.fingerprints,
     }
