@@ -10,6 +10,7 @@ data/processed/
 artifacts/runs/
 artifacts/embeddings/
 artifacts/experiments/
+artifacts/cohorts/
 .env
 .DS_Store
 .worktrees/
