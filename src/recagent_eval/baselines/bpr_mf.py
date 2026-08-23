@@ -300,12 +300,12 @@ def _fit_bpr_torch(
     torch.manual_seed(seed)
     rng = np.random.default_rng(seed)
     n_users = len(user_positives)
-    user_factors = torch.nn.Parameter(torch.randn(n_users, rank) * 0.01)
-    item_factors = torch.nn.Parameter(torch.randn(n_items, rank) * 0.01)
+    user_factors = torch.nn.Parameter(torch.randn(n_users, rank) * 0.1)
+    item_factors = torch.nn.Parameter(torch.randn(n_items, rank) * 0.1)
     optimizer = torch.optim.SGD([user_factors, item_factors], lr=learning_rate)
     positives_set = [set(items.tolist()) for items in user_positives]
     batch_size = 256
-    steps_per_epoch = max(1, (n_users * 4) // batch_size)
+    steps_per_epoch = max(64, (n_users * 50) // batch_size)
     for _ in range(epochs):
         for _ in range(steps_per_epoch):
             batch = rng.integers(0, n_users, size=batch_size)
@@ -325,7 +325,9 @@ def _fit_bpr_torch(
             negative_batch = item_factors[torch.from_numpy(negative)]
             positive_score = (user_batch * positive_batch).sum(dim=1)
             negative_score = (user_batch * negative_batch).sum(dim=1)
-            loss = -torch.nn.functional.logsigmoid(positive_score - negative_score).mean()
+            loss = -torch.nn.functional.logsigmoid(
+                positive_score - negative_score
+            ).sum()
             loss = loss + reg * (
                 user_batch.norm() + positive_batch.norm() + negative_batch.norm()
             )
@@ -427,16 +429,18 @@ def select_bpr_params(
                 movie.movie_id for movie in hard_filter(movies.values(), state)
             } - history_ids
             target = split.validation_targets[user_id]
-            if target not in allowed or not history_ids:
+            if not history_ids:
+                ndcgs.append(0.0)
                 continue
             scores = model.score_user(user_id, allowed)
             ranked = sorted(
                 allowed,
                 key=lambda movie_id: (-scores.get(movie_id, 0.0), movie_id),
             )[:10]
-            if target in ranked:
-                ndcgs.append(1.0 / math.log2(ranked.index(target) + 2))
-        mean_ndcg = sum(ndcgs) / len(ndcgs) if ndcgs else 0.0
+            ndcgs.append(
+                1.0 / math.log2(ranked.index(target) + 2) if target in ranked else 0.0
+            )
+        mean_ndcg = sum(ndcgs) / len(dev_users) if dev_users else 0.0
         results.append((mean_ndcg, params))
     best_mean, best_params = max(
         results,

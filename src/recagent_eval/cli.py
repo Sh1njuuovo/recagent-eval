@@ -10,6 +10,7 @@ import typer
 import yaml
 
 from recagent_eval.baseline_eval import BASELINE_SCORERS, metric_json
+from recagent_eval.baseline_summary import summarize_baselines, summary_to_markdown
 from recagent_eval.baselines import als_direct as _als_registration  # noqa: F401
 from recagent_eval.baselines import bpr_mf as _bpr_registration  # noqa: F401
 from recagent_eval.baselines import current_v2b as _v2b_registration  # noqa: F401
@@ -917,6 +918,50 @@ def evaluate_baselines(
         encoding="utf-8",
     )
     typer.echo(json.dumps(artifact["aggregates"], indent=2, sort_keys=True))
+
+
+@app.command("summarize-baselines")
+def summarize_baselines_cli(
+    cohort: Annotated[str, typer.Option()],
+    artifact_dir: Annotated[Path, typer.Option()] = Path(
+        "artifacts/experiments/v2-baselines"
+    ),
+    output: Annotated[Path, typer.Option()] = Path(
+        "reports/experiments/v2-strong-baselines-confirmation-a.json"
+    ),
+) -> None:
+    """Summarize all baseline artifacts for one cohort with paired bootstrap."""
+    if cohort not in {"development", "confirmation_a", "confirmation_b"}:
+        raise typer.BadParameter(
+            "cohort must be development, confirmation_a, or confirmation_b"
+        )
+    if output.exists():
+        raise typer.BadParameter(
+            f"refusing to overwrite existing baseline summary: {output}"
+        )
+    methods = ["popularity", "itemcf_direct", "als_direct", "current_v2b", "bpr_mf", "lightgcn"]
+    artifacts: dict[str, object] = {}
+    for method in methods:
+        path = artifact_dir / f"{method}-{cohort}.json"
+        if not path.exists():
+            raise typer.BadParameter(f"missing baseline artifact: {path}")
+        try:
+            artifacts[method] = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            raise typer.BadParameter(f"invalid baseline artifact {path}: {exc}") from exc
+    summary = summarize_baselines(artifacts, cohort=cohort)
+    md_path = output.with_suffix(".md")
+    if md_path.exists():
+        raise typer.BadParameter(
+            f"refusing to overwrite existing baseline summary: {md_path}"
+        )
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(
+        json.dumps(summary, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    md_path.write_text(summary_to_markdown(summary), encoding="utf-8")
+    typer.echo(json.dumps(summary["aggregates"], indent=2, sort_keys=True))
 
 
 @app.command("evaluate-ranker")

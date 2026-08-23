@@ -113,6 +113,18 @@ def metric_json(
         "dataset_fingerprint": dataset_fingerprint,
         "model_fingerprint": model_fingerprint,
         "user_count": len(rows),
+        "per_user_rows": [
+            {
+                "user_id": row.user_id,
+                "recall_at_10": row.recall_at_10,
+                "ndcg_at_10": row.ndcg_at_10,
+                "mrr_at_10": row.mrr_at_10,
+                "candidate_recall": row.candidate_recall,
+                "constraint_satisfied": row.constraint_satisfied,
+                "latency_ms": row.latency_ms,
+            }
+            for row in rows
+        ],
         "aggregates": {
             "recall_at_10": _mean([r.recall_at_10 for r in rows]),
             "ndcg_at_10": _mean([r.ndcg_at_10 for r in rows]),

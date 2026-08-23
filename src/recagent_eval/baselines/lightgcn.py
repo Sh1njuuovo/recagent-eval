@@ -339,11 +339,11 @@ def _fit_lightgcn_torch(
         adjacency._indices(), values, size=(n_nodes, n_nodes)
     ).coalesce()
 
-    embeddings = torch.nn.Parameter(torch.randn(n_nodes, rank) * 0.01)
+    embeddings = torch.nn.Parameter(torch.randn(n_nodes, rank) * 0.1)
     optimizer = torch.optim.SGD([embeddings], lr=learning_rate)
     positives_set = [set(items.tolist()) for items in user_positives]
     batch_size = 256
-    steps_per_epoch = max(1, (n_users * 4) // batch_size)
+    steps_per_epoch = max(64, (n_users * 50) // batch_size)
     for _ in range(epochs):
         for _ in range(steps_per_epoch):
             all_layers = [embeddings]
@@ -367,7 +367,7 @@ def _fit_lightgcn_torch(
             negative_batch = final_embeddings[n_users + torch.from_numpy(negative)]
             pos_score = (user_batch * positive_batch).sum(dim=1)
             neg_score = (user_batch * negative_batch).sum(dim=1)
-            loss = -torch.nn.functional.logsigmoid(pos_score - neg_score).mean()
+            loss = -torch.nn.functional.logsigmoid(pos_score - neg_score).sum()
             loss = loss + reg * (
                 user_batch.norm() + positive_batch.norm() + negative_batch.norm()
             )
@@ -480,16 +480,18 @@ def select_lightgcn_params(
                 movie.movie_id for movie in hard_filter(movies.values(), state)
             } - history_ids
             target = split.validation_targets[user_id]
-            if target not in allowed or not history_ids:
+            if not history_ids:
+                ndcgs.append(0.0)
                 continue
             scores = model.score_user(user_id, allowed)
             ranked = sorted(
                 allowed,
                 key=lambda movie_id: (-scores.get(movie_id, 0.0), movie_id),
             )[:10]
-            if target in ranked:
-                ndcgs.append(1.0 / math.log2(ranked.index(target) + 2))
-        mean_ndcg = sum(ndcgs) / len(ndcgs) if ndcgs else 0.0
+            ndcgs.append(
+                1.0 / math.log2(ranked.index(target) + 2) if target in ranked else 0.0
+            )
+        mean_ndcg = sum(ndcgs) / len(dev_users) if dev_users else 0.0
         results.append((mean_ndcg, params))
     best_mean, best_params = max(
         results,

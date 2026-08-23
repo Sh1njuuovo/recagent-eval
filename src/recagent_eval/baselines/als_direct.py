@@ -67,7 +67,8 @@ def select_als_params(
                 movie.movie_id for movie in hard_filter(movies.values(), state)
             } - history_ids
             target = split.validation_targets[user_id]
-            if target not in allowed or not history_ids:
+            if not history_ids:
+                ndcgs.append(0.0)
                 continue
             ranked = [
                 movie_id
@@ -75,9 +76,10 @@ def select_als_params(
                     history_ids, top_k=len(allowed), allowed_ids=allowed
                 )
             ][:10]
-            if target in ranked:
-                ndcgs.append(1.0 / math.log2(ranked.index(target) + 2))
-        mean_ndcg = sum(ndcgs) / len(ndcgs) if ndcgs else 0.0
+            ndcgs.append(
+                1.0 / math.log2(ranked.index(target) + 2) if target in ranked else 0.0
+            )
+        mean_ndcg = sum(ndcgs) / len(dev_users) if dev_users else 0.0
         results.append((mean_ndcg, params))
     best_mean, best_params = max(
         results,
