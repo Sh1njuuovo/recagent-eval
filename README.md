@@ -339,6 +339,28 @@ with all-negatives training. The v2b contingency (cross/recent/year features)
 produces the best learned ranking so far but still misses the pre-registered
 confidence gate at its lower tail.
 
+### Strong-baseline evaluation (in progress)
+
+A pre-registered, untouched-cohort evaluation phase
+([design](docs/superpowers/specs/2026-08-23-strong-baselines-design.md),
+[plan](docs/superpowers/plans/2026-08-23-strong-baselines.md)) was added to
+answer whether the current method is competitive against strong baselines.
+The fixed cohort ledger
+([JSON](reports/audit/2026-08-23-cohort-ledger.json), fingerprint
+`7153c15e...`) assigns mutually exclusive development (600), confirmation-A
+(1000), confirmation-B (1000), and reserve (2891) cohorts from the 5,491
+users never used in earlier selection, using validation targets only.
+
+The unified harness (`evaluate-baselines`) reports Recall/NDCG/MRR@10,
+coverage, constraint satisfaction, candidate recall, p50/p95 latency,
+training time, memory, and model size, with user-level 2,000 paired bootstrap
+deltas. Implemented so far (each with determinism/leakage/serialization tests
+and a 30-user smoke): Popularity, ItemCF direct, ALS direct (dev-CV
+hyperparameters), and the current v2b method (trained on
+historical-500 ∪ development, evaluated on confirmation cohorts). BPR-MF and
+LightGCN are in progress; no confirmation result is claimed until the full
+comparison runs.
+
 ## Testing and evidence
 
 ```bash
