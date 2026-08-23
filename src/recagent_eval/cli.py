@@ -11,6 +11,7 @@ import yaml
 
 from recagent_eval.baseline_eval import BASELINE_SCORERS, metric_json
 from recagent_eval.baselines import als_direct as _als_registration  # noqa: F401
+from recagent_eval.baselines import bpr_mf as _bpr_registration  # noqa: F401
 from recagent_eval.baselines import current_v2b as _v2b_registration  # noqa: F401
 from recagent_eval.baselines import itemcf_direct as _itemcf_registration  # noqa: F401
 from recagent_eval.baselines import popularity as _popularity_registration  # noqa: F401
