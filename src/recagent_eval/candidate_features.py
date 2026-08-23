@@ -30,15 +30,48 @@ FEATURE_SCHEMA_FINGERPRINT = hashlib.sha256(
     ).encode()
 ).hexdigest()
 
+FEATURE_SCHEMA_VERSION_V2 = "candidate-features/v2"
+FEATURE_NAMES_V2 = FEATURE_NAMES + (
+    "latent_score",
+    "latent_reciprocal_rank",
+    "in_latent",
+)
+FEATURE_SCHEMA_FINGERPRINT_V2 = hashlib.sha256(
+    json.dumps(
+        {"version": FEATURE_SCHEMA_VERSION_V2, "features": FEATURE_NAMES_V2},
+        separators=(",", ":"),
+    ).encode()
+).hexdigest()
+
+FEATURE_SCHEMA_VERSION_V2B = "candidate-features/v2b"
+FEATURE_NAMES_V2B = FEATURE_NAMES_V2 + (
+    "itemcf_latent_cross",
+    "recent_itemcf_score",
+    "year_recency",
+)
+FEATURE_SCHEMA_FINGERPRINT_V2B = hashlib.sha256(
+    json.dumps(
+        {"version": FEATURE_SCHEMA_VERSION_V2B, "features": FEATURE_NAMES_V2B},
+        separators=(",", ":"),
+    ).encode()
+).hexdigest()
+
+_SCHEMA_BY_VERSION = {
+    "v1": (FEATURE_NAMES, FEATURE_SCHEMA_FINGERPRINT),
+    "v2": (FEATURE_NAMES_V2, FEATURE_SCHEMA_FINGERPRINT_V2),
+    "v2b": (FEATURE_NAMES_V2B, FEATURE_SCHEMA_FINGERPRINT_V2B),
+}
+
 
 @dataclass(frozen=True)
 class CandidateFeatureRow:
     user_id: int
     movie_id: int
     values: tuple[float, ...]
+    names: tuple[str, ...] = FEATURE_NAMES
 
     def as_dict(self) -> dict[str, float]:
-        return dict(zip(FEATURE_NAMES, self.values, strict=True))
+        return dict(zip(self.names, self.values, strict=True))
 
 
 def build_candidate_feature_rows(
@@ -52,12 +85,22 @@ def build_candidate_feature_rows(
     train_rows: Iterable[Rating],
     state: PreferenceState,
     score_calibration: str = "raw",
+    latent_scores: Mapping[int, float] | None = None,
+    recent_itemcf_scores: Mapping[int, float] | None = None,
+    feature_version: str = "v1",
 ) -> tuple[CandidateFeatureRow, ...]:
     """Build fixed-order features exclusively from explicitly legal inputs."""
     if score_calibration not in {"raw", "percentile"}:
         raise ValueError("score_calibration must be raw or percentile")
+    if feature_version not in _SCHEMA_BY_VERSION:
+        raise ValueError("feature_version must be v1, v2, or v2b")
+    names, _fingerprint = _SCHEMA_BY_VERSION[feature_version]
+    latent = dict(latent_scores or {})
+    recent = dict(recent_itemcf_scores or {})
     candidates = (
-        set(itemcf_scores) | set(dense_scores) if candidate_ids is None else set(candidate_ids)
+        set(itemcf_scores) | set(dense_scores) | set(latent)
+        if candidate_ids is None
+        else set(candidate_ids)
     )
     history_rows = tuple(history)
     statistics_rows = tuple(train_rows)
@@ -65,8 +108,15 @@ def build_candidate_feature_rows(
     history_movies = [movies[row.movie_id] for row in history_rows if row.movie_id in movies]
     history_genres = {genre for movie in history_movies for genre in movie.genres}
     history_years = {movie.year for movie in history_movies if movie.year is not None}
+    recent_years = [
+        movie.year for movie in history_movies if movie.year is not None
+    ]
+    median_recent_year = (
+        sorted(recent_years)[len(recent_years) // 2] if recent_years else None
+    )
     itemcf_ranks = _ranks(itemcf_scores)
     dense_ranks = _ranks(dense_scores)
+    latent_ranks = _ranks(latent)
     itemcf_score_values = (
         _route_percentile(itemcf_scores)
         if score_calibration == "percentile"
@@ -76,6 +126,11 @@ def build_candidate_feature_rows(
         _route_percentile(dense_scores)
         if score_calibration == "percentile"
         else dense_scores
+    )
+    latent_score_values = (
+        _route_percentile(latent)
+        if score_calibration == "percentile"
+        else latent
     )
 
     result: list[CandidateFeatureRow] = []
@@ -87,8 +142,10 @@ def build_candidate_feature_rows(
         union = history_genres | movie_genres
         genre_jaccard = len(history_genres & movie_genres) / len(union) if union else 0.0
         year_match = float(movie.year is not None and movie.year in history_years)
-        values = (
-            float(itemcf_score_values.get(movie_id, 0.0)),
+        itemcf_value = float(itemcf_score_values.get(movie_id, 0.0))
+        latent_score = float(latent_score_values.get(movie_id, 0.0))
+        values = [
+            itemcf_value,
             1.0 / itemcf_ranks[movie_id] if movie_id in itemcf_ranks else 0.0,
             float(dense_score_values.get(movie_id, 0.0)),
             1.0 / dense_ranks[movie_id] if movie_id in dense_ranks else 0.0,
@@ -98,14 +155,34 @@ def build_candidate_feature_rows(
             _preference_affinity(movie, state),
             float(movie_id in itemcf_scores),
             float(movie_id in dense_scores),
-        )
-        for name, value in zip(FEATURE_NAMES, values, strict=True):
+        ]
+        if feature_version != "v1":
+            values += [
+                latent_score,
+                1.0 / latent_ranks[movie_id] if movie_id in latent_ranks else 0.0,
+                float(movie_id in latent),
+            ]
+        if feature_version == "v2b":
+            year_recency = (
+                float(abs(movie.year - median_recent_year))
+                if movie.year is not None and median_recent_year is not None
+                else 0.0
+            )
+            values += [
+                itemcf_value * latent_score,
+                float(recent.get(movie_id, 0.0)),
+                year_recency,
+            ]
+        row_values = tuple(float(value) for value in values)
+        if len(row_values) != len(names):
+            raise ValueError("candidate feature row length does not match schema")
+        for name, value in zip(names, row_values, strict=True):
             if not math.isfinite(value):
                 raise ValueError(
                     "candidate feature must be finite: "
                     f"user={user_id}, movie={movie_id}, feature={name}, value={value!r}"
                 )
-        result.append(CandidateFeatureRow(user_id, movie_id, values))
+        result.append(CandidateFeatureRow(user_id, movie_id, row_values, names))
     return tuple(result)
 
 
