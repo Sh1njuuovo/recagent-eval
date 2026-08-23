@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from recagent_eval.candidate_features import (
     FEATURE_NAMES,
+    FEATURE_NAMES_V2,
     FEATURE_SCHEMA_FINGERPRINT,
     FEATURE_SCHEMA_VERSION,
     build_candidate_feature_rows,
@@ -82,9 +83,14 @@ def build_training_matrix(
     queries: Sequence[CandidateQuery],
     *,
     max_negatives: int | None = None,
+    negative_policy: str = "all",
 ) -> TrainingMatrix:
     if max_negatives is not None and max_negatives < 0:
         raise ValueError("max_negatives must be non-negative")
+    if negative_policy not in {"all", "itemcf", "itemcf_latent", "route_balanced"}:
+        raise ValueError(
+            "negative_policy must be all, itemcf, itemcf_latent, or route_balanced"
+        )
     features: list[tuple[float, ...]] = []
     labels: list[int] = []
     groups: list[int] = []
@@ -93,15 +99,28 @@ def build_training_matrix(
     for query in sorted(queries, key=lambda item: item.user_id):
         if query.target_movie_id not in query.features_by_movie:
             continue
-        negatives = sorted(
-            movie_id for movie_id in query.features_by_movie if movie_id != query.target_movie_id
+        negatives = _ordered_negatives(
+            query.features_by_movie,
+            policy=negative_policy,
+            target_movie_id=query.target_movie_id,
         )
         if max_negatives is not None:
             negatives = negatives[:max_negatives]
         ordered_ids = [query.target_movie_id, *negatives]
+        row_lengths = {
+            len(query.features_by_movie[movie_id]) for movie_id in ordered_ids
+        }
+        if len(row_lengths) != 1:
+            raise ValueError("query feature rows have inconsistent lengths")
+        expected_count = row_lengths.pop()
         for movie_id in ordered_ids:
             row = tuple(float(value) for value in query.features_by_movie[movie_id])
-            _validate_row(row, user_id=query.user_id, movie_id=movie_id)
+            _validate_row(
+                row,
+                user_id=query.user_id,
+                movie_id=movie_id,
+                expected_count=expected_count,
+            )
             features.append(row)
             labels.append(int(movie_id == query.target_movie_id))
             users.append(query.user_id)
@@ -116,6 +135,63 @@ def build_training_matrix(
         evaluation_users=len({query.user_id for query in queries}),
         training_users=len(groups),
     )
+
+
+def _ordered_negatives(
+    features_by_movie: Mapping[int, tuple[float, ...]],
+    *,
+    policy: str,
+    target_movie_id: int,
+) -> list[int]:
+    negatives = [
+        movie_id for movie_id in features_by_movie if movie_id != target_movie_id
+    ]
+    if policy == "all":
+        return negatives  # movie-ID order, matching today's behavior
+    if policy in {"itemcf", "itemcf_latent"}:
+        index = FEATURE_NAMES_V2.index(
+            "itemcf_score" if policy == "itemcf" else "latent_score"
+        )
+        return sorted(
+            negatives,
+            key=lambda movie_id: (-features_by_movie[movie_id][index], movie_id),
+        )
+    if policy == "route_balanced":
+        itemcf_score = FEATURE_NAMES_V2.index("itemcf_score")
+        latent_score = FEATURE_NAMES_V2.index("latent_score")
+        itemcf_rr = FEATURE_NAMES_V2.index("itemcf_reciprocal_rank")
+        latent_rr = FEATURE_NAMES_V2.index("latent_reciprocal_rank")
+        top_itemcf = sorted(
+            negatives,
+            key=lambda movie_id: (-features_by_movie[movie_id][itemcf_score], movie_id),
+        )[:100]
+        top_latent = sorted(
+            negatives,
+            key=lambda movie_id: (-features_by_movie[movie_id][latent_score], movie_id),
+        )[:100]
+        merged = list(dict.fromkeys([*top_itemcf, *top_latent]))
+        top_up = sorted(
+            (movie_id for movie_id in negatives if movie_id not in merged),
+            key=lambda movie_id: (
+                -max(
+                    features_by_movie[movie_id][itemcf_rr],
+                    features_by_movie[movie_id][latent_rr],
+                ),
+                movie_id,
+            ),
+        )
+        candidates = (merged + top_up)[:200]
+        return sorted(
+            candidates,
+            key=lambda movie_id: (
+                -max(
+                    features_by_movie[movie_id][itemcf_rr],
+                    features_by_movie[movie_id][latent_rr],
+                ),
+                movie_id,
+            ),
+        )
+    raise ValueError(f"unsupported negative policy: {policy}")
 
 
 def make_lgbm_ranker(params: Mapping[str, int | float], *, seed: int = 42) -> Any:
@@ -639,13 +715,21 @@ def parse_ranker_artifact(
     return artifact
 
 
-def _validate_row(row: Sequence[float], *, user_id: int | None, movie_id: int) -> None:
-    if len(row) != len(FEATURE_NAMES):
+def _validate_row(
+    row: Sequence[float],
+    *,
+    user_id: int | None,
+    movie_id: int,
+    expected_count: int | None = None,
+) -> None:
+    expected = expected_count or len(FEATURE_NAMES)
+    if len(row) != expected:
         raise ValueError(
             f"feature count mismatch for user={user_id}, movie={movie_id}: "
-            f"expected={len(FEATURE_NAMES)}, actual={len(row)}"
+            f"expected={expected}, actual={len(row)}"
         )
-    for name, value in zip(FEATURE_NAMES, row, strict=True):
+    names = FEATURE_NAMES if expected == len(FEATURE_NAMES) else None
+    for name, value in zip(names or (f"f{index}" for index in range(expected)), row, strict=True):
         if not math.isfinite(value):
             raise ValueError(
                 "candidate feature must be finite: "

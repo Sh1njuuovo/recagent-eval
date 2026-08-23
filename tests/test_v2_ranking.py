@@ -12,6 +12,7 @@ import pytest
 
 from recagent_eval.candidate_features import (
     FEATURE_NAMES,
+    FEATURE_NAMES_V2,
     build_candidate_feature_rows,
 )
 from recagent_eval.data import Movie, Rating, leakage_safe_ranking_split
@@ -538,3 +539,54 @@ def test_booster_from_model_string_does_not_crash_after_torch_import() -> None:
         "Booster loading crashed after torch import with exit code "
         f"{result.returncode}:\n{result.stderr}"
     )
+
+
+def _v2_query(
+    user_id: int, target: int, rows: dict[int, tuple[float, ...]]
+) -> CandidateQuery:
+    return CandidateQuery(user_id=user_id, target_movie_id=target, features_by_movie=rows)
+
+
+def test_route_balanced_negatives_use_quotas_and_stable_order() -> None:
+    names = FEATURE_NAMES_V2
+    itemcf = names.index("itemcf_score")
+    latent = names.index("latent_score")
+    itemcf_rr = names.index("itemcf_reciprocal_rank")
+    latent_rr = names.index("latent_reciprocal_rank")
+    rows: dict[int, tuple[float, ...]] = {}
+    for movie_id in range(1, 301):
+        values = [0.0] * len(names)
+        values[itemcf] = 10.0 if movie_id % 2 else 1.0
+        values[latent] = 1.0 if movie_id % 2 else 10.0
+        values[itemcf_rr] = 1.0 / movie_id
+        values[latent_rr] = 1.0 / (movie_id + 1)
+        rows[movie_id] = tuple(values)
+    query = _v2_query(1, target=1, rows=rows)
+    matrix = build_training_matrix(
+        [query], max_negatives=200, negative_policy="route_balanced"
+    )
+    assert matrix.groups == (201,)
+    ordered_ids = [matrix.movie_ids[0]] + list(matrix.movie_ids[1:])
+    assert ordered_ids[0] == 1  # target first
+    negatives = ordered_ids[1:]
+    assert len(negatives) == 200
+    odd = [movie_id for movie_id in negatives if movie_id % 2]
+    even = [movie_id for movie_id in negatives if movie_id % 2 == 0]
+    assert len(odd) == 100 and len(even) == 100
+    assert negatives == sorted(
+        negatives,
+        key=lambda movie_id: (
+            -max(rows[movie_id][itemcf_rr], rows[movie_id][latent_rr]),
+            movie_id,
+        ),
+    )
+
+
+def test_negative_policy_all_preserves_movie_id_order() -> None:
+    rows = {movie_id: (float(100 - movie_id),) * 10 for movie_id in range(2, 12)}
+    rows[1] = (0.0,) * 10
+    query = _v2_query(1, target=1, rows=rows)
+    matrix = build_training_matrix([query], max_negatives=5, negative_policy="all")
+    assert matrix.movie_ids[1:] == (2, 3, 4, 5, 6)
+    unlimited = build_training_matrix([query], max_negatives=None, negative_policy="all")
+    assert len(unlimited.movie_ids) == 11
