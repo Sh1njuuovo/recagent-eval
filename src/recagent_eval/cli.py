@@ -21,6 +21,7 @@ from recagent_eval.cases import (
     save_cases,
     select_stratified_cases,
 )
+from recagent_eval.cohorts import build_cohort_ledger
 from recagent_eval.config import load_experiment_config
 from recagent_eval.data import (
     Movie,
@@ -805,6 +806,49 @@ def diagnose_latent(
         encoding="utf-8",
     )
     typer.echo(json.dumps(evidence["summary"], indent=2, sort_keys=True))
+
+
+@app.command("build-cohorts")
+def build_cohorts(
+    data_dir: Annotated[Path, typer.Option()] = Path("data/raw/ml-1m"),
+    cases_path: Annotated[Path, typer.Option("--cases")] = Path(
+        "cases/fixed_cases.json"
+    ),
+    output: Annotated[Path, typer.Option()] = Path(
+        "artifacts/cohorts/cohort_ledger.json"
+    ),
+    seed: Annotated[int, typer.Option()] = 42,
+    development_size: Annotated[int, typer.Option()] = 600,
+    confirmation_a_size: Annotated[int, typer.Option()] = 1000,
+    confirmation_b_size: Annotated[int, typer.Option()] = 1000,
+) -> None:
+    """Build the fixed, mutually exclusive development/confirmation cohorts."""
+    if output.exists():
+        raise typer.BadParameter(f"refusing to overwrite existing cohort ledger: {output}")
+    movies, ratings = _load_dataset(data_dir)
+    split = leakage_safe_ranking_split(ratings)
+    eligible = sorted(split.validation_targets)
+    historical = set(eligible[:500])
+    frozen_users = {case.user_id for case in load_cases(cases_path)}
+    ledger = build_cohort_ledger(
+        eligible,
+        historical=historical,
+        excluded=frozen_users,
+        sizes={
+            "development": development_size,
+            "confirmation_a": confirmation_a_size,
+            "confirmation_b": confirmation_b_size,
+        },
+        seed=seed,
+    )
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(
+        json.dumps(ledger, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    typer.echo(
+        json.dumps({"fingerprint": ledger["fingerprint"], "sizes": ledger["sizes"]})
+    )
 
 
 @app.command("evaluate-ranker")
