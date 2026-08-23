@@ -1,0 +1,38 @@
+{
+  "aggregates": {
+    "dense_candidate_recall": 0.612,
+    "itemcf_candidate_recall": 0.696,
+    "itemcf_hit_at_10": 0.064,
+    "itemcf_ndcg_at_10": 0.033388484023395205,
+    "itemcf_recall_at_10": 0.064,
+    "lambdamart_hit_at_10": 0.102,
+    "lambdamart_ndcg_at_10": 0.04460329485583698,
+    "lambdamart_recall_at_10": 0.102,
+    "latency_ms": 0.0,
+    "union_candidate_recall": 0.928
+  },
+  "bootstrap_resamples": 2000,
+  "candidate_policy_fingerprint": "88f3288bfad4cee2a33f72714ccb34ee9837d4cc6d29219cf1b0bcea1fd92dff",
+  "config_fingerprint": "530ec64871b9e042da5e566d1a1ad9358dbed811dace4caaaa9de15419b3800c",
+  "constraint_satisfaction_rate": 1.0,
+  "dataset_fingerprint": "0d2c756a78f02a8ea8680bd216364a6ab7afffc2ae1a26df0611591147897eac",
+  "evidence_fingerprint": "2d2d07484b5f416b99af804f91445f51e726324330e9645adaa777c818864dd9",
+  "feature_fingerprint": "70de3e17b67a930de077c820f91bdee5a3c03158cb65ce709ebd739148434de8",
+  "mean_itemcf_ndcg_at_10": 0.033388484023395205,
+  "mean_lambdamart_ndcg_at_10": 0.04460329485583698,
+  "mean_ndcg_delta": 0.01121481083244177,
+  "model_fingerprint": "0600629ff0d0783441e81d20c033c43e57f21615a8798eb7bc1c026e33d6b216",
+  "ndcg_delta_ci_lower": -0.002395513736878128,
+  "ndcg_delta_ci_upper": 0.027992529752600318,
+  "run_tag": "v2-latent-bfeat-500",
+  "selected_params": {
+    "learning_rate": 0.05,
+    "min_child_samples": 20,
+    "n_estimators": 100,
+    "num_leaves": 15
+  },
+  "status": "validation-complete-gate-failed",
+  "training_group_count": 472,
+  "training_user_count": 472,
+  "validation_user_count": 500
+}
