@@ -10,6 +10,7 @@ import typer
 import yaml
 
 from recagent_eval.baseline_eval import BASELINE_SCORERS, metric_json
+from recagent_eval.baselines import itemcf_direct as _itemcf_registration  # noqa: F401
 from recagent_eval.baselines import popularity as _popularity_registration  # noqa: F401
 from recagent_eval.bundle import load_ranker_bundle
 from recagent_eval.candidate_features import (
