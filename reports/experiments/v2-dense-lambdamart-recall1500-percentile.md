@@ -46,3 +46,10 @@ that separates strongly preferred candidates, so both hit rate and NDCG
 degrade. The calibrated variant is retained as a falsified hypothesis rather
 than a tuning success; the next experiments should keep raw score magnitude and
 instead address candidate-side ranking depth or richer separating features.
+
+## Correction 2026-08-23
+
+The machine-readable summary's `score_calibration` field was corrected from
+`raw` to `percentile` (summary typo). The validation artifact and the evidence
+fingerprint `be72a00fcacee23a6fbbf8a49482d67789afbac0fea9040b3ff1d3962e9e588b`
+are unchanged and authoritative.

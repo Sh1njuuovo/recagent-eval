@@ -32,7 +32,9 @@
   "ndcg_delta_ci_upper": 0.0004487287655599339,
   "run_tag": "v2-recall-1500-percentile",
   "schema_version": "lambdamart-validation/v1",
-  "score_calibration": "raw",
+  "score_calibration": "percentile",
+  "corrected_at": "2026-08-23T00:00:00Z",
+  "correction_note": "summary field typo fixed; evidence fingerprints unchanged",
   "seed": 42,
   "selected_params": {
     "learning_rate": 0.05,

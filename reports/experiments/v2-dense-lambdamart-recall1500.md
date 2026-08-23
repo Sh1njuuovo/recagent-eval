@@ -78,3 +78,11 @@ calibration) while keeping this candidate policy fixed.
 - Validation evidence: `artifacts/experiments/v2-recall-1500/validation.json`
 - Recall sweep evidence: `artifacts/experiments/v2-recall-sweep/recall.json`
 - Machine-readable summary: `v2-dense-lambdamart-recall1500.json`
+
+## Fingerprint note 2026-08-23
+
+The recorded evidence config fingerprint `7b9373b4...` was produced by the
+pre-`e1efee8` fingerprint payload (before `score_calibration` entered the
+payload). Status: `legacy/non-replayable-under-current-code`. The current code
+computes `3c0abb8c...` for the same YAML. The negative ranking result remains
+valid evidence; the bundle cannot be replayed or consumed under current code.
