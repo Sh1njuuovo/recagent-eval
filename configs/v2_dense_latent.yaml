@@ -1,0 +1,34 @@
+name: v2-dense-lambdamart-latent
+seed: 42
+retrieval_top_k: 500
+semantic_profile_history_cap: 50
+enable_memory: true
+enable_semantic_retrieval: true
+structured_planning: true
+required_retrieval_tools:
+  - itemcf_retrieve
+  - semantic_retrieve
+weights:
+  - 0.7
+  - 0.3
+  - 0.0
+semantic:
+  kind: dense
+  model_name: sentence-transformers/all-MiniLM-L6-v2
+  cache_path: artifacts/embeddings/movielens-minilm.npz
+  device: cpu
+  top_k: 1500
+latent:
+  enabled: true
+  rank: 20
+  iterations: 12
+  alpha: 40.0
+  lambda_reg: 0.1
+  top_k: 500
+  seed: 42
+  artifact_path: artifacts/experiments/v2-latent-hardneg-500/latent.npz
+ranker:
+  kind: minmax_linear
+  feature_version: v2
+  max_negatives: 200
+  negative_policy: route_balanced
