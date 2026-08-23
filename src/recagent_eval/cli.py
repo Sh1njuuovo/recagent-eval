@@ -10,6 +10,7 @@ import typer
 import yaml
 
 from recagent_eval.baseline_eval import BASELINE_SCORERS, metric_json
+from recagent_eval.baselines import als_direct as _als_registration  # noqa: F401
 from recagent_eval.baselines import itemcf_direct as _itemcf_registration  # noqa: F401
 from recagent_eval.baselines import popularity as _popularity_registration  # noqa: F401
 from recagent_eval.bundle import load_ranker_bundle
@@ -883,7 +884,7 @@ def evaluate_baselines(
     split = leakage_safe_ranking_split(ratings)
     scorer = BASELINE_SCORERS[method]
     try:
-        result = scorer(movies, split, users)
+        result = scorer(movies, split, users, ledger=ledger)
     except (OSError, ValueError) as exc:
         raise typer.BadParameter(str(exc)) from exc
     artifact = metric_json(

@@ -6,7 +6,7 @@ import platform
 import resource
 import time
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 import numpy as np
 
@@ -25,7 +25,10 @@ def score_popularity(
     movies: dict[int, Movie],
     split: LeakageSafeRankingSplit,
     users: Sequence[int],
+    *,
+    ledger: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
+    del ledger
     started = time.perf_counter()
     popularity = Counter(
         row.movie_id for row in split.legal_retrieval_train if row.rating >= 4

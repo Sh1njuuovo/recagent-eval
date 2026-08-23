@@ -5,7 +5,7 @@ import json
 import platform
 import resource
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 import numpy as np
 
@@ -24,7 +24,10 @@ def score_itemcf_direct(
     movies: dict[int, Movie],
     split: LeakageSafeRankingSplit,
     users: Sequence[int],
+    *,
+    ledger: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
+    del ledger
     started = time.perf_counter()
     itemcf = ItemCFRetriever.fit(split.legal_retrieval_train)
     training_seconds = time.perf_counter() - started
