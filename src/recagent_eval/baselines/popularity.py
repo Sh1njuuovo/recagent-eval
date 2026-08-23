@@ -27,8 +27,10 @@ def score_popularity(
     users: Sequence[int],
     *,
     ledger: Mapping[str, object] | None = None,
+    max_training_users: int | None = None,
 ) -> dict[str, object]:
     del ledger
+    del max_training_users
     started = time.perf_counter()
     popularity = Counter(
         row.movie_id for row in split.legal_retrieval_train if row.rating >= 4

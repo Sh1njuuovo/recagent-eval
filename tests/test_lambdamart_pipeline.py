@@ -228,3 +228,52 @@ def test_build_candidate_queries_v2b_threads_recent_itemcf_scores() -> None:
     assert len(row) == len(FEATURE_NAMES_V2B)
     recent_index = FEATURE_NAMES_V2B.index("recent_itemcf_score")
     assert row[recent_index] >= 0.0
+
+
+def test_train_pipeline_restricts_training_users_and_eval_user_ids(tmp_path) -> None:
+    movies = {
+        movie_id: Movie(
+            movie_id,
+            f"Movie {movie_id}",
+            ("Drama",) if movie_id % 2 else ("Comedy",),
+            1990 + movie_id,
+        )
+        for movie_id in range(1, 9)
+    }
+    ratings = [
+        Rating(user_id, movie_id, 5, movie_id * 10 + user_id)
+        for user_id in range(1, 7)
+        for movie_id in range(1, 7)
+    ]
+    split = leakage_safe_ranking_split(ratings)
+    config = ExperimentConfig(
+        name="synthetic",
+        semantic_kind="tfidf",
+        retrieval_top_k=8,
+        semantic_profile_history_cap=2,
+        seed=17,
+    )
+    eligible = sorted(split.validation_targets)
+    train_users = tuple(eligible[:4])
+    eval_users = tuple(eligible[4:6])
+    model_path = tmp_path / "ranker.json"
+    evidence_path = tmp_path / "evidence.json"
+    manifest_path = tmp_path / "bundle.json"
+    summary = train_lambdamart_pipeline(
+        movies,
+        split,
+        _CatalogSemanticRetriever(),
+        config,
+        model_output=model_path,
+        evidence_output=evidence_path,
+        bundle_manifest_output=manifest_path,
+        max_users=6,
+        seed=17,
+        registered_case_fingerprint="registered-cases",
+        training_user_ids=train_users,
+        eval_user_ids=eval_users,
+    )
+    assert summary["validation_users"] == 2
+    bundle = load_ranker_bundle(model_path, evidence_path, manifest_path)
+    evidence = LearnedValidationEvidence.model_validate_json(bundle.evidence_bytes)
+    assert [row["user_id"] for row in evidence.per_user_rows] == list(eval_users)

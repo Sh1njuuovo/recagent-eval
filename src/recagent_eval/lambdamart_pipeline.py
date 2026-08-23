@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import time
 from collections import Counter, defaultdict
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -45,8 +46,20 @@ def train_lambdamart_pipeline(
     max_users: int,
     seed: int,
     registered_case_fingerprint: str = "unregistered",
+    training_user_ids: tuple[int, ...] | None = None,
+    eval_user_ids: tuple[int, ...] | None = None,
 ) -> dict[str, Any]:
     dataset_fingerprint = ranking_dataset_fingerprint(movies, split)
+    if training_user_ids is not None:
+        training_targets = {
+            user_id: split.ranker_targets[user_id] for user_id in training_user_ids
+        }
+        training_histories = {
+            user_id: split.histories[user_id] for user_id in training_user_ids
+        }
+    else:
+        training_targets = split.ranker_targets
+        training_histories = split.histories
     training_latent = (
         LatentFactorRetriever.fit(
             split.ranker_training_history,
@@ -62,8 +75,8 @@ def train_lambdamart_pipeline(
     training_queries = build_candidate_queries(
         movies,
         split.ranker_training_history,
-        split.histories,
-        split.ranker_targets,
+        training_histories,
+        training_targets,
         semantic,
         retrieval_top_k=config.retrieval_top_k,
         history_cap=config.semantic_profile_history_cap,
@@ -178,6 +191,7 @@ def train_lambdamart_pipeline(
         learned,
         max_users=max_users,
         latent=final_latent,
+        user_ids=eval_user_ids,
     )
     provenance["validation_rows_fingerprint"] = _fingerprint(rows)
     provenance["validation_user_count"] = len(rows)
@@ -265,13 +279,20 @@ def build_validation_rows(
     *,
     max_users: int,
     latent: LatentFactorRetriever | None = None,
+    user_ids: tuple[int, ...] | None = None,
 ) -> list[dict[str, Any]]:
     validation_histories = _positive_histories(split.legal_retrieval_train, movies)
+    validation_targets = (
+        {user_id: split.validation_targets[user_id] for user_id in user_ids}
+        if user_ids is not None
+        else split.validation_targets
+    )
+    query_max_users = len(validation_targets) if user_ids is not None else max_users
     validation_queries = build_candidate_queries(
         movies,
         split.legal_retrieval_train,
         validation_histories,
-        split.validation_targets,
+        validation_targets,
         semantic,
         retrieval_top_k=config.retrieval_top_k,
         history_cap=config.semantic_profile_history_cap,
@@ -280,15 +301,17 @@ def build_validation_rows(
         latent=latent,
         latent_top_k=config.latent_top_k,
         feature_version=config.ranker_feature_version,
-        max_users=max_users,
+        max_users=query_max_users,
     )
     baseline = HybridRanker(kind="itemcf")
     rows: list[dict[str, Any]] = []
     for query in validation_queries:
         feature_rows = query.features_by_movie
+        rank_started = time.perf_counter()
         learned_ids = [
             item.movie_id for item in learned.rank_feature_rows(movies, feature_rows, top_k=10)
         ]
+        latency_ms = (time.perf_counter() - rank_started) * 1000.0
         # ItemCF uses the exact same union candidate policy; non-ItemCF route
         # members receive the existing baseline's zero score and ID tie-break.
         itemcf_scores = {movie_id: values[0] for movie_id, values in feature_rows.items()}
@@ -326,7 +349,7 @@ def build_validation_rows(
                 ),
                 "allowed_movie_ids": sorted(feature_rows),
                 "lambdamart_ranked_movie_ids": learned_ids,
-                "latency_ms": 0.0,
+                "latency_ms": latency_ms,
             }
         )
     return rows

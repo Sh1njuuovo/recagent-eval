@@ -26,8 +26,10 @@ def score_itemcf_direct(
     users: Sequence[int],
     *,
     ledger: Mapping[str, object] | None = None,
+    max_training_users: int | None = None,
 ) -> dict[str, object]:
     del ledger
+    del max_training_users
     started = time.perf_counter()
     itemcf = ItemCFRetriever.fit(split.legal_retrieval_train)
     training_seconds = time.perf_counter() - started

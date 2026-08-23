@@ -109,7 +109,9 @@ def score_als_direct(
     users: Sequence[int],
     *,
     ledger: Mapping[str, object] | None = None,
+    max_training_users: int | None = None,
 ) -> dict[str, object]:
+    del max_training_users
     dev_users = (
         [int(user) for user in ledger["cohorts"]["development"]]
         if ledger is not None
