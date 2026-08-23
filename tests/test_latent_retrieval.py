@@ -80,6 +80,16 @@ def test_save_load_roundtrip_and_checksum(tmp_path) -> None:
     )
 
 
+def test_to_artifact_bytes_roundtrips(tmp_path) -> None:
+    model = LatentFactorRetriever.fit(_ratings(), seed=42)
+    data, manifest = model.to_artifact_bytes()
+    path = tmp_path / "latent.npz"
+    path.write_bytes(data)
+    (tmp_path / "latent.npz.json").write_bytes(manifest)
+    loaded = LatentFactorRetriever.load(path)
+    assert np.array_equal(loaded.item_factors, model.item_factors)
+
+
 def test_save_refuses_overwrite_and_corruption_fails(tmp_path) -> None:
     path = tmp_path / "latent.npz"
     model = LatentFactorRetriever.fit(_ratings(), seed=42)

@@ -158,8 +158,7 @@ def train_lambdamart_pipeline(
             lambda_reg=config.latent_lambda_reg,
             seed=config.latent_seed,
         )
-        final_latent.save(Path(config.latent_artifact_path))
-        latent_bytes = Path(config.latent_artifact_path).read_bytes()
+        latent_bytes, latent_manifest_bytes = final_latent.to_artifact_bytes()
         latent_artifact_checksum = hashlib.sha256(latent_bytes).hexdigest()
         latent_provenance = {
             "training_fingerprint": final_latent.training_fingerprint,
@@ -222,11 +221,11 @@ def train_lambdamart_pipeline(
     if config.latent_enabled:
         latent_member = (
             Path(config.latent_artifact_path),
-            Path(config.latent_artifact_path).read_bytes(),
+            latent_bytes,
         )
         latent_manifest_member = (
             Path(f"{config.latent_artifact_path}.json"),
-            Path(f"{config.latent_artifact_path}.json").read_bytes(),
+            latent_manifest_bytes,
         )
     publish_ranker_bundle(
         serialize_ranker_artifact(artifact),

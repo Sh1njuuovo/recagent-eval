@@ -134,6 +134,40 @@ class LatentFactorRetriever:
         if artifact_path.exists() or manifest_path.exists():
             raise ValueError("refusing to overwrite existing latent artifact")
         artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        data_bytes, manifest_bytes = self.to_artifact_bytes()
+        data_temp: Path | None = None
+        manifest_temp: Path | None = None
+        try:
+            data_fd, data_name = tempfile.mkstemp(
+                prefix=f".{artifact_path.name}.", suffix=".tmp", dir=artifact_path.parent
+            )
+            data_temp = Path(data_name)
+            with os.fdopen(data_fd, "wb") as stream:
+                stream.write(data_bytes)
+                stream.flush()
+                os.fsync(stream.fileno())
+            manifest_fd, manifest_name = tempfile.mkstemp(
+                prefix=f".{manifest_path.name}.", suffix=".tmp", dir=manifest_path.parent
+            )
+            manifest_temp = Path(manifest_name)
+            with os.fdopen(manifest_fd, "wb") as stream:
+                stream.write(manifest_bytes)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(data_temp, artifact_path)
+            data_temp = None
+            os.replace(manifest_temp, manifest_path)
+            manifest_temp = None
+        finally:
+            if data_temp is not None:
+                with suppress(FileNotFoundError):
+                    data_temp.unlink()
+            if manifest_temp is not None:
+                with suppress(FileNotFoundError):
+                    manifest_temp.unlink()
+
+    def to_artifact_bytes(self) -> tuple[bytes, bytes]:
+        """Return (npz_bytes, manifest_bytes) without touching the filesystem."""
         factors = np.ascontiguousarray(self.item_factors, dtype=np.float32)
         if factors.shape != (self.item_ids.size, self.rank):
             raise ValueError("latent item factors shape mismatch")
@@ -155,44 +189,17 @@ class LatentFactorRetriever:
             "runtime_metadata": _runtime_metadata(),
         }
         _validate_manifest(payload)
-        data_temp: Path | None = None
-        manifest_temp: Path | None = None
-        try:
-            data_fd, data_name = tempfile.mkstemp(
-                prefix=f".{artifact_path.name}.", suffix=".tmp", dir=artifact_path.parent
-            )
-            data_temp = Path(data_name)
-            with os.fdopen(data_fd, "wb") as stream:
-                np.savez(stream, item_ids=self.item_ids, item_factors=factors)
-                stream.flush()
-                os.fsync(stream.fileno())
-            if data_temp.stat().st_size > MAX_LATENT_ARTIFACT_BYTES:
-                raise ValueError("latent artifact is too large")
-            payload["artifact_checksum"] = hashlib.sha256(
-                data_temp.read_bytes()
-            ).hexdigest()
-            payload["manifest_sha256"] = _manifest_digest(payload)
-            manifest_fd, manifest_name = tempfile.mkstemp(
-                prefix=f".{manifest_path.name}.", suffix=".tmp", dir=manifest_path.parent
-            )
-            manifest_temp = Path(manifest_name)
-            with os.fdopen(manifest_fd, "wb") as stream:
-                stream.write(
-                    (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8")
-                )
-                stream.flush()
-                os.fsync(stream.fileno())
-            os.replace(data_temp, artifact_path)
-            data_temp = None
-            os.replace(manifest_temp, manifest_path)
-            manifest_temp = None
-        finally:
-            if data_temp is not None:
-                with suppress(FileNotFoundError):
-                    data_temp.unlink()
-            if manifest_temp is not None:
-                with suppress(FileNotFoundError):
-                    manifest_temp.unlink()
+        buffer = io.BytesIO()
+        np.savez(buffer, item_ids=self.item_ids, item_factors=factors)
+        data_bytes = buffer.getvalue()
+        if len(data_bytes) > MAX_LATENT_ARTIFACT_BYTES:
+            raise ValueError("latent artifact is too large")
+        payload["artifact_checksum"] = hashlib.sha256(data_bytes).hexdigest()
+        payload["manifest_sha256"] = _manifest_digest(payload)
+        manifest_bytes = (
+            json.dumps(payload, indent=2, sort_keys=True) + "\n"
+        ).encode("utf-8")
+        return data_bytes, manifest_bytes
 
     @classmethod
     def load(
