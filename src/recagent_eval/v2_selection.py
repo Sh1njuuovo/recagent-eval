@@ -56,6 +56,8 @@ def cross_validate_lambdamart(
         tuple[Sequence[CandidateQuery], Sequence[CandidateQuery]],
     ]
     | None = None,
+    max_negatives: int | None = None,
+    negative_policy: str = "all",
 ) -> CVSelection:
     """Select LambdaMART parameters with whole-user GroupKFold splits."""
     del seed  # GroupKFold itself is deterministic and intentionally unshuffled.
@@ -111,7 +113,11 @@ def cross_validate_lambdamart(
                 query.user_id for query in validation_queries
             }:
                 raise ValueError("fold query builder mixed training and validation users")
-            train_matrix = build_training_matrix(train_queries)
+            train_matrix = build_training_matrix(
+                train_queries,
+                max_negatives=max_negatives,
+                negative_policy=negative_policy,
+            )
             if not train_matrix.groups:
                 raise ValueError(f"fold {fold} has no trainable query groups")
             estimator = estimator_factory(params)

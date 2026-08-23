@@ -11,10 +11,10 @@ from typing import Any
 from recagent_eval.agent import build_semantic_profile
 from recagent_eval.bundle import publish_ranker_bundle
 from recagent_eval.candidate_features import (
-    FEATURE_SCHEMA_FINGERPRINT,
     build_candidate_feature_rows,
 )
 from recagent_eval.data import LeakageSafeRankingSplit, Movie, Rating
+from recagent_eval.latent_retrieval import LatentFactorRetriever
 from recagent_eval.learned_ranking import (
     CandidateQuery,
     LearnedRanker,
@@ -47,6 +47,18 @@ def train_lambdamart_pipeline(
     registered_case_fingerprint: str = "unregistered",
 ) -> dict[str, Any]:
     dataset_fingerprint = ranking_dataset_fingerprint(movies, split)
+    training_latent = (
+        LatentFactorRetriever.fit(
+            split.ranker_training_history,
+            rank=config.latent_rank,
+            iterations=config.latent_iterations,
+            alpha=config.latent_alpha,
+            lambda_reg=config.latent_lambda_reg,
+            seed=config.latent_seed,
+        )
+        if config.latent_enabled
+        else None
+    )
     training_queries = build_candidate_queries(
         movies,
         split.ranker_training_history,
@@ -58,6 +70,9 @@ def train_lambdamart_pipeline(
         semantic_top_k=config.semantic_top_k,
         score_calibration=config.score_calibration,
         max_users=max_users,
+        latent=training_latent,
+        latent_top_k=config.latent_top_k,
+        feature_version=config.ranker_feature_version,
     )
     cv = cross_validate_lambdamart(
         training_queries,
@@ -71,8 +86,14 @@ def train_lambdamart_pipeline(
             train_users=train_users,
             validation_users=validation_users,
         ),
+        max_negatives=config.ranker_max_negatives,
+        negative_policy=config.ranker_negative_policy,
     )
-    matrix = build_training_matrix(training_queries)
+    matrix = build_training_matrix(
+        training_queries,
+        max_negatives=config.ranker_max_negatives,
+        negative_policy=config.ranker_negative_policy,
+    )
     estimator = make_lgbm_ranker(cv.selected_params, seed=seed)
     estimator.fit(
         list(matrix.features),
@@ -123,9 +144,41 @@ def train_lambdamart_pipeline(
         estimator,
         legal_train_rows=split.legal_retrieval_train,
         score_calibration=config.score_calibration,
+        feature_version=config.ranker_feature_version,
     )
+    final_latent: LatentFactorRetriever | None = None
+    latent_artifact_checksum: str | None = None
+    latent_provenance: dict[str, Any] | None = None
+    if config.latent_enabled:
+        final_latent = LatentFactorRetriever.fit(
+            split.legal_retrieval_train,
+            rank=config.latent_rank,
+            iterations=config.latent_iterations,
+            alpha=config.latent_alpha,
+            lambda_reg=config.latent_lambda_reg,
+            seed=config.latent_seed,
+        )
+        final_latent.save(Path(config.latent_artifact_path))
+        latent_bytes = Path(config.latent_artifact_path).read_bytes()
+        latent_artifact_checksum = hashlib.sha256(latent_bytes).hexdigest()
+        latent_provenance = {
+            "training_fingerprint": final_latent.training_fingerprint,
+            "rank": final_latent.rank,
+            "iterations": final_latent.iterations,
+            "alpha": final_latent.alpha,
+            "lambda_reg": final_latent.lambda_reg,
+            "seed": final_latent.seed,
+            "top_k": config.latent_top_k,
+            "artifact_path": config.latent_artifact_path,
+        }
     rows = build_validation_rows(
-        movies, split, semantic, config, learned, max_users=max_users
+        movies,
+        split,
+        semantic,
+        config,
+        learned,
+        max_users=max_users,
+        latent=final_latent,
     )
     provenance["validation_rows_fingerprint"] = _fingerprint(rows)
     provenance["validation_user_count"] = len(rows)
@@ -137,12 +190,15 @@ def train_lambdamart_pipeline(
         training_group_count=len(matrix.groups),
         provenance=provenance,
         cv_results=cv_results,
+        latent_artifact_checksum=latent_artifact_checksum,
+        latent_provenance=latent_provenance,
     )
     policy_fingerprint = candidate_policy_fingerprint(config)
+    feature_fingerprint = learned.feature_fingerprint
     evidence = build_validation_evidence(
         rows,
         dataset_fingerprint=dataset_fingerprint,
-        feature_fingerprint=FEATURE_SCHEMA_FINGERPRINT,
+        feature_fingerprint=feature_fingerprint,
         model_fingerprint=artifact.model_checksum,
         candidate_policy_fingerprint=policy_fingerprint,
         seed=seed,
@@ -153,11 +209,24 @@ def train_lambdamart_pipeline(
             "training_user_count": matrix.training_users,
             "training_group_count": len(matrix.groups),
             "dependency_versions": artifact.dependency_versions,
+            "latent_artifact_checksum": latent_artifact_checksum,
+            "latent_provenance": latent_provenance,
         },
     )
     evidence_bytes = (
         json.dumps(evidence.model_dump(mode="json"), indent=2, sort_keys=True) + "\n"
     ).encode()
+    latent_member = None
+    latent_manifest_member = None
+    if config.latent_enabled:
+        latent_member = (
+            Path(config.latent_artifact_path),
+            Path(config.latent_artifact_path).read_bytes(),
+        )
+        latent_manifest_member = (
+            Path(f"{config.latent_artifact_path}.json"),
+            Path(f"{config.latent_artifact_path}.json").read_bytes(),
+        )
     publish_ranker_bundle(
         serialize_ranker_artifact(artifact),
         evidence_bytes,
@@ -169,8 +238,10 @@ def train_lambdamart_pipeline(
             "config_fingerprint": provenance["config_fingerprint"],
             "dataset_fingerprint": dataset_fingerprint,
             "candidate_policy_fingerprint": policy_fingerprint,
-            "feature_fingerprint": FEATURE_SCHEMA_FINGERPRINT,
+            "feature_fingerprint": feature_fingerprint,
         },
+        latent_member=latent_member,
+        latent_manifest_member=latent_manifest_member,
     )
     return {
         "selected_params": cv.selected_params,
@@ -179,7 +250,7 @@ def train_lambdamart_pipeline(
         "validation_users": len(rows),
         "model_checksum": artifact.model_checksum,
         "dataset_fingerprint": dataset_fingerprint,
-        "feature_fingerprint": FEATURE_SCHEMA_FINGERPRINT,
+        "feature_fingerprint": feature_fingerprint,
         "candidate_policy_fingerprint": policy_fingerprint,
         "bundle_manifest_path": str(bundle_manifest_output),
     }
@@ -193,6 +264,7 @@ def build_validation_rows(
     learned: LearnedRanker,
     *,
     max_users: int,
+    latent: LatentFactorRetriever | None = None,
 ) -> list[dict[str, Any]]:
     validation_histories = _positive_histories(split.legal_retrieval_train, movies)
     validation_queries = build_candidate_queries(
@@ -205,6 +277,9 @@ def build_validation_rows(
         history_cap=config.semantic_profile_history_cap,
         semantic_top_k=config.semantic_top_k,
         score_calibration=config.score_calibration,
+        latent=latent,
+        latent_top_k=config.latent_top_k,
+        feature_version=config.ranker_feature_version,
         max_users=max_users,
     )
     baseline = HybridRanker(kind="itemcf")
@@ -272,6 +347,9 @@ def build_candidate_queries(
     semantic_query_builder: Callable[[PreferenceState, dict[int, Movie], int], str]
     | None = None,
     score_calibration: str = "raw",
+    latent: LatentFactorRetriever | None = None,
+    latent_top_k: int | None = None,
+    feature_version: str = "v1",
 ) -> list[CandidateQuery]:
     if semantic_top_k is not None and semantic_top_k <= 0:
         raise ValueError("semantic_top_k must be positive")
@@ -306,15 +384,26 @@ def build_candidate_queries(
                 allowed_ids=allowed_ids,
             )
         )
+        latent_scores = {}
+        if latent is not None:
+            latent_scores = dict(
+                latent.retrieve(
+                    history_ids,
+                    top_k=latent_top_k or 500,
+                    allowed_ids=allowed_ids,
+                )
+            )
         rows = build_candidate_feature_rows(
             user_id=user_id,
             movies=movies,
             itemcf_scores=itemcf_scores,
             dense_scores=dense_scores,
+            latent_scores=latent_scores,
             history=history_rows,
             train_rows=legal_train_rows,
             state=state,
             score_calibration=score_calibration,
+            feature_version=feature_version,
         )
         queries.append(
             CandidateQuery(
@@ -342,6 +431,18 @@ def build_fold_queries(
         for row in split.ranker_training_history
         if row.user_id in training_user_set
     )
+    latent = (
+        LatentFactorRetriever.fit(
+            fold_train_rows,
+            rank=config.latent_rank,
+            iterations=config.latent_iterations,
+            alpha=config.latent_alpha,
+            lambda_reg=config.latent_lambda_reg,
+            seed=config.latent_seed,
+        )
+        if config.latent_enabled
+        else None
+    )
     common = {
         "movies": movies,
         "legal_train_rows": fold_train_rows,
@@ -350,6 +451,9 @@ def build_fold_queries(
         "history_cap": config.semantic_profile_history_cap,
         "semantic_top_k": config.semantic_top_k,
         "score_calibration": config.score_calibration,
+        "latent": latent,
+        "latent_top_k": config.latent_top_k,
+        "feature_version": config.ranker_feature_version,
     }
     return (
         build_candidate_queries(
@@ -373,8 +477,7 @@ def build_fold_queries(
 
 
 def candidate_policy_fingerprint(config: ExperimentConfig) -> str:
-    payload = {
-        "schema": "union-candidate-policy/v1",
+    base = {
         "retrieval_top_k": config.retrieval_top_k,
         "semantic_profile_history_cap": config.semantic_profile_history_cap,
         "semantic_kind": config.semantic_kind,
@@ -384,25 +487,57 @@ def candidate_policy_fingerprint(config: ExperimentConfig) -> str:
         "semantic_top_k": config.semantic_top_k,
         "score_calibration": config.score_calibration,
     }
+    if not config.latent_enabled:
+        payload = {"schema": "union-candidate-policy/v1", **base}
+    else:
+        payload = {
+            "schema": "union-candidate-policy/v2",
+            **base,
+            "latent": {
+                "rank": config.latent_rank,
+                "iterations": config.latent_iterations,
+                "alpha": config.latent_alpha,
+                "lambda_reg": config.latent_lambda_reg,
+                "seed": config.latent_seed,
+                "top_k": config.latent_top_k,
+            },
+            "feature_version": config.ranker_feature_version,
+            "negative_policy": config.ranker_negative_policy,
+            "max_negatives": config.ranker_max_negatives,
+        }
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
 
 
 def lambdamart_config_fingerprint(config: ExperimentConfig) -> str:
-    return _fingerprint(
-        {
-            "retrieval_top_k": config.retrieval_top_k,
-            "semantic_profile_history_cap": config.semantic_profile_history_cap,
-            "semantic_kind": config.semantic_kind,
-            "semantic_model_name": config.semantic_model_name,
-            "semantic_model_revision": config.semantic_model_revision,
-            "semantic_cache_path": config.semantic_cache_path,
-            "semantic_top_k": config.semantic_top_k,
-            "score_calibration": config.score_calibration,
-            "seed": config.seed,
+    payload = {
+        "retrieval_top_k": config.retrieval_top_k,
+        "semantic_profile_history_cap": config.semantic_profile_history_cap,
+        "semantic_kind": config.semantic_kind,
+        "semantic_model_name": config.semantic_model_name,
+        "semantic_model_revision": config.semantic_model_revision,
+        "semantic_cache_path": config.semantic_cache_path,
+        "semantic_top_k": config.semantic_top_k,
+        "score_calibration": config.score_calibration,
+        "seed": config.seed,
+    }
+    if config.latent_enabled:
+        payload = {
+            **payload,
+            "latent": {
+                "rank": config.latent_rank,
+                "iterations": config.latent_iterations,
+                "alpha": config.latent_alpha,
+                "lambda_reg": config.latent_lambda_reg,
+                "seed": config.latent_seed,
+                "top_k": config.latent_top_k,
+            },
+            "feature_version": config.ranker_feature_version,
+            "negative_policy": config.ranker_negative_policy,
+            "max_negatives": config.ranker_max_negatives,
         }
-    )
+    return _fingerprint(payload)
 
 
 def ranking_dataset_fingerprint(

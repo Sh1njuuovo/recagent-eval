@@ -2,17 +2,24 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
 from recagent_eval.bundle import load_ranker_bundle
+from recagent_eval.candidate_features import FEATURE_NAMES_V2
+from recagent_eval.config import load_experiment_config
 from recagent_eval.data import Movie, Rating, leakage_safe_ranking_split
 from recagent_eval.lambdamart_pipeline import (
+    _positive_histories,
+    build_candidate_queries,
     candidate_policy_fingerprint,
     lambdamart_config_fingerprint,
     ranking_dataset_fingerprint,
     train_lambdamart_pipeline,
 )
+from recagent_eval.latent_retrieval import LatentFactorRetriever
 from recagent_eval.learned_ranking import parse_ranker_artifact
 from recagent_eval.runner import ExperimentConfig
 from recagent_eval.v2_selection import LearnedValidationEvidence, validate_learned_gate
@@ -72,9 +79,11 @@ def test_training_pipeline_publishes_bound_model_evidence_and_manifest(
         registered_case_fingerprint="registered-cases",
     )
 
-    model_bytes, evidence_bytes = load_ranker_bundle(
+    bundle = load_ranker_bundle(
         model_path, evidence_path, manifest_path
     )
+    model_bytes = bundle.model_bytes
+    evidence_bytes = bundle.evidence_bytes
     artifact = parse_ranker_artifact(
         model_bytes,
         expected_dataset_fingerprint=ranking_dataset_fingerprint(movies, split),
@@ -126,3 +135,56 @@ def test_candidate_policy_and_config_fingerprints_include_semantic_top_k() -> No
     )
     assert candidate_policy_fingerprint(base) != candidate_policy_fingerprint(widened)
     assert lambdamart_config_fingerprint(base) != lambdamart_config_fingerprint(widened)
+
+
+def test_build_candidate_queries_threads_latent_scores() -> None:
+    movies = {
+        movie_id: Movie(
+            movie_id,
+            f"Movie {movie_id}",
+            ("Drama",) if movie_id % 2 else ("Comedy",),
+            1990 + movie_id,
+        )
+        for movie_id in range(1, 9)
+    }
+    ratings = [
+        Rating(user_id, movie_id, 5, movie_id * 10 + user_id)
+        for user_id in range(1, 7)
+        for movie_id in range(1, 9)
+    ]
+    split = leakage_safe_ranking_split(ratings)
+    latent = LatentFactorRetriever.fit(split.legal_retrieval_train, seed=42)
+    queries = build_candidate_queries(
+        movies,
+        split.legal_retrieval_train,
+        _positive_histories(split.legal_retrieval_train, movies),
+        split.validation_targets,
+        _CatalogSemanticRetriever(),
+        retrieval_top_k=10,
+        history_cap=5,
+        max_users=3,
+        semantic_top_k=20,
+        latent=latent,
+        latent_top_k=10,
+        feature_version="v2",
+    )
+    assert queries
+    row = next(iter(queries[0].features_by_movie.values()))
+    assert len(row) == len(FEATURE_NAMES_V2)
+
+
+def test_fingerprints_change_only_when_latent_enabled() -> None:
+    base = load_experiment_config(Path("configs/v2_dense_recall1500.yaml"))
+    assert candidate_policy_fingerprint(base) == (
+        "a3c3475fec9b49b3e67923a73e97d10c2017031050abcbc8f1e468824b52eb41"
+    )
+    enabled = replace(
+        base,
+        latent_enabled=True,
+        latent_artifact_path="artifacts/experiments/x/latent.npz",
+        ranker_feature_version="v2",
+        ranker_negative_policy="route_balanced",
+        ranker_max_negatives=200,
+    )
+    assert candidate_policy_fingerprint(enabled) != candidate_policy_fingerprint(base)
+    assert lambdamart_config_fingerprint(enabled) != lambdamart_config_fingerprint(base)
