@@ -14,16 +14,23 @@ from recagent_eval.latent_retrieval import LatentFactorRetriever
 def _movies() -> dict[int, Movie]:
     return {
         movie_id: Movie(movie_id, f"M{movie_id}", ("Drama",), 1990 + movie_id)
-        for movie_id in range(1, 12)
+        for movie_id in range(1, 13)
     }
 
 
 def _ratings() -> list[Rating]:
-    return [
+    rows = [
         Rating(user_id, movie_id, 5, movie_id * 10 + user_id)
         for user_id in range(1, 9)
         for movie_id in range(1, 9)
     ]
+    # Movies 9-12 exist in the catalog and are rated by user 8, so they are in
+    # the latent fit but absent from other users' history (retrievable).
+    rows += [
+        Rating(8, movie_id, 5, movie_id * 100 + 8)
+        for movie_id in (9, 10, 11, 12)
+    ]
+    return rows
 
 
 def _semantic():
@@ -71,7 +78,8 @@ def test_latent_diagnostics_aggregate_gate_fields() -> None:
     assert 0.0 <= summary.latent_recall_10_all <= 1.0
     assert 0.0 <= summary.union_recall_three_route <= 1.0
     assert summary.latent_only_coverage >= 0.0
-    assert summary.latent_present_user_count >= 0
+    assert summary.latent_present_user_count > 0
+    assert summary.latent_recall_500_present == 1.0
     assert set(summary.target_latent_rank_quantiles) == {"p25", "p50", "p75"}
 
 

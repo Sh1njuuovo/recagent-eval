@@ -92,7 +92,6 @@ def build_latent_user_rows(queries: Sequence) -> list[LatentDiagnosticUserRow]:
         target_row = features.get(target)
         in_itemcf = bool(target_row is not None and target_row[8] == 1.0)
         in_dense = bool(target_row is not None and target_row[9] == 1.0)
-        in_latent = bool(target_row is not None and target_row[10] == 1.0)
         itemcf_ids = frozenset(
             movie_id for movie_id, values in features.items() if values[8] == 1.0
         )
@@ -102,6 +101,7 @@ def build_latent_user_rows(queries: Sequence) -> list[LatentDiagnosticUserRow]:
         latent_ids = frozenset(
             movie_id for movie_id, values in features.items() if values[12] == 1.0
         )
+        in_latent = target in latent_ids
         latent_order = [
             movie_id
             for movie_id in sorted(
