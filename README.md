@@ -2,7 +2,7 @@
 
 ![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB)
 ![License](https://img.shields.io/badge/License-MIT-green)
-![Tests](https://img.shields.io/badge/tests-229%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-303%20passed-brightgreen)
 ![Coverage](https://img.shields.io/badge/coverage-90%25-brightgreen)
 
 An evaluation-first conversational movie recommendation Agent that separates
@@ -308,6 +308,37 @@ documents the invalid-label and policy-drift failures that motivated the revised
 evaluator. The fingerprints differ, so the two result tables are not merged.
 Remote Qwen numbers remain pending until the RTX 4090 host is free.
 
+### Collaborative latent recall (ALS) and schema-v2 artifacts
+
+A deterministic weighted-ALS latent route (`src/recagent_eval/latent_retrieval.py`,
+numpy-only, `threadpoolctl`-pinned, standard fold-in scoring, no pickle) was
+added as a third candidate source with schema-v2 features
+(`candidate-features/v2`: latent score/rank/membership) and schema-v2
+artifact/evidence/bundle contracts bound to the persisted latent artifact
+checksum. The candidate-stage gates all passed on 500 validation users
+([v2-latent-diagnostics](reports/experiments/v2-latent-diagnostics.md)):
+latent recall@500 0.838, target median rank in the latent list 93 (vs ~172
+ItemCF union-order baseline), three-route union recall 0.928, latent-only
+coverage 5%, latent recall@10 0.084 (all users; ItemCF 0.064).
+
+The 30-user smoke ([v2-latent-smoke-30](reports/experiments/v2-latent-smoke-30.md))
+confirmed bundle-v2 integrity, a byte-identical replay (rows, model, and latent
+factors), and 100% constraints. Three 500-user LambdaMART validations were then
+run and **all preserved as negative results**; the frozen test stays locked:
+
+| Variant | LambdaMART NDCG@10 | ItemCF NDCG@10 | Recall@10 | Bootstrap 95% CI | Gate |
+| --- | ---: | ---: | ---: | --- | --- |
+| v2 + route-balanced hard negatives ([latent500](reports/experiments/v2-dense-lambdamart-latent500.md)) | 0.0 | 0.0334 | 0.000 | [−0.0461, −0.0213] | failed |
+| v2 + all negatives ([allneg](reports/experiments/v2-dense-lambdamart-latent-allneg.md)) | 0.0258 | 0.0334 | 0.060 | [−0.0214, 0.0073] | failed |
+| v2b + all negatives ([bfeat](reports/experiments/v2-dense-lambdamart-latent-bfeat.md)) | 0.0446 | 0.0334 | 0.102 | [−0.0024, 0.0280] | failed (NDCG↑, CI lower < 0) |
+
+The route-balanced hard-negative policy (200 negatives/query) was found to
+catastrophically break generalization (0 hits, median target rank 1607) in a
+controlled attribution; the latent features themselves improve ranking depth
+with all-negatives training. The v2b contingency (cross/recent/year features)
+produces the best learned ranking so far but still misses the pre-registered
+confidence gate at its lower tail.
+
 ## Testing and evidence
 
 ```bash
@@ -315,13 +346,14 @@ uv run pytest
 uv run ruff check .
 ```
 
-The 229-test suite covers schemas, memory updates, invalid plans, one-shot repair,
+The 250+ test suite covers schemas, memory updates, invalid plans, one-shot repair,
 provider retries, chronological splitting, case-label preflight, frozen
 retrieval policy, hard constraints, route-level diagnostics, retrieval
 selection, ranking, weight tuning, metrics, CLI smoke tests, scripts, and
 deterministic manifests, rank-fusion calibration, evidence invariants, and the
 frozen-case gate, dense-cache integrity, and the torch/LightGBM OpenMP crash
-regressions. Current line coverage is 90%.
+regressions, plus ALS fold-in determinism, latent artifact persistence, and
+schema-v2 contract dispatch. Current line coverage is 90%.
 
 - Upstream audit: [reports/audit/overview.md](reports/audit/overview.md)
 - Candidate ranking: [reports/ranking/candidate_score.md](reports/ranking/candidate_score.md)
@@ -343,6 +375,12 @@ regressions. Current line coverage is 90%.
   deep (median ~172), so Top-10 NDCG is bounded; percentile score calibration
   was tested and hurt ranking. The remaining bottleneck is ranking depth and
   separating features beyond the raw ItemCF score.
+- The ALS latent route lifts candidate depth (median 93, union recall 92.8%)
+  and the v2b features raise LambdaMART recall@10 to 0.102, but the formal
+  ItemCF gate remains locked: the best variant's paired-bootstrap CI lower
+  bound (−0.0024) still crosses zero. Route-balanced hard-negative sampling
+  was evaluated and found to break generalization; it is retained as a
+  falsified hypothesis, not a tuning success.
 - The unstructured no-memory baseline falls back to popularity retrieval, so its
   strong NDCG on 50 fixed cases should not be generalized beyond this matrix.
 - MovieLens data is downloaded separately and remains subject to GroupLens
