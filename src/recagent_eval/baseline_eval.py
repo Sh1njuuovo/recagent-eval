@@ -36,6 +36,7 @@ class MetricRow:
 
 def score_ranking(
     *,
+    user_id: int = 0,
     ranked_ids: Sequence[int],
     target: int,
     allowed: set[int],
@@ -51,7 +52,7 @@ def score_ranking(
     ranked_set = set(top)
     constraints = ranked_set.issubset(allowed) and ranked_set.isdisjoint(history)
     return MetricRow(
-        user_id=0,
+        user_id=user_id,
         recall_at_10=recall,
         ndcg_at_10=ndcg,
         mrr_at_10=mrr,
