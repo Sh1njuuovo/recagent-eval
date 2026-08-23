@@ -393,12 +393,28 @@ def build_candidate_queries(
                     allowed_ids=allowed_ids,
                 )
             )
+        recent_itemcf_scores = None
+        if feature_version == "v2b":
+            recent_rows = sorted(
+                (
+                    row
+                    for row in history_rows
+                    if row.rating >= 4 and row.movie_id in movies
+                ),
+                key=lambda row: (row.timestamp, row.movie_id),
+            )[-10:]
+            recent_ids = {row.movie_id for row in recent_rows}
+            union_candidates = (
+                set(itemcf_scores) | set(dense_scores) | set(latent_scores)
+            )
+            recent_itemcf_scores = itemcf.score_many(recent_ids, union_candidates)
         rows = build_candidate_feature_rows(
             user_id=user_id,
             movies=movies,
             itemcf_scores=itemcf_scores,
             dense_scores=dense_scores,
             latent_scores=latent_scores,
+            recent_itemcf_scores=recent_itemcf_scores,
             history=history_rows,
             train_rows=legal_train_rows,
             state=state,

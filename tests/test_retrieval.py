@@ -49,6 +49,24 @@ def test_itemcf_retrieves_items_co_liked_with_history() -> None:
         retriever.retrieve({1}, top_k=0)
 
 
+def test_itemcf_score_many_scores_requested_ids_and_falls_back_to_popularity() -> None:
+    ratings = [
+        Rating(1, 1, 5, 1),
+        Rating(1, 2, 5, 2),
+        Rating(2, 1, 4, 1),
+        Rating(2, 2, 5, 2),
+        Rating(3, 1, 5, 1),
+        Rating(3, 3, 5, 2),
+    ]
+    retriever = ItemCFRetriever.fit(ratings)
+    scores = retriever.score_many({1}, [2, 3, 99])
+    assert scores[2] > 0.0
+    assert scores[99] == 0.0
+    empty = retriever.score_many(set(), [1, 2])
+    assert empty[1] > 0.0  # popularity fallback for empty history
+    assert empty[2] > 0.0
+
+
 def test_tfidf_retrieval_uses_title_and_genre_text() -> None:
     retriever = TfidfSemanticRetriever.fit(MOVIES)
 

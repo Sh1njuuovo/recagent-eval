@@ -188,3 +188,43 @@ def test_fingerprints_change_only_when_latent_enabled() -> None:
     )
     assert candidate_policy_fingerprint(enabled) != candidate_policy_fingerprint(base)
     assert lambdamart_config_fingerprint(enabled) != lambdamart_config_fingerprint(base)
+
+
+def test_build_candidate_queries_v2b_threads_recent_itemcf_scores() -> None:
+    from recagent_eval.candidate_features import FEATURE_NAMES_V2B
+
+    movies = {
+        movie_id: Movie(
+            movie_id,
+            f"Movie {movie_id}",
+            ("Drama",) if movie_id % 2 else ("Comedy",),
+            1990 + movie_id,
+        )
+        for movie_id in range(1, 9)
+    }
+    ratings = [
+        Rating(user_id, movie_id, 5, movie_id * 10 + user_id)
+        for user_id in range(1, 7)
+        for movie_id in range(1, 9)
+    ]
+    split = leakage_safe_ranking_split(ratings)
+    latent = LatentFactorRetriever.fit(split.legal_retrieval_train, seed=42)
+    queries = build_candidate_queries(
+        movies,
+        split.legal_retrieval_train,
+        _positive_histories(split.legal_retrieval_train, movies),
+        split.validation_targets,
+        _CatalogSemanticRetriever(),
+        retrieval_top_k=10,
+        history_cap=5,
+        max_users=3,
+        semantic_top_k=20,
+        latent=latent,
+        latent_top_k=10,
+        feature_version="v2b",
+    )
+    assert queries
+    row = next(iter(queries[0].features_by_movie.values()))
+    assert len(row) == len(FEATURE_NAMES_V2B)
+    recent_index = FEATURE_NAMES_V2B.index("recent_itemcf_score")
+    assert row[recent_index] >= 0.0

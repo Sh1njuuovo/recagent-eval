@@ -144,6 +144,21 @@ class ItemCFRetriever:
         ]
         return sorted(ranked, key=lambda item: (-item[1], item[0]))[:top_k]
 
+    def score_many(
+        self, history: set[int], movie_ids: Iterable[int]
+    ) -> dict[int, float]:
+        """Score arbitrary movie IDs from the same legal fit as ``retrieve``."""
+        scores: Counter[int] = Counter()
+        for source in history:
+            for movie_id, similarity in self.similarities.get(source, {}).items():
+                if movie_id not in history:
+                    scores[movie_id] += similarity
+        if not scores:
+            for movie_id, count in self.popularity.items():
+                if movie_id not in history:
+                    scores[movie_id] = float(count)
+        return {movie_id: float(scores.get(movie_id, 0.0)) for movie_id in movie_ids}
+
 
 @dataclass(frozen=True)
 class TfidfSemanticRetriever:
