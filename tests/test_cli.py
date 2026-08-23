@@ -1290,3 +1290,63 @@ def test_diagnose_latent_refuses_overwrite_and_requires_latent(
         ],
     )
     assert "latent" in result.output.lower()
+
+
+def test_evaluate_baselines_refuses_overwrite_before_method_check(tmp_path) -> None:
+    ledger = tmp_path / "ledger.json"
+    ledger.write_text(json.dumps({"cohorts": {"confirmation_a": [1, 2]}}))
+    output = tmp_path / "out.json"
+    output.write_text("{}")
+    result = CliRunner().invoke(
+        app,
+        [
+            "evaluate-baselines",
+            "--ledger",
+            str(ledger),
+            "--cohort",
+            "confirmation_a",
+            "--method",
+            "popularity",
+            "--output",
+            str(output),
+        ],
+    )
+    assert result.exit_code != 0
+    assert "refusing to overwrite" in result.output
+
+
+def test_evaluate_baselines_rejects_bad_cohort_and_unknown_method(tmp_path) -> None:
+    ledger = tmp_path / "ledger.json"
+    ledger.write_text(json.dumps({"cohorts": {"confirmation_a": [1, 2]}}))
+    result = CliRunner().invoke(
+        app,
+        [
+            "evaluate-baselines",
+            "--ledger",
+            str(ledger),
+            "--cohort",
+            "bogus",
+            "--method",
+            "popularity",
+            "--output",
+            str(tmp_path / "o.json"),
+        ],
+    )
+    assert result.exit_code != 0
+    assert "cohort must be" in result.output
+    result = CliRunner().invoke(
+        app,
+        [
+            "evaluate-baselines",
+            "--ledger",
+            str(ledger),
+            "--cohort",
+            "confirmation_a",
+            "--method",
+            "nope",
+            "--output",
+            str(tmp_path / "o.json"),
+        ],
+    )
+    assert result.exit_code != 0
+    assert "unknown baseline method" in result.output

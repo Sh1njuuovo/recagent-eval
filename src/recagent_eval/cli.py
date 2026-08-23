@@ -9,6 +9,7 @@ from typing import Annotated
 import typer
 import yaml
 
+from recagent_eval.baseline_eval import BASELINE_SCORERS, metric_json
 from recagent_eval.bundle import load_ranker_bundle
 from recagent_eval.candidate_features import (
     FEATURE_SCHEMA_FINGERPRINT,
@@ -849,6 +850,60 @@ def build_cohorts(
     typer.echo(
         json.dumps({"fingerprint": ledger["fingerprint"], "sizes": ledger["sizes"]})
     )
+
+
+@app.command("evaluate-baselines")
+def evaluate_baselines(
+    ledger_path: Annotated[Path, typer.Option("--ledger")],
+    cohort: Annotated[str, typer.Option()],
+    method: Annotated[str, typer.Option()],
+    data_dir: Annotated[Path, typer.Option()] = Path("data/raw/ml-1m"),
+    output: Annotated[Path, typer.Option()] = Path(
+        "artifacts/experiments/v2-baselines/result.json"
+    ),
+    max_users: Annotated[int, typer.Option(min=1)] = 1000,
+) -> None:
+    """Evaluate one registered baseline method on one cohort."""
+    if output.exists():
+        raise typer.BadParameter(f"refusing to overwrite existing baseline artifact: {output}")
+    if cohort not in {"development", "confirmation_a", "confirmation_b"}:
+        raise typer.BadParameter("cohort must be development, confirmation_a, or confirmation_b")
+    if method not in BASELINE_SCORERS:
+        raise typer.BadParameter(
+            f"unknown baseline method {method!r}; registered: {sorted(BASELINE_SCORERS)}"
+        )
+    try:
+        ledger = json.loads(ledger_path.read_text())
+        users = [int(user) for user in ledger["cohorts"][cohort][:max_users]]
+    except (OSError, ValueError, KeyError) as exc:
+        raise typer.BadParameter(f"invalid cohort ledger: {exc}") from exc
+    movies, ratings = _load_dataset(data_dir)
+    split = leakage_safe_ranking_split(ratings)
+    scorer = BASELINE_SCORERS[method]
+    try:
+        result = scorer(movies, split, users)
+    except (OSError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    artifact = metric_json(
+        result["rows"],
+        method=method,
+        cohort=cohort,
+        universe_size=len(movies),
+        config_fingerprint=result["config_fingerprint"],
+        dataset_fingerprint=result["dataset_fingerprint"],
+        model_fingerprint=result["model_fingerprint"],
+        training_seconds=result["training_seconds"],
+        peak_memory_mb=result["peak_memory_mb"],
+        model_size_bytes=result["model_size_bytes"],
+        environment=result["environment"],
+        bootstrap=result.get("bootstrap_vs_itemcf"),
+    )
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(
+        json.dumps(artifact, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    typer.echo(json.dumps(artifact["aggregates"], indent=2, sort_keys=True))
 
 
 @app.command("evaluate-ranker")
