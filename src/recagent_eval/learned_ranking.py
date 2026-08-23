@@ -20,8 +20,13 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from recagent_eval.candidate_features import (
     FEATURE_NAMES,
     FEATURE_NAMES_V2,
+    FEATURE_NAMES_V2B,
     FEATURE_SCHEMA_FINGERPRINT,
+    FEATURE_SCHEMA_FINGERPRINT_V2,
+    FEATURE_SCHEMA_FINGERPRINT_V2B,
     FEATURE_SCHEMA_VERSION,
+    FEATURE_SCHEMA_VERSION_V2,
+    FEATURE_SCHEMA_VERSION_V2B,
     build_candidate_feature_rows,
 )
 from recagent_eval.data import Movie, Rating
@@ -29,6 +34,7 @@ from recagent_eval.models import PreferenceState, RecommendedMovie, ScoreBreakdo
 from recagent_eval.safe_io import read_regular_file
 
 ARTIFACT_SCHEMA_VERSION = "lambdamart-artifact/v1"
+ARTIFACT_SCHEMA_VERSION_V2 = "lambdamart-artifact/v2"
 MAX_ARTIFACT_BYTES = 64 * 1024 * 1024
 DEFAULT_PARAMETER_GRID: tuple[dict[str, int | float], ...] = tuple(
     {
@@ -225,12 +231,17 @@ class LearnedRanker:
         *,
         legal_train_rows: Sequence[Rating] = (),
         score_calibration: str = "raw",
+        feature_version: str = "v1",
     ):
         if score_calibration not in {"raw", "percentile"}:
             raise ValueError("score_calibration must be raw or percentile")
+        if feature_version not in {"v1", "v2", "v2b"}:
+            raise ValueError("feature_version must be v1, v2, or v2b")
         self.estimator = estimator
         self.legal_train_rows = tuple(legal_train_rows)
         self.score_calibration = score_calibration
+        self.feature_version = feature_version
+        self.feature_names, self.feature_fingerprint = _feature_schema(feature_version)
 
     def fit(self, matrix: TrainingMatrix) -> LearnedRanker:
         if not matrix.groups:
@@ -250,6 +261,7 @@ class LearnedRanker:
         semantic_scores: Mapping[int, float],
         state: PreferenceState,
         top_k: int = 10,
+        latent_scores: Mapping[int, float] | None = None,
     ) -> list[RecommendedMovie]:
         history = tuple(
             Rating(0, movie_id, 5, index)
@@ -264,6 +276,8 @@ class LearnedRanker:
             train_rows=self.legal_train_rows,
             state=state,
             score_calibration=self.score_calibration,
+            latent_scores=latent_scores,
+            feature_version=self.feature_version,
         )
         return self.rank_feature_rows(
             movies,
@@ -285,7 +299,12 @@ class LearnedRanker:
             return []
         rows = [features_by_movie[movie_id] for movie_id in ids]
         for movie_id, row in zip(ids, rows, strict=True):
-            _validate_row(row, user_id=None, movie_id=movie_id)
+            _validate_row(
+                row,
+                user_id=None,
+                movie_id=movie_id,
+                expected_count=len(self.feature_names),
+            )
         predictions = [float(value) for value in self.estimator.predict(rows)]
         contributions = self.estimator.predict(rows, pred_contrib=True)
         if len(predictions) != len(ids) or len(contributions) != len(ids):
@@ -295,9 +314,11 @@ class LearnedRanker:
             if not math.isfinite(score):
                 raise ValueError(f"ranker prediction must be finite: movie={movie_id}")
             values = [float(value) for value in raw_contrib]
-            if len(values) != len(FEATURE_NAMES) + 1:
+            if len(values) != len(self.feature_names) + 1:
                 raise ValueError("prediction contributions do not match feature schema")
-            contribution_map = dict(zip((*FEATURE_NAMES, "bias"), values, strict=True))
+            contribution_map = dict(
+                zip((*self.feature_names, "bias"), values, strict=True)
+            )
             if not math.isclose(sum(values), score, rel_tol=1e-6, abs_tol=1e-6):
                 raise ValueError(
                     f"feature contributions do not reconcile with prediction for movie={movie_id}"
@@ -347,17 +368,69 @@ class RankerArtifact(BaseModel):
     fold_map: dict[int, int]
     validation_rows_fingerprint: str
     validation_user_count: int = Field(gt=0)
+    latent_artifact_checksum: str | None = None
+    latent_provenance: dict[str, Any] | None = None
 
     @model_validator(mode="after")
     def validate_contract(self) -> RankerArtifact:
-        if self.schema_version != ARTIFACT_SCHEMA_VERSION or self.kind != "lambdamart":
+        if self.schema_version not in {
+            ARTIFACT_SCHEMA_VERSION,
+            ARTIFACT_SCHEMA_VERSION_V2,
+        } or self.kind != "lambdamart":
             raise ValueError("unsupported LambdaMART artifact schema or kind")
-        if (
-            self.feature_schema_version != FEATURE_SCHEMA_VERSION
-            or self.feature_names != FEATURE_NAMES
-            or self.feature_fingerprint != FEATURE_SCHEMA_FINGERPRINT
-        ):
-            raise ValueError("ranker artifact feature schema mismatch")
+        is_v2 = self.schema_version == ARTIFACT_SCHEMA_VERSION_V2
+        if is_v2:
+            if self.feature_schema_version not in {
+                FEATURE_SCHEMA_VERSION_V2,
+                FEATURE_SCHEMA_VERSION_V2B,
+            }:
+                raise ValueError("ranker artifact feature schema mismatch")
+            expected_names = (
+                FEATURE_NAMES_V2
+                if self.feature_schema_version == FEATURE_SCHEMA_VERSION_V2
+                else FEATURE_NAMES_V2B
+            )
+            expected_fingerprint = (
+                FEATURE_SCHEMA_FINGERPRINT_V2
+                if self.feature_schema_version == FEATURE_SCHEMA_VERSION_V2
+                else FEATURE_SCHEMA_FINGERPRINT_V2B
+            )
+            if (
+                self.feature_names != expected_names
+                or self.feature_fingerprint != expected_fingerprint
+            ):
+                raise ValueError("ranker artifact feature schema mismatch")
+            if not re.fullmatch(r"[0-9a-f]{64}", self.latent_artifact_checksum or ""):
+                raise ValueError("ranker artifact latent checksum is invalid")
+            provenance = self.latent_provenance or {}
+            required_latent = {
+                "training_fingerprint",
+                "rank",
+                "iterations",
+                "alpha",
+                "lambda_reg",
+                "seed",
+                "top_k",
+                "artifact_path",
+            }
+            if set(provenance) != required_latent:
+                raise ValueError("ranker artifact latent provenance is incomplete")
+            if not re.fullmatch(
+                r"[0-9a-f]{64}", str(provenance["training_fingerprint"])
+            ):
+                raise ValueError("ranker artifact latent training fingerprint is invalid")
+        else:
+            if (
+                self.feature_schema_version != FEATURE_SCHEMA_VERSION
+                or self.feature_names != FEATURE_NAMES
+                or self.feature_fingerprint != FEATURE_SCHEMA_FINGERPRINT
+            ):
+                raise ValueError("ranker artifact feature schema mismatch")
+            if (
+                self.latent_artifact_checksum is not None
+                or self.latent_provenance is not None
+            ):
+                raise ValueError("ranker artifact v1 cannot carry latent fields")
         provenance_strings = (
             self.dataset_fingerprint,
             self.training_rows_fingerprint,
@@ -527,6 +600,8 @@ def artifact_from_estimator(
     training_group_count: int,
     provenance: Mapping[str, Any] | None = None,
     cv_results: Sequence[Mapping[str, Any]] = (),
+    latent_artifact_checksum: str | None = None,
+    latent_provenance: Mapping[str, Any] | None = None,
 ) -> RankerArtifact:
     booster = getattr(estimator, "booster_", None)
     if booster is None or not hasattr(booster, "model_to_string"):
@@ -536,6 +611,13 @@ def artifact_from_estimator(
     }
     provenance = dict(provenance or {})
     model_string = str(booster.model_to_string())
+    kwargs: dict[str, Any] = {}
+    if latent_artifact_checksum is not None or latent_provenance is not None:
+        kwargs = {
+            "schema_version": ARTIFACT_SCHEMA_VERSION_V2,
+            "latent_artifact_checksum": latent_artifact_checksum,
+            "latent_provenance": dict(latent_provenance or {}),
+        }
     return RankerArtifact(
         selected_params=dict(selected_params),
         dataset_fingerprint=dataset_fingerprint,
@@ -546,6 +628,7 @@ def artifact_from_estimator(
         model_checksum=hashlib.sha256(model_string.encode()).hexdigest(),
         cv_results=[dict(row) for row in cv_results],
         **provenance,
+        **kwargs,
     )
 
 
@@ -636,6 +719,7 @@ def parse_ranker_artifact(
     expected_candidate_policy_fingerprint: str | None = None,
     expected_config_fingerprint: str | None = None,
     expected_case_fingerprint: str | None = None,
+    expected_latent_artifact_checksum: str | None = None,
 ) -> RankerArtifact:
     if len(raw) > MAX_ARTIFACT_BYTES:
         raise ValueError("invalid LambdaMART artifact: artifact exceeds maximum size")
@@ -669,6 +753,8 @@ def parse_ranker_artifact(
             "validation_rows_fingerprint",
             "validation_user_count",
         }
+        if payload.get("schema_version") == ARTIFACT_SCHEMA_VERSION_V2:
+            required |= {"latent_artifact_checksum", "latent_provenance"}
         missing = sorted(required - set(payload))
         if missing:
             raise ValueError(f"missing required fields: {missing}")
@@ -701,6 +787,11 @@ def parse_ranker_artifact(
         and artifact.case_fingerprint != expected_case_fingerprint
     ):
         raise ValueError("ranker artifact case fingerprint mismatch")
+    if (
+        expected_latent_artifact_checksum is not None
+        and artifact.latent_artifact_checksum != expected_latent_artifact_checksum
+    ):
+        raise ValueError("ranker artifact latent checksum mismatch")
     for package, stored_version in artifact.dependency_versions.items():
         runtime_version = _dependency_version(package)
         if stored_version == "test":
@@ -713,6 +804,16 @@ def parse_ranker_artifact(
                 f"artifact={stored_version}, runtime={runtime_version}"
             )
     return artifact
+
+
+def _feature_schema(feature_version: str) -> tuple[tuple[str, ...], str]:
+    if feature_version == "v1":
+        return FEATURE_NAMES, FEATURE_SCHEMA_FINGERPRINT
+    if feature_version == "v2":
+        return FEATURE_NAMES_V2, FEATURE_SCHEMA_FINGERPRINT_V2
+    if feature_version == "v2b":
+        return FEATURE_NAMES_V2B, FEATURE_SCHEMA_FINGERPRINT_V2B
+    raise ValueError("feature_version must be v1, v2, or v2b")
 
 
 def _validate_row(

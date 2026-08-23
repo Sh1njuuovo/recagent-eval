@@ -49,7 +49,10 @@ def test_bundle_manifest_is_required_and_detects_mixed_pair(tmp_path: Path) -> N
     manifest = tmp_path / "bundle.json"
     publish_ranker_bundle(b"model", b"evidence", model, evidence, manifest, _metadata())
 
-    assert load_ranker_bundle(model, evidence, manifest) == (b"model", b"evidence")
+    bundle = load_ranker_bundle(model, evidence, manifest)
+    assert bundle.model_bytes == b"model"
+    assert bundle.evidence_bytes == b"evidence"
+    assert bundle.latent_bytes is None
     evidence.write_bytes(b"replacement")
     with pytest.raises(ValueError, match="evidence hash"):
         load_ranker_bundle(model, evidence, manifest)
@@ -91,10 +94,10 @@ def test_bundle_refuses_overwrite_and_preserves_existing_valid_pair(tmp_path: Pa
             b"new-model", b"new-evidence", model, evidence, manifest, _metadata()
         )
 
-    assert load_ranker_bundle(model, evidence, manifest) == (
-        b"old-model",
-        b"old-evidence",
-    )
+    bundle = load_ranker_bundle(model, evidence, manifest)
+    assert bundle.model_bytes == b"old-model"
+    assert bundle.evidence_bytes == b"old-evidence"
+    assert bundle.latent_bytes is None
 
 
 def test_safe_reader_rejects_symlink_oversize_and_nonregular(tmp_path: Path) -> None:
@@ -183,7 +186,68 @@ def test_concurrent_bundle_publishers_cannot_create_mixed_pair(tmp_path: Path) -
         outcomes = list(executor.map(publish, ("first", "second")))
 
     assert sorted(outcomes) == ["published", "rejected"]
-    model_bytes, evidence_bytes = load_ranker_bundle(model, evidence, manifest)
+    bundle = load_ranker_bundle(model, evidence, manifest)
+    model_bytes = bundle.model_bytes
+    evidence_bytes = bundle.evidence_bytes
     assert model_bytes.removeprefix(b"model-") == evidence_bytes.removeprefix(
         b"evidence-"
     )
+
+
+def test_bundle_v2_publishes_and_loads_latent_member(tmp_path: Path) -> None:
+    model_path = tmp_path / "model.json"
+    evidence_path = tmp_path / "evidence.json"
+    manifest_path = tmp_path / "bundle.json"
+    latent_path = tmp_path / "latent.npz"
+    latent_manifest_path = tmp_path / "latent.npz.json"
+    publish_ranker_bundle(
+        b"model",
+        b"evidence",
+        model_path,
+        evidence_path,
+        manifest_path,
+        _metadata(),
+        latent_member=(latent_path, b"latent-data"),
+        latent_manifest_member=(latent_manifest_path, b'{"checksum": "abc"}'),
+    )
+    bundle = load_ranker_bundle(
+        model_path,
+        evidence_path,
+        manifest_path,
+        latent_path=latent_path,
+        latent_manifest_path=latent_manifest_path,
+    )
+    assert bundle.model_bytes == b"model"
+    assert bundle.evidence_bytes == b"evidence"
+    assert bundle.latent_bytes == b"latent-data"
+    assert bundle.manifest.schema_version == "lambdamart-bundle/v2"
+
+
+def test_bundle_v2_requires_latent_paths_and_rejects_mismatch(tmp_path: Path) -> None:
+    model_path = tmp_path / "model.json"
+    evidence_path = tmp_path / "evidence.json"
+    manifest_path = tmp_path / "bundle.json"
+    latent_path = tmp_path / "latent.npz"
+    latent_manifest_path = tmp_path / "latent.npz.json"
+    publish_ranker_bundle(
+        b"model",
+        b"evidence",
+        model_path,
+        evidence_path,
+        manifest_path,
+        _metadata(),
+        latent_member=(latent_path, b"latent-data"),
+        latent_manifest_member=(latent_manifest_path, b'{"checksum": "abc"}'),
+    )
+    with pytest.raises(ValueError, match="latent"):
+        load_ranker_bundle(model_path, evidence_path, manifest_path)
+    other = tmp_path / "other.json"
+    other.write_bytes(b'{"checksum": "different"}')
+    with pytest.raises(ValueError, match="latent"):
+        load_ranker_bundle(
+            model_path,
+            evidence_path,
+            manifest_path,
+            latent_path=latent_path,
+            latent_manifest_path=other,
+        )

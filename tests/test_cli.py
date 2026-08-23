@@ -642,7 +642,13 @@ def _stub_learned_preclaim(monkeypatch, *, validation_fingerprint: str) -> None:
         evidence_fingerprint="gate", per_user_rows=[], mean_ndcg_delta=0.1
     )
     monkeypatch.setattr(
-        "recagent_eval.cli.load_ranker_bundle", lambda *args, **kwargs: (b"model", b"evidence")
+        "recagent_eval.cli.load_ranker_bundle",
+        lambda *args, **kwargs: SimpleNamespace(
+            model_bytes=b"model",
+            evidence_bytes=b"evidence",
+            latent_bytes=None,
+            manifest=SimpleNamespace(schema_version="lambdamart-bundle/v1"),
+        ),
     )
     monkeypatch.setattr(
         "recagent_eval.cli.LearnedValidationEvidence",

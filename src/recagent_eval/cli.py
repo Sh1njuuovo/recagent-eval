@@ -300,11 +300,13 @@ def select_ranker_command(
         )
         registered_case_fingerprint = case_fingerprint(load_cases(cases_path))
         try:
-            model_bytes, evidence_bytes = load_ranker_bundle(
+            bundle = load_ranker_bundle(
                 Path(config.learned_model_path),
                 Path(config.learned_evidence_path),
                 Path(config.learned_bundle_manifest_path),
             )
+            model_bytes = bundle.model_bytes
+            evidence_bytes = bundle.evidence_bytes
             artifact = parse_ranker_artifact(
                 model_bytes,
                 expected_dataset_fingerprint=learned_dataset_fingerprint,
@@ -816,7 +818,13 @@ def _evaluate_learned_ranker(
         if config.semantic_cache_path is not None:
             frozen_paths["semantic cache"] = Path(config.semantic_cache_path)
         ensure_distinct_files(frozen_paths)
-        model_bytes, evidence_bytes = load_ranker_bundle(
+        latent_kwargs: dict[str, Path] = {}
+        if config.latent_enabled and config.latent_artifact_path is not None:
+            latent_kwargs = {
+                "latent_path": Path(config.latent_artifact_path),
+                "latent_manifest_path": Path(f"{config.latent_artifact_path}.json"),
+            }
+        bundle = load_ranker_bundle(
             Path(config.learned_model_path),
             evidence_path,
             Path(config.learned_bundle_manifest_path),
@@ -827,7 +835,10 @@ def _evaluate_learned_ranker(
                 "candidate_policy_fingerprint": config.learned_candidate_policy_fingerprint,
                 "feature_fingerprint": FEATURE_SCHEMA_FINGERPRINT,
             },
+            **latent_kwargs,
         )
+        model_bytes = bundle.model_bytes
+        evidence_bytes = bundle.evidence_bytes
     except (OSError, ValueError) as exc:
         raise typer.BadParameter(str(exc)) from exc
     try:

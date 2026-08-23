@@ -4,6 +4,7 @@ import copy
 
 import pytest
 
+from recagent_eval.candidate_features import FEATURE_SCHEMA_FINGERPRINT_V2
 from recagent_eval.data import Movie, Rating, leakage_safe_ranking_split
 from recagent_eval.lambdamart_pipeline import build_fold_queries
 from recagent_eval.learned_ranking import CandidateQuery
@@ -382,3 +383,40 @@ def test_fold_candidate_statistics_fit_only_training_users(monkeypatch) -> None:
 
     assert seen_fit_users == [{1, 2, 3}, {1, 2, 3}]
     assert all(40 not in movie_ids for movie_ids in seen_fit_movies)
+
+
+def test_v2_evidence_carries_latent_provenance() -> None:
+    rows = [
+        {
+            "user_id": 1,
+            "itemcf_ndcg_at_10": 0.0,
+            "lambdamart_ndcg_at_10": 1.0,
+            "itemcf_recall_at_10": 0.0,
+            "lambdamart_recall_at_10": 1.0,
+            "itemcf_hit_at_10": 0.0,
+            "lambdamart_hit_at_10": 1.0,
+            "itemcf_candidate_recall": 1.0,
+            "dense_candidate_recall": 1.0,
+            "union_candidate_recall": 1.0,
+            "constraint_satisfied": True,
+            "legal_history_movie_ids": [2],
+            "allowed_movie_ids": [3],
+            "lambdamart_ranked_movie_ids": [3],
+            "latency_ms": 0.0,
+        }
+    ]
+    evidence = build_validation_evidence(
+        rows,
+        dataset_fingerprint="dataset",
+        feature_fingerprint=FEATURE_SCHEMA_FINGERPRINT_V2,
+        model_fingerprint="model",
+        candidate_policy_fingerprint="policy",
+        seed=42,
+        provenance={
+            "schema_version": "lambdamart-validation/v2",
+            "latent_artifact_checksum": "a" * 64,
+            "latent_provenance": {"training_fingerprint": "b" * 64},
+        },
+    )
+    assert evidence.schema_version == "lambdamart-validation/v2"
+    assert evidence.latent_artifact_checksum == "a" * 64
