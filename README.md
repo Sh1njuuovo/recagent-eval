@@ -354,12 +354,20 @@ users never used in earlier selection, using validation targets only.
 The unified harness (`evaluate-baselines`) reports Recall/NDCG/MRR@10,
 coverage, constraint satisfaction, candidate recall, p50/p95 latency,
 training time, memory, and model size, with user-level 2,000 paired bootstrap
-deltas. Implemented so far (each with determinism/leakage/serialization tests
-and a 30-user smoke): Popularity, ItemCF direct, ALS direct (dev-CV
-hyperparameters), and the current v2b method (trained on
-historical-500 ∪ development, evaluated on confirmation cohorts). BPR-MF and
-LightGCN are in progress; no confirmation result is claimed until the full
-comparison runs.
+deltas. Six methods are implemented (each with determinism/leakage/
+serialization tests and a 30-user smoke): Popularity, ItemCF direct, ALS
+direct (dev-CV hyperparameters), BPR-MF, LightGCN, and the current v2b method
+(trained on historical-500 ∪ development, evaluated on confirmation cohorts).
+
+Pre-registered **Success A is met and certified on both untouched
+confirmation cohorts** (1000 users each; see
+[confirmation-A](reports/experiments/v2-strong-baselines-confirmation-a.md)
+and [confirmation-B](reports/experiments/v2-strong-baselines-confirmation-b.md)):
+the current v2b method beats ItemCF with paired-bootstrap 95% CI lower bound
+> 0 (A: +0.0146 [0.0024, 0.0267]; B: +0.0231 [0.0118, 0.0346] NDCG@10), beats
+ALS direct and BPR-MF with the same CI rule on B, keeps Recall@10 well above
+ItemCF (0.099/0.118 vs 0.075/0.064), and holds constraints at 100%. The frozen
+test remains locked and has never been consumed.
 
 ## Testing and evidence
 
