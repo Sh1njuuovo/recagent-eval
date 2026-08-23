@@ -941,8 +941,10 @@ def summarize_baselines_cli(
         )
     methods = ["popularity", "itemcf_direct", "als_direct", "current_v2b", "bpr_mf", "lightgcn"]
     artifacts: dict[str, object] = {}
+    file_cohort = cohort.replace("_", "-")
     for method in methods:
-        path = artifact_dir / f"{method}-{cohort}.json"
+        file_method = method.replace("_", "-")
+        path = artifact_dir / f"{file_method}-{file_cohort}.json"
         if not path.exists():
             raise typer.BadParameter(f"missing baseline artifact: {path}")
         try:
