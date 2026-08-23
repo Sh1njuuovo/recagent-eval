@@ -173,3 +173,51 @@ def test_invalid_nested_ranker_is_rejected(
 
     with pytest.raises(ValueError, match=message):
         load_experiment_config(path)
+
+
+_KNOWN_V1_POLICY = "a3c3475fec9b49b3e67923a73e97d10c2017031050abcbc8f1e468824b52eb41"
+_KNOWN_V1_CONFIG = "3c0abb8bc68e8e890194e3ba0ddac1941627f35b48c3277a39e3a8cb45ef6396"
+
+
+def test_latent_disabled_default_keeps_fingerprints() -> None:
+    from recagent_eval.lambdamart_pipeline import (
+        candidate_policy_fingerprint,
+        lambdamart_config_fingerprint,
+    )
+
+    config = load_experiment_config(Path("configs/v2_dense_recall1500.yaml"))
+    assert config.latent_enabled is False
+    assert config.ranker_feature_version == "v1"
+    assert candidate_policy_fingerprint(config) == _KNOWN_V1_POLICY
+    assert lambdamart_config_fingerprint(config) == _KNOWN_V1_CONFIG
+
+
+def test_latent_enabled_validates_artifact_path_and_params(tmp_path: Path) -> None:
+    path = tmp_path / "latent.yaml"
+    path.write_text(
+        "latent:\n"
+        "  enabled: true\n"
+        "  artifact_path: artifacts/experiments/run/latent.npz\n"
+        "ranker:\n"
+        "  negative_policy: route_balanced\n"
+        "  max_negatives: 200\n"
+        "  feature_version: v2\n"
+    )
+    config = load_experiment_config(path)
+    assert config.latent_enabled is True
+    assert config.latent_top_k == 500
+    assert config.ranker_negative_policy == "route_balanced"
+    assert config.ranker_max_negatives == 200
+    missing = tmp_path / "missing.yaml"
+    missing.write_text("latent:\n  enabled: true\n")
+    with pytest.raises(ValueError, match="artifact_path"):
+        load_experiment_config(missing)
+    bad = tmp_path / "bad.yaml"
+    bad.write_text(
+        "latent:\n"
+        "  enabled: true\n"
+        "  artifact_path: x.npz\n"
+        "  top_k: 0\n"
+    )
+    with pytest.raises(ValueError, match="top_k"):
+        load_experiment_config(bad)

@@ -51,6 +51,17 @@ class ExperimentConfig:
     semantic_cache_path: str | None = None
     semantic_device: str = "cpu"
     semantic_top_k: int | None = None
+    latent_enabled: bool = False
+    latent_rank: int = 20
+    latent_iterations: int = 12
+    latent_alpha: float = 40.0
+    latent_lambda_reg: float = 0.1
+    latent_top_k: int = 500
+    latent_seed: int = 42
+    latent_artifact_path: str | None = None
+    ranker_max_negatives: int | None = None
+    ranker_negative_policy: str = "all"
+    ranker_feature_version: str = "v1"
     learned_model_path: str | None = None
     learned_evidence_path: str | None = None
     learned_bundle_manifest_path: str | None = None

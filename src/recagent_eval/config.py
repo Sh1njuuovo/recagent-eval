@@ -115,6 +115,51 @@ def load_experiment_config(path: Path) -> ExperimentConfig:
     )
     if semantic_top_k is not None and semantic_top_k <= 0:
         raise ValueError("semantic.top_k must be positive")
+    latent_payload = payload.get("latent") or {}
+    if not isinstance(latent_payload, dict):
+        raise ValueError("latent must be a mapping")
+    latent_enabled = bool(latent_payload.get("enabled", False))
+    latent_artifact_value = latent_payload.get("artifact_path")
+    latent_artifact_path = (
+        str(latent_artifact_value).strip() if latent_artifact_value is not None else None
+    )
+    if latent_enabled and not latent_artifact_path:
+        raise ValueError("latent.artifact_path is required when latent.enabled is true")
+    latent_top_k = int(latent_payload.get("top_k", 500))
+    if latent_top_k <= 0:
+        raise ValueError("latent.top_k must be positive")
+    latent_rank = int(latent_payload.get("rank", 20))
+    latent_iterations = int(latent_payload.get("iterations", 12))
+    latent_alpha = float(latent_payload.get("alpha", 40.0))
+    latent_lambda_reg = float(latent_payload.get("lambda_reg", 0.1))
+    latent_seed = int(latent_payload.get("seed", 42))
+    if (
+        latent_rank <= 0
+        or latent_iterations <= 0
+        or latent_alpha <= 0.0
+        or latent_lambda_reg < 0.0
+    ):
+        raise ValueError(
+            "latent rank/iterations must be positive, alpha positive, lambda_reg non-negative"
+        )
+    ranker_max_negatives_value = ranker_payload.get("max_negatives")
+    ranker_max_negatives = (
+        int(ranker_max_negatives_value)
+        if ranker_max_negatives_value is not None
+        else None
+    )
+    if ranker_max_negatives is not None and ranker_max_negatives < 0:
+        raise ValueError("ranker.max_negatives must be non-negative or unset")
+    ranker_negative_policy = str(ranker_payload.get("negative_policy", "all"))
+    if ranker_negative_policy not in {"all", "itemcf", "itemcf_latent", "route_balanced"}:
+        raise ValueError(
+            "ranker.negative_policy must be all, itemcf, itemcf_latent, or route_balanced"
+        )
+    ranker_feature_version = str(ranker_payload.get("feature_version", "v1"))
+    if ranker_feature_version not in {"v1", "v2", "v2b"}:
+        raise ValueError("ranker.feature_version must be v1, v2, or v2b")
+    if ranker_feature_version != "v1" and not latent_enabled:
+        raise ValueError("ranker.feature_version v2/v2b requires latent.enabled")
     return ExperimentConfig(
         name=str(payload.get("name") or path.stem),
         weights=weights,
@@ -133,6 +178,17 @@ def load_experiment_config(path: Path) -> ExperimentConfig:
         semantic_cache_path=semantic_cache_path,
         semantic_device=semantic_device,
         semantic_top_k=semantic_top_k,
+        latent_enabled=latent_enabled,
+        latent_rank=latent_rank,
+        latent_iterations=latent_iterations,
+        latent_alpha=latent_alpha,
+        latent_lambda_reg=latent_lambda_reg,
+        latent_top_k=latent_top_k,
+        latent_seed=latent_seed,
+        latent_artifact_path=latent_artifact_path,
+        ranker_max_negatives=ranker_max_negatives,
+        ranker_negative_policy=ranker_negative_policy,
+        ranker_feature_version=ranker_feature_version,
         learned_model_path=learned_model_path,
         learned_evidence_path=learned_evidence_path,
         learned_bundle_manifest_path=learned_bundle_manifest_path,
