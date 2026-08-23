@@ -14,6 +14,7 @@ from recagent_eval.baselines import als_direct as _als_registration  # noqa: F40
 from recagent_eval.baselines import bpr_mf as _bpr_registration  # noqa: F401
 from recagent_eval.baselines import current_v2b as _v2b_registration  # noqa: F401
 from recagent_eval.baselines import itemcf_direct as _itemcf_registration  # noqa: F401
+from recagent_eval.baselines import lightgcn as _lightgcn_registration  # noqa: F401
 from recagent_eval.baselines import popularity as _popularity_registration  # noqa: F401
 from recagent_eval.bundle import load_ranker_bundle
 from recagent_eval.candidate_features import (
