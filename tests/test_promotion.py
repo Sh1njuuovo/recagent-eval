@@ -18,7 +18,9 @@ from recagent_eval.promotion import (
     canonical_payload_sha256,
     derive_execution_paths,
     load_source_inventory,
+    publish_promotion_package,
     validate_relative_path,
+    validate_semantic_source,
     verify_source_files,
 )
 
@@ -213,3 +215,87 @@ def test_committed_source_inventory_is_strict_and_self_fingerprinted() -> None:
     inventory = load_source_inventory(path)
     assert inventory.fingerprint == canonical_payload_sha256(json.loads(path.read_text()))
     assert set(inventory.members) == set(PACKAGE_MEMBER_NAMES)
+
+
+def _semantic_manifest(identity: SemanticCacheIdentity) -> dict[str, object]:
+    return {
+        "model_name": identity.model_name,
+        "resolved_revision": identity.immutable_revision,
+        "dataset_fingerprint": identity.dataset_fingerprint,
+        "dimension": identity.dimension,
+        "embedding_dtype": identity.dtype,
+        "normalized": True,
+    }
+
+
+def _semantic_fixture() -> tuple[SemanticCacheIdentity, dict[str, object]]:
+    payload = _semantic()
+    provisional = SemanticCacheIdentity.model_validate(payload)
+    manifest = _semantic_manifest(provisional)
+    payload["cache_manifest_fingerprint"] = canonical_payload_sha256(manifest)
+    return SemanticCacheIdentity.model_validate(payload), manifest
+
+
+def test_atomic_package_publication_publishes_all_members_together(tmp_path) -> None:
+    sources = {}
+    for name in PACKAGE_MEMBER_NAMES:
+        path = tmp_path / "sources" / name.replace("/", "-")
+        path.parent.mkdir(exist_ok=True)
+        path.write_bytes(name.encode())
+        sources[name] = path
+    semantic, semantic_manifest = _semantic_fixture()
+    sources["semantic.npz.json"].write_text(json.dumps(semantic_manifest))
+    inventory = _inventory_for_sources(sources).model_copy(update={"semantic": semantic})
+    inventory = inventory.model_copy(
+        update={"fingerprint": canonical_payload_sha256(inventory.model_dump())}
+    )
+    validate_semantic_source(inventory, sources["semantic.npz.json"])
+
+    destination = publish_promotion_package(tmp_path, inventory, sources)
+
+    assert destination == tmp_path / "artifacts/promotion/current-v2b"
+    assert sorted(path.name for path in destination.iterdir()) == sorted(
+        PACKAGE_MEMBER_NAMES
+    )
+    verify_source_files(
+        inventory, {name: destination / name for name in PACKAGE_MEMBER_NAMES}
+    )
+    with pytest.raises(ValueError, match="refuses to overwrite"):
+        publish_promotion_package(tmp_path, inventory, sources)
+
+
+def test_atomic_package_publication_rejects_unsafe_sources_and_rename_failure(
+    tmp_path, monkeypatch
+) -> None:
+    sources = {}
+    for name in PACKAGE_MEMBER_NAMES:
+        path = tmp_path / "sources" / name.replace("/", "-")
+        path.parent.mkdir(exist_ok=True)
+        path.write_bytes(name.encode())
+        sources[name] = path
+    semantic, semantic_manifest = _semantic_fixture()
+    sources["semantic.npz.json"].write_text(json.dumps(semantic_manifest))
+    inventory = _inventory_for_sources(sources).model_copy(update={"semantic": semantic})
+    inventory = inventory.model_copy(
+        update={"fingerprint": canonical_payload_sha256(inventory.model_dump())}
+    )
+
+    symlink = tmp_path / "semantic-link"
+    symlink.symlink_to(sources["semantic.npz"])
+    unsafe = {**sources, "semantic.npz": symlink}
+    with pytest.raises(ValueError, match="unsafe"):
+        publish_promotion_package(tmp_path, inventory, unsafe)
+
+    hardlink = tmp_path / "model-hardlink"
+    hardlink.hardlink_to(sources["model.json"])
+    with pytest.raises(ValueError, match="unique regular"):
+        publish_promotion_package(tmp_path, inventory, sources)
+    hardlink.unlink()
+
+    monkeypatch.setattr(
+        "recagent_eval.promotion.os.rename",
+        lambda *args: (_ for _ in ()).throw(OSError("simulated rename failure")),
+    )
+    with pytest.raises(OSError, match="rename failure"):
+        publish_promotion_package(tmp_path, inventory, sources)
+    assert not (tmp_path / "artifacts/promotion/current-v2b").exists()

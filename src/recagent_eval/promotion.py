@@ -4,7 +4,9 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import stat
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Literal
@@ -136,6 +138,127 @@ def verify_source_files(
         expected = inventory.members[name]
         if metadata.st_size != expected.size_bytes or digest.hexdigest() != expected.sha256:
             raise ValueError(f"source member {name} identity mismatch")
+
+
+def validate_semantic_source(
+    inventory: SourceInventory,
+    manifest_path: os.PathLike[str],
+) -> None:
+    try:
+        raw = read_regular_file(Path(manifest_path), max_bytes=1024 * 1024)
+        payload = json.loads(raw)
+    except (OSError, TypeError, ValueError) as exc:
+        raise ValueError(f"invalid semantic cache manifest: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("invalid semantic cache manifest: expected an object")
+    semantic = inventory.semantic
+    comparisons = {
+        "model_name": semantic.model_name,
+        "resolved_revision": semantic.immutable_revision,
+        "dataset_fingerprint": semantic.dataset_fingerprint,
+        "dimension": semantic.dimension,
+        "embedding_dtype": semantic.dtype,
+        "normalized": True,
+    }
+    for field, expected in comparisons.items():
+        if payload.get(field) != expected:
+            raise ValueError(f"semantic cache manifest {field} mismatch")
+    if canonical_payload_sha256(payload) != semantic.cache_manifest_fingerprint:
+        raise ValueError("semantic cache manifest fingerprint mismatch")
+
+
+def _repo_destination(repo_root: Path, relative: str) -> Path:
+    normalized = validate_relative_path(relative)
+    root = repo_root.resolve(strict=True)
+    candidate = root.joinpath(*PurePosixPath(normalized).parts)
+    resolved = candidate.resolve(strict=False)
+    if not resolved.is_relative_to(root):
+        raise ValueError("promotion destination escapes repository root")
+    current = root
+    for part in PurePosixPath(normalized).parts[:-1]:
+        current /= part
+        if os.path.lexists(current):
+            metadata = current.lstat()
+            if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+                raise ValueError("promotion destination contains an unsafe component")
+    return candidate
+
+
+def publish_promotion_package(
+    repo_root: Path,
+    inventory: SourceInventory,
+    source_paths: dict[str, os.PathLike[str]],
+) -> Path:
+    verify_source_files(inventory, source_paths)
+    validate_semantic_source(inventory, source_paths["semantic.npz.json"])
+    expected_paths = {
+        name: f"artifacts/promotion/current-v2b/{name}"
+        for name in PACKAGE_MEMBER_NAMES
+    }
+    if any(inventory.members[name].path != expected for name, expected in expected_paths.items()):
+        raise ValueError("source inventory destination paths are not canonical")
+    final_path = _repo_destination(repo_root, "artifacts/promotion/current-v2b")
+    parent = final_path.parent
+    parent.mkdir(parents=True, exist_ok=True)
+    _repo_destination(repo_root, "artifacts/promotion/current-v2b")
+    if os.path.lexists(final_path):
+        raise ValueError("promotion package publication refuses to overwrite final directory")
+    build_path = Path(
+        tempfile.mkdtemp(prefix=".current-v2b.build-", dir=parent)
+    )
+    published = False
+    try:
+        for name in PACKAGE_MEMBER_NAMES:
+            source = os.fspath(source_paths[name])
+            destination = build_path / name
+            source_fd = os.open(source, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            destination_fd = os.open(
+                destination,
+                os.O_WRONLY
+                | os.O_CREAT
+                | os.O_EXCL
+                | getattr(os, "O_NOFOLLOW", 0),
+                0o600,
+            )
+            try:
+                with os.fdopen(source_fd, "rb") as source_stream, os.fdopen(
+                    destination_fd, "wb"
+                ) as destination_stream:
+                    source_fd = -1
+                    destination_fd = -1
+                    shutil.copyfileobj(source_stream, destination_stream, 1024 * 1024)
+                    destination_stream.flush()
+                    os.fsync(destination_stream.fileno())
+            finally:
+                if source_fd >= 0:
+                    os.close(source_fd)
+                if destination_fd >= 0:
+                    os.close(destination_fd)
+        verify_source_files(
+            inventory,
+            {name: build_path / name for name in PACKAGE_MEMBER_NAMES},
+        )
+        validate_semantic_source(inventory, build_path / "semantic.npz.json")
+        directory_fd = os.open(build_path, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+        if os.path.lexists(final_path):
+            raise ValueError(
+                "promotion package publication refuses to overwrite final directory"
+            )
+        os.rename(build_path, final_path)
+        published = True
+        parent_fd = os.open(parent, os.O_RDONLY)
+        try:
+            os.fsync(parent_fd)
+        finally:
+            os.close(parent_fd)
+    finally:
+        if not published and build_path.exists():
+            shutil.rmtree(build_path)
+    return final_path
 
 
 class PromotionManifest(BaseModel):
