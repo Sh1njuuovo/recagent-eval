@@ -169,3 +169,94 @@ def test_posthoc_input_rejects_method_cohort_seed_or_fingerprint_drift() -> None
         build_posthoc_robustness_input(
             source_artifacts={"lightgcn": {42: source}}, cohort="confirmation_b"
         )
+
+
+def test_posthoc_normalization_and_summary_fail_closed_error_paths() -> None:
+    source = _artifact("bpr_mf", "confirmation_b", "f" * 64)
+    with pytest.raises(ValueError, match="invalid source artifact"):
+        build_posthoc_robustness_input(
+            source_artifacts={"bpr_mf": {42: b"{"}}, cohort="confirmation_b"
+        )
+    with pytest.raises(ValueError, match="source cohort"):
+        build_posthoc_robustness_input(
+            source_artifacts={"bpr_mf": {42: source}}, cohort="confirmation_a"
+        )
+    unknown = json.loads(source)
+    unknown["schema_version"] = "unknown/v9"
+    with pytest.raises(ValueError, match="unknown source schema"):
+        build_posthoc_robustness_input(
+            source_artifacts={"bpr_mf": {42: json.dumps(unknown).encode()}},
+            cohort="confirmation_b",
+        )
+    drift = json.loads(source)
+    drift["fingerprint"] = "drift"
+    with pytest.raises(ValueError, match="source fingerprint drift"):
+        build_posthoc_robustness_input(
+            source_artifacts={"bpr_mf": {42: json.dumps(drift).encode()}},
+            cohort="confirmation_b",
+        )
+    with pytest.raises(ValueError, match="legacy v1 source"):
+        build_posthoc_robustness_input(
+            source_artifacts={"bpr_mf": {7: source}}, cohort="confirmation_b"
+        )
+    missing = json.loads(source)
+    missing.pop("aggregates")
+    with pytest.raises(ValueError, match="aggregates missing"):
+        build_posthoc_robustness_input(
+            source_artifacts={"bpr_mf": {42: json.dumps(missing).encode()}},
+            cohort="confirmation_b",
+        )
+    invalid = json.loads(source)
+    invalid["aggregates"]["ndcg_at_10"] = float("nan")
+    with pytest.raises(ValueError, match="invalid ndcg_at_10"):
+        build_posthoc_robustness_input(
+            source_artifacts={"bpr_mf": {42: json.dumps(invalid).encode()}},
+            cohort="confirmation_b",
+        )
+    with pytest.raises(ValueError, match="exact seeds"):
+        build_posthoc_robustness_input(
+            source_artifacts={"bpr_mf": {42: source}}, cohort="confirmation_b"
+        )
+
+    with pytest.raises(ValueError, match="source methods"):
+        build_parameter_recovery_manifest(
+            selections={},
+            source_artifacts={"confirmation_b": {"bpr_mf": source}},
+            command="recover",
+            commit_sha="a" * 40,
+        )
+    with pytest.raises(ValueError, match="invalid source artifact"):
+        build_parameter_recovery_manifest(
+            selections={"bpr_mf": {}},
+            source_artifacts={"confirmation_b": {"bpr_mf": b"{"}},
+            command="recover",
+            commit_sha="a" * 40,
+        )
+
+
+def test_posthoc_summary_input_dispatch_rejects_malformed_layers() -> None:
+    with pytest.raises(ValueError, match="unknown post-hoc"):
+        summarize_posthoc_robustness_input({})
+
+    def bound(methods: object) -> dict[str, object]:
+        value: dict[str, object] = {
+            "schema_version": "posthoc-robustness-input/v1",
+            "methods": methods,
+        }
+        value["fingerprint"] = canonical_digest(value)
+        return value
+
+    with pytest.raises(ValueError, match="fingerprint drift"):
+        summarize_posthoc_robustness_input(
+            {"schema_version": "posthoc-robustness-input/v1", "fingerprint": "bad"}
+        )
+    with pytest.raises(ValueError, match="methods are missing"):
+        summarize_posthoc_robustness_input(bound([]))
+    with pytest.raises(ValueError, match="method is malformed"):
+        summarize_posthoc_robustness_input(bound({1: []}))
+    with pytest.raises(ValueError, match="row is malformed"):
+        summarize_posthoc_robustness_input(bound({"bpr_mf": [1]}))
+    with pytest.raises(ValueError, match="seed row is malformed"):
+        summarize_posthoc_robustness_input(
+            bound({"bpr_mf": [{"seed": True, "metrics": {}}]})
+        )
