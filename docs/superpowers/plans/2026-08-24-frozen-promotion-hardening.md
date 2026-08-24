@@ -202,3 +202,44 @@ three-route v2b candidate builder between validation and frozen execution.
    future command.
 5. Stop and request authorization naming the exact manifest SHA. Do not consume
    frozen cases in this plan.
+
+## Task 10: Read-only promotion package and no-replace output amendment
+
+**Files:**
+
+- Modify: `src/recagent_eval/retrieval.py`
+- Modify: `src/recagent_eval/cli.py`
+- Modify: `src/recagent_eval/promotion.py`
+- Modify: `tests/test_retrieval.py`, `tests/test_promotion.py`, `tests/test_cli.py`
+- Regenerate: `reports/promotion/current-v2b-manifest.json`
+- Regenerate: `reports/promotion/current-v2b.yaml`
+- Regenerate: `reports/promotion/current-v2b-validation.json`
+- Republish: `artifacts/promotion/current-v2b/`
+
+1. Write a RED test showing ordinary `DenseSemanticRetriever.load()` creates
+   the adjacent cache lock while the new promotion-only read-only load must not
+   create it or mutate cache/manifest bytes.
+2. Write a RED preflight invariant test that snapshots the exact seven member
+   names, SHA-256 values, and sizes before replay and rejects an extra lock file
+   or any post-load mutation.
+3. Add the minimal lock-free read-only dense-cache loading path and use it only
+   for promotion preflight/execution package members; retain locking for
+   mutable cache workflows.
+4. Write a RED race test that creates the final output immediately before the
+   publication primitive and requires publication to fail without replacing
+   those bytes.
+5. Implement atomic strict no-replace output publication using a temporary
+   regular file plus a filesystem operation whose success is conditional on
+   destination absence; fsync the published file and parent before `completed`.
+6. Rename identity fields, CLI arguments, validation messages, and docs so
+   `canonical_manifest_identity` is distinct from `manifest_file_sha256`.
+7. Commit production/test changes as the new hardening implementation commit.
+8. Remove the contaminated package by a recoverable move, then republish the
+   seven original source bytes through the existing whole-directory atomic
+   publisher. Do not train or rematerialize any member.
+9. Regenerate manifest, YAML, and label-free receipt against the new
+   implementation commit and canonical identity; preflight must prove identical
+   package snapshots before and after the complete ordered Confirmation-B
+   replay.
+10. Run the full quality gates and prove the newly derived real marker/output
+    paths do not exist. Stop before frozen consumption.

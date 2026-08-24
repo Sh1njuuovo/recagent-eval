@@ -7,6 +7,25 @@ Reading the real frozen cases, creating the real marker, and writing the real
 frozen output remain prohibited until the user separately replies
 `批准消费 frozen test`.
 
+**2026-08-24 read-only package amendment:** promotion preflight and execution
+must load the package-local dense cache through a lock-free, read-only API.
+They must never create `semantic.npz.lock` or any other adjacent file. A valid
+package directory contains exactly the seven members listed in section 3.1;
+preflight snapshots member names, SHA-256 values, and byte sizes before loading
+and proves that the same snapshot remains after replay. Any extra, missing, or
+changed member fails closed.
+
+The canonical JSON hash of the manifest payload is named the **canonical
+manifest identity** and is the value bound by future authorization. The SHA-256
+of the serialized `current-v2b-manifest.json` file is separately named the
+**manifest file SHA-256**. CLI flags, diagnostics, YAML fields, receipts, and
+documentation must not call the canonical identity a file SHA.
+
+Frozen output publication uses a filesystem no-replace primitive. The publish
+operation must fail if another process creates the destination after the
+initial validation and before publication; a check-then-rename sequence alone
+is insufficient.
+
 ## 1. Goal
 
 Build a manifest-driven promotion package that can prove the future frozen run
