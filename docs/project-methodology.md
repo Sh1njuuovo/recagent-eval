@@ -225,7 +225,7 @@ RRF 和 percentile fusion 也未通过验证门禁。因此下一步合理实验
 
 ### 6.1 v1 已验证事实
 
-- 229 个测试通过，当前 line coverage 为 90%。
+- 395 个测试通过，当前 line coverage 为 90.02%。
 - 约束感知 DeepSeek 评测中，结构化方案的计划合法率、pipeline、工具执行和硬约束指标达到 100%。
 - 正式矩阵中，ItemCF route candidate recall 为 0.78，完整双路 union recall 为 0.88。
 - 完整方案 Recall@10 为 0.04、NDCG@10 为 0.0149，没有超过结构化 ItemCF。

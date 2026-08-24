@@ -2,8 +2,8 @@
 
 ![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB)
 ![License](https://img.shields.io/badge/License-MIT-green)
-![Tests](https://img.shields.io/badge/tests-303%20passed-brightgreen)
-![Coverage](https://img.shields.io/badge/coverage-90%25-brightgreen)
+![Tests](https://img.shields.io/badge/tests-395%20passed-brightgreen)
+![Coverage](https://img.shields.io/badge/coverage-90.02%25-brightgreen)
 
 An evaluation-first conversational movie recommendation Agent that separates
 LLM preference understanding from deterministic filtering, retrieval, ranking,
@@ -372,14 +372,14 @@ uv run pytest
 uv run ruff check .
 ```
 
-The 250+ test suite covers schemas, memory updates, invalid plans, one-shot repair,
+The 395-test suite covers schemas, memory updates, invalid plans, one-shot repair,
 provider retries, chronological splitting, case-label preflight, frozen
 retrieval policy, hard constraints, route-level diagnostics, retrieval
 selection, ranking, weight tuning, metrics, CLI smoke tests, scripts, and
 deterministic manifests, rank-fusion calibration, evidence invariants, and the
 frozen-case gate, dense-cache integrity, and the torch/LightGBM OpenMP crash
 regressions, plus ALS fold-in determinism, latent artifact persistence, and
-schema-v2 contract dispatch. Current line coverage is 90%.
+schema-v2 contract dispatch. Current line coverage is 90.02%.
 
 - Upstream audit: [reports/audit/overview.md](reports/audit/overview.md)
 - Candidate ranking: [reports/ranking/candidate_score.md](reports/ranking/candidate_score.md)

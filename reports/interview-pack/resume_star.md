@@ -23,7 +23,7 @@
   排序器，模型/证据/指纹 bundle 单次消费、fail-closed。
 - 用 faulthandler + lldb 定位并修复真实原生崩溃：torch/LightGBM/scikit-learn
   三份 `libomp.dylib` 共存导致 LightGBM 多线程训练段错误，通过固定单线程并补
-  两个子进程回归测试解决；229 个自动化测试，90% 行覆盖率。
+  两个子进程回归测试解决；395 个自动化测试，90.02% 行覆盖率。
 - 从早期 500 用户 LambdaMART 负结果出发，通过 ALS latent route 与交叉/时序
   特征改善候选深度；在全新 1000-user Confirmation-B 上将 Recall@10 从
   ItemCF 0.064 提升至 0.118、NDCG@10 从 0.0323 提升至 0.0555，paired

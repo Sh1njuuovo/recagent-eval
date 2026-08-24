@@ -8,7 +8,7 @@
 | 本地最小路径 | `uv run recagent-eval smoke` | 完成 |
 | MovieLens 全链路 | 50 案例三组 rule-based 对照 | 完成 |
 | 核心代码讲解 | `docs/core-code-walkthrough.md` | 完成 |
-| 自动化测试 | pytest 229 tests，90% line coverage | 完成 |
+| 自动化测试 | pytest 395 tests，90.02% line coverage | 完成 |
 | 指标口径与负结果 | `reports/experiments/deepseek-constraint-aware.md` | 完成 |
 | 简历 4–5 行 | `resume_star.md` | 完成 |
 | 面试追问 | `interview_qa.md` | 完成 |
