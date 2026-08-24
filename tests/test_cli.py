@@ -694,6 +694,97 @@ def test_validation_replay_failure_does_not_consume_marker(tmp_path, monkeypatch
     assert not marker.exists()
 
 
+def test_learned_preflight_uses_artifact_v2b_contract_and_evidence_user_order(
+    tmp_path, monkeypatch
+) -> None:
+    from recagent_eval.cli import _evaluate_learned_ranker
+    from recagent_eval.runner import ExperimentConfig
+
+    rows = [{"user_id": 9}, {"user_id": 3}]
+    row_fingerprint = hashlib.sha256(
+        json.dumps(rows, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    evidence = SimpleNamespace(
+        evidence_fingerprint="gate", per_user_rows=rows, mean_ndcg_delta=0.1
+    )
+    artifact = SimpleNamespace(
+        validation_user_count=2,
+        validation_rows_fingerprint=row_fingerprint,
+        model_checksum="model-checksum",
+        model_dump=lambda **kwargs: {},
+    )
+    observed: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "recagent_eval.cli.load_ranker_bundle",
+        lambda *args, **kwargs: SimpleNamespace(
+            model_bytes=b"model",
+            evidence_bytes=b"evidence",
+            latent_bytes=b"latent",
+            manifest=SimpleNamespace(schema_version="lambdamart-bundle/v2"),
+        ),
+    )
+    monkeypatch.setattr(
+        "recagent_eval.cli.LearnedValidationEvidence",
+        SimpleNamespace(model_validate_json=lambda _raw: evidence),
+    )
+    monkeypatch.setattr("recagent_eval.cli._load_dataset", lambda _path: ({}, []))
+    split = SimpleNamespace(legal_retrieval_train=())
+    monkeypatch.setattr("recagent_eval.cli.leakage_safe_ranking_split", lambda _rows: split)
+    monkeypatch.setattr(
+        "recagent_eval.cli.ranking_dataset_fingerprint", lambda *args: "dataset"
+    )
+    monkeypatch.setattr("recagent_eval.cli.parse_ranker_artifact", lambda *a, **k: artifact)
+    monkeypatch.setattr("recagent_eval.cli.estimator_from_artifact", lambda _artifact: object())
+
+    class CapturingRanker:
+        def __init__(self, estimator, **kwargs):
+            observed["ranker"] = (estimator, kwargs)
+
+    monkeypatch.setattr("recagent_eval.cli.LearnedRanker", CapturingRanker)
+    monkeypatch.setattr("recagent_eval.cli.TfidfSemanticRetriever.fit", lambda _movies: object())
+
+    def capture_replay(*args, **kwargs):
+        observed["ordered_user_ids"] = kwargs["ordered_user_ids"]
+        return rows
+
+    monkeypatch.setattr("recagent_eval.cli.build_validation_rows", capture_replay)
+    monkeypatch.setattr("recagent_eval.cli.candidate_policy_fingerprint", lambda _c: "policy")
+    monkeypatch.setattr("recagent_eval.cli.lambdamart_config_fingerprint", lambda _c: "config")
+    monkeypatch.setattr("recagent_eval.cli.validate_learned_gate", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "recagent_eval.cli.consume_frozen_authorization",
+        lambda *a, **k: (_ for _ in ()).throw(ValueError("stop after replay")),
+    )
+    config = ExperimentConfig(
+        name="promotion-contract",
+        ranker_feature_version="v2b",
+        score_calibration="raw",
+        learned_model_path=str(tmp_path / "model.json"),
+        learned_bundle_manifest_path=str(tmp_path / "bundle.json"),
+        learned_dataset_fingerprint="dataset",
+        learned_config_fingerprint="config",
+        learned_case_fingerprint="cases",
+        learned_candidate_policy_fingerprint="policy",
+        learned_gate_fingerprint="gate",
+        learned_consumption_dir=str(tmp_path / "consumption"),
+    )
+
+    with pytest.raises(Exception, match="stop after replay"):
+        _evaluate_learned_ranker(
+            config=config,
+            evidence_path=tmp_path / "evidence.json",
+            cases_path=tmp_path / "synthetic-cases.json",
+            data_dir=tmp_path / "data",
+            output=tmp_path / "output.json",
+        )
+
+    assert observed["ordered_user_ids"] == (9, 3)
+    _, ranker_kwargs = observed["ranker"]
+    assert ranker_kwargs["score_calibration"] == "raw"
+    assert ranker_kwargs["feature_version"] == "v2b"
+
+
 def test_missing_bundle_members_do_not_consume_marker(tmp_path) -> None:
     config, marker = _learned_frozen_config(tmp_path)
     result = CliRunner().invoke(

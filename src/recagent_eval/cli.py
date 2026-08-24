@@ -23,6 +23,7 @@ from recagent_eval.bundle import load_ranker_bundle
 from recagent_eval.candidate_features import (
     FEATURE_SCHEMA_FINGERPRINT,
     FEATURE_SCHEMA_FINGERPRINT_V2,
+    FEATURE_SCHEMA_FINGERPRINT_V2B,
 )
 from recagent_eval.cases import (
     EvaluationCase,
@@ -1290,6 +1291,11 @@ def _evaluate_learned_ranker(
     data_dir: Path,
     output: Path,
 ) -> None:
+    feature_fingerprint = {
+        "v1": FEATURE_SCHEMA_FINGERPRINT,
+        "v2": FEATURE_SCHEMA_FINGERPRINT_V2,
+        "v2b": FEATURE_SCHEMA_FINGERPRINT_V2B,
+    }[config.ranker_feature_version]
     if config.learned_model_path is None:
         raise typer.BadParameter("ranker.model_path is required when ranker.kind is lambdamart")
     if config.learned_bundle_manifest_path is None:
@@ -1345,7 +1351,7 @@ def _evaluate_learned_ranker(
                 "config_fingerprint": config.learned_config_fingerprint,
                 "dataset_fingerprint": config.learned_dataset_fingerprint,
                 "candidate_policy_fingerprint": config.learned_candidate_policy_fingerprint,
-                "feature_fingerprint": FEATURE_SCHEMA_FINGERPRINT,
+                "feature_fingerprint": feature_fingerprint,
             },
             **latent_kwargs,
         )
@@ -1367,12 +1373,15 @@ def _evaluate_learned_ranker(
             expected_candidate_policy_fingerprint=candidate_policy_fingerprint(config),
             expected_config_fingerprint=lambdamart_config_fingerprint(config),
             expected_case_fingerprint=fixed_case_fingerprint,
+            expected_feature_fingerprint=feature_fingerprint,
         )
     except (OSError, ValueError) as exc:
         raise typer.BadParameter(str(exc)) from exc
     ranker = LearnedRanker(
         estimator_from_artifact(artifact),
         legal_train_rows=split.legal_retrieval_train,
+        score_calibration=config.score_calibration,
+        feature_version=config.ranker_feature_version,
     )
     if config.semantic_kind == "dense":
         if config.semantic_cache_path is None:
@@ -1391,6 +1400,18 @@ def _evaluate_learned_ranker(
             raise typer.BadParameter(str(exc)) from exc
     else:
         semantic = TfidfSemanticRetriever.fit(movies)
+    try:
+        ordered_user_ids = tuple(
+            int(row["user_id"]) for row in evidence.per_user_rows
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise typer.BadParameter(
+            "LambdaMART validation evidence has invalid ordered user IDs"
+        ) from exc
+    if len(ordered_user_ids) != artifact.validation_user_count:
+        raise typer.BadParameter(
+            "LambdaMART validation evidence user count does not match artifact"
+        )
     replay_rows = build_validation_rows(
         movies,
         split,
@@ -1398,6 +1419,7 @@ def _evaluate_learned_ranker(
         config,
         ranker,
         max_users=artifact.validation_user_count,
+        ordered_user_ids=ordered_user_ids,
     )
     canonical_replay = json.dumps(
         replay_rows, sort_keys=True, separators=(",", ":")
@@ -1417,7 +1439,7 @@ def _evaluate_learned_ranker(
         validate_learned_gate(
             evidence,
             dataset_fingerprint=dataset_fingerprint,
-            feature_fingerprint=FEATURE_SCHEMA_FINGERPRINT,
+            feature_fingerprint=feature_fingerprint,
             model_fingerprint=artifact.model_checksum,
             candidate_policy_fingerprint=candidate_policy_fingerprint(config),
             case_fingerprint=fixed_case_fingerprint,

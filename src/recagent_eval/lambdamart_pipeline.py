@@ -191,7 +191,7 @@ def train_lambdamart_pipeline(
         learned,
         max_users=max_users,
         latent=final_latent,
-        user_ids=eval_user_ids,
+        ordered_user_ids=eval_user_ids,
     )
     provenance["validation_rows_fingerprint"] = _fingerprint(rows)
     provenance["validation_user_count"] = len(rows)
@@ -279,20 +279,17 @@ def build_validation_rows(
     *,
     max_users: int,
     latent: LatentFactorRetriever | None = None,
-    user_ids: tuple[int, ...] | None = None,
+    ordered_user_ids: tuple[int, ...] | None = None,
 ) -> list[dict[str, Any]]:
     validation_histories = _positive_histories(split.legal_retrieval_train, movies)
-    validation_targets = (
-        {user_id: split.validation_targets[user_id] for user_id in user_ids}
-        if user_ids is not None
-        else split.validation_targets
+    query_max_users = (
+        len(ordered_user_ids) if ordered_user_ids is not None else max_users
     )
-    query_max_users = len(validation_targets) if user_ids is not None else max_users
     validation_queries = build_candidate_queries(
         movies,
         split.legal_retrieval_train,
         validation_histories,
-        validation_targets,
+        split.validation_targets,
         semantic,
         retrieval_top_k=config.retrieval_top_k,
         history_cap=config.semantic_profile_history_cap,
@@ -302,6 +299,7 @@ def build_validation_rows(
         latent_top_k=config.latent_top_k,
         feature_version=config.ranker_feature_version,
         max_users=query_max_users,
+        ordered_user_ids=ordered_user_ids,
     )
     baseline = HybridRanker(kind="itemcf")
     rows: list[dict[str, Any]] = []
@@ -373,6 +371,7 @@ def build_candidate_queries(
     latent: LatentFactorRetriever | None = None,
     latent_top_k: int | None = None,
     feature_version: str = "v1",
+    ordered_user_ids: tuple[int, ...] | None = None,
 ) -> list[CandidateQuery]:
     if semantic_top_k is not None and semantic_top_k <= 0:
         raise ValueError("semantic_top_k must be positive")
@@ -384,7 +383,23 @@ def build_candidate_queries(
     )
     itemcf = ItemCFRetriever.fit(legal_train_rows)
     queries: list[CandidateQuery] = []
-    for user_id, target in sorted(targets.items())[:max_users]:
+    if ordered_user_ids is None:
+        selected_targets = sorted(targets.items())[:max_users]
+    else:
+        if len(ordered_user_ids) != len(set(ordered_user_ids)):
+            raise ValueError("ordered_user_ids contains duplicate users")
+        if len(ordered_user_ids) != max_users:
+            raise ValueError("ordered_user_ids count must match max_users")
+        missing_targets = [user_id for user_id in ordered_user_ids if user_id not in targets]
+        if missing_targets:
+            raise ValueError(
+                f"ordered_user_ids contains missing target users: {missing_targets}"
+            )
+        ineligible = [user_id for user_id in ordered_user_ids if not histories.get(user_id)]
+        if ineligible:
+            raise ValueError(f"ordered_user_ids contains ineligible users: {ineligible}")
+        selected_targets = [(user_id, targets[user_id]) for user_id in ordered_user_ids]
+    for user_id, target in selected_targets:
         history_rows = histories.get(user_id, ())
         history_ids = {
             row.movie_id for row in history_rows if row.rating >= 4 and row.movie_id in movies

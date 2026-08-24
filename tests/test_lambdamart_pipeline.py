@@ -230,6 +230,58 @@ def test_build_candidate_queries_v2b_threads_recent_itemcf_scores() -> None:
     assert row[recent_index] >= 0.0
 
 
+def test_build_candidate_queries_preserves_explicit_user_order_and_rejects_drift() -> None:
+    movies = {
+        movie_id: Movie(movie_id, f"Movie {movie_id}", ("Drama",), 1990 + movie_id)
+        for movie_id in range(1, 9)
+    }
+    ratings = [
+        Rating(user_id, movie_id, 5, movie_id * 10 + user_id)
+        for user_id in range(1, 7)
+        for movie_id in range(1, 8)
+    ]
+    split = leakage_safe_ranking_split(ratings)
+    ordered = tuple(reversed(sorted(split.validation_targets)[:3]))
+
+    queries = build_candidate_queries(
+        movies,
+        split.legal_retrieval_train,
+        _positive_histories(split.legal_retrieval_train, movies),
+        split.validation_targets,
+        _CatalogSemanticRetriever(),
+        retrieval_top_k=8,
+        history_cap=5,
+        max_users=len(ordered),
+        ordered_user_ids=ordered,
+    )
+
+    assert [query.user_id for query in queries] == list(ordered)
+    with pytest.raises(ValueError, match="duplicate"):
+        build_candidate_queries(
+            movies,
+            split.legal_retrieval_train,
+            _positive_histories(split.legal_retrieval_train, movies),
+            split.validation_targets,
+            _CatalogSemanticRetriever(),
+            retrieval_top_k=8,
+            history_cap=5,
+            max_users=2,
+            ordered_user_ids=(ordered[0], ordered[0]),
+        )
+    with pytest.raises(ValueError, match="missing target"):
+        build_candidate_queries(
+            movies,
+            split.legal_retrieval_train,
+            _positive_histories(split.legal_retrieval_train, movies),
+            split.validation_targets,
+            _CatalogSemanticRetriever(),
+            retrieval_top_k=8,
+            history_cap=5,
+            max_users=1,
+            ordered_user_ids=(999_999,),
+        )
+
+
 def test_train_pipeline_restricts_training_users_and_eval_user_ids(tmp_path) -> None:
     movies = {
         movie_id: Movie(
