@@ -2,8 +2,8 @@
 
 ![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB)
 ![License](https://img.shields.io/badge/License-MIT-green)
-![Tests](https://img.shields.io/badge/tests-395%20passed-brightgreen)
-![Coverage](https://img.shields.io/badge/coverage-90.02%25-brightgreen)
+![Tests](https://img.shields.io/badge/tests-438%20passed-brightgreen)
+![Coverage](https://img.shields.io/badge/coverage-90.04%25-brightgreen)
 
 An evaluation-first conversational movie recommendation Agent that separates
 LLM preference understanding from deterministic filtering, retrieval, ranking,
@@ -17,7 +17,11 @@ the median target rank to 93. The final seed-42 Confirmation-B cohort contains
 0.0555 versus ItemCF 0.064/0.0323 and ALS 0.069/0.0323. User-level paired
 bootstrap lower bounds are positive and constraints remain 100%. Confirmation-A
 is development/debugging evidence; Confirmation-B is the sole certification.
-The frozen test remains unconsumed. Qwen/4090 remains pending.
+After locking current_v2b, the project completed one final 50-case promotion
+evaluation (Recall@10 0.08, NDCG@10 0.03964) under a permanently consumed
+one-shot identity. The same case suite had earlier DeepSeek system use, so this
+run is a generalization supplement rather than a historically untouched
+holdout. Qwen/4090 remains pending.
 
 RecAgent-Eval makes one separation explicit:
 
@@ -32,6 +36,7 @@ See [NOTICE](NOTICE) for attribution.
 ## Start here
 
 - [Formal DeepSeek evaluation](reports/experiments/deepseek-constraint-aware.md)
+- [current_v2b final promotion evaluation](reports/experiments/v2-final-promotion-evaluation.md)
 - [Offline ranker gate](reports/experiments/offline-ranker-selection.md)
 - [v2 dense LambdaMART validation](reports/experiments/v2-dense-lambdamart-500user.md)
 - [v2 recall-1500 LambdaMART validation](reports/experiments/v2-dense-lambdamart-recall1500.md)
@@ -212,7 +217,9 @@ result is retained rather than filtered. See the
 for validation ablations, fingerprints, latency, token usage, and failure
 analysis. A
 [machine-readable summary](reports/experiments/deepseek-constraint-aware.json)
-contains the same frozen aggregate metrics.
+contains the same fixed-case aggregate metrics. This formal case fingerprint
+was later reused for the one-time current_v2b promotion evaluation; it is not a
+project-history-clean holdout.
 
 ### Offline ranker gate
 
@@ -274,7 +281,7 @@ HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
 The sweep selected `semantic.top_k=1500` (dense recall 0.612, union recall
 0.878). Retraining under `configs/v2_dense_recall1500.yaml` still failed the
 ranking gate (NDCG@10 0.0299 vs ItemCF 0.0334, bootstrap CI crosses zero), so
-the frozen test remains locked and the negative result is preserved in
+that historical promotion gate remained locked and the negative result is preserved in
 [v2-dense-lambdamart-recall1500.md](reports/experiments/v2-dense-lambdamart-recall1500.md).
 
 ### Ranking diagnostics and score calibration
@@ -322,7 +329,8 @@ coverage 5%, latent recall@10 0.084 (all users; ItemCF 0.064).
 The 30-user smoke ([v2-latent-smoke-30](reports/experiments/v2-latent-smoke-30.md))
 confirmed bundle-v2 integrity, a byte-identical replay (rows, model, and latent
 factors), and 100% constraints. Three 500-user LambdaMART validations were then
-run and **all preserved as negative results**; the frozen test stays locked:
+run and **all preserved as negative results**; at that historical stage the
+promotion gate stayed locked:
 
 | Variant | LambdaMART NDCG@10 | ItemCF NDCG@10 | Recall@10 | Bootstrap 95% CI | Gate |
 | --- | ---: | ---: | ---: | --- | --- |
@@ -365,6 +373,23 @@ and +0.0232 [0.0111, 0.0346]. Recall@10 is 0.118 versus ItemCF 0.064 (+84%
 relative), with 100% constraints. The BPR/LightGCN seed-7/2026 work is labeled
 post-hoc robustness and cannot change Success A.
 
+### One-time final promotion evaluation
+
+After current_v2b, its package, and canonical identity were locked, the
+single-use promotion path ran once on the 50 fixed cases and completed with
+Recall@10 0.08 and NDCG@10 0.03964. Candidate union recall was 0.94 (47/50),
+while Top-10 hit rate was 0.08 (4/50), reinforcing ranking depth as the main
+remaining bottleneck.
+
+This is a small-sample generalization supplement. The same case fingerprint
+had already appeared in the historical DeepSeek system experiment, and the
+promotion run did not execute matched ItemCF/ALS baselines. It supports neither
+a historically untouched-holdout claim nor a significant baseline-win claim.
+See the
+[final promotion report](reports/experiments/v2-final-promotion-evaluation.md).
+No further tuning may use these 50 labels; a v3 effort must preregister a new,
+unused holdout before development.
+
 ## Testing and evidence
 
 ```bash
@@ -372,14 +397,14 @@ uv run pytest
 uv run ruff check .
 ```
 
-The 395-test suite covers schemas, memory updates, invalid plans, one-shot repair,
+The 438-test suite covers schemas, memory updates, invalid plans, one-shot repair,
 provider retries, chronological splitting, case-label preflight, frozen
 retrieval policy, hard constraints, route-level diagnostics, retrieval
 selection, ranking, weight tuning, metrics, CLI smoke tests, scripts, and
 deterministic manifests, rank-fusion calibration, evidence invariants, and the
 frozen-case gate, dense-cache integrity, and the torch/LightGBM OpenMP crash
 regressions, plus ALS fold-in determinism, latent artifact persistence, and
-schema-v2 contract dispatch. Current line coverage is 90.02%.
+schema-v2 contract dispatch. Current line coverage is 90.04%.
 
 - Upstream audit: [reports/audit/overview.md](reports/audit/overview.md)
 - Candidate ranking: [reports/ranking/candidate_score.md](reports/ranking/candidate_score.md)
@@ -410,6 +435,10 @@ schema-v2 contract dispatch. Current line coverage is 90.02%.
 - Confirmation-B establishes the later v2b result; its 1,000-user evidence is
   distinct from the earlier 500-user LambdaMART experiments. Peak RSS is not
   compared until corrected independent-process measurements exist.
+- The 50-case promotion result is a one-time point estimate on a case suite
+  previously used by the DeepSeek system experiment. No matched ItemCF/ALS
+  promotion baseline or significance result exists; the suite is permanently
+  excluded from further tuning.
 - The unstructured no-memory baseline falls back to popularity retrieval, so its
   strong NDCG on 50 fixed cases should not be generalized beyond this matrix.
 - MovieLens data is downloaded separately and remains subject to GroupLens

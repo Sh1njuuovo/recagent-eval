@@ -44,9 +44,12 @@ runtime 面板会明确标注 provider 为 rule-based，不能表述成 LLM 效�
    空指针崩溃；用 faulthandler/lldb 拿到原生栈后，通过 `n_jobs=1` 与
    `OMP_NUM_THREADS=1` 修复，并新增两个子进程回归测试（先写测试、看它崩、
    再修代码）。
-8. **9:30–10:00 — 下一步。** Confirmation-A 因读数后修复降级为开发证据；
-   Confirmation-B 是唯一认证。完成 evidence hygiene 和 post-hoc robustness 后
-   请求一次 frozen 授权，任何结果都不调参、不重跑。
+8. **9:30–10:00 — 一次性发布与边界。** Confirmation-A 因读数后修复降级为
+   开发证据；Confirmation-B 是唯一算法认证。锁定 current_v2b 后完成一次
+   50-case final promotion evaluation：Recall@10 0.08、NDCG@10 0.03964，union
+   覆盖 47/50、Top-10 命中 4/50。该 suite 曾用于历史 DeepSeek 系统实验，且本次
+   未运行匹配 ItemCF/ALS baseline，因此只作为泛化补充，不作 frozen baseline
+   显著性 claim；identity 已永久消费，后续不调参、不重跑。
    DeepSeek 历史结果见
    [deepseek-constraint-aware](../reports/experiments/deepseek-constraint-aware.md)；
    Qwen/vLLM 待 4090 空闲后仅做兼容性冒烟，不虚构吞吐/显存数字。
@@ -59,4 +62,5 @@ runtime 面板会明确标注 provider 为 rule-based，不能表述成 LLM 效�
 - 当前安全主结论：搭建了防泄漏的 Agent/检索/排序评测系统，完成可复现的 dense
   召回与 LambdaMART 证据契约，并在独立 Confirmation-B 上取得显著提升。
 
-The frozen test remains unconsumed. Qwen/4090 remains pending.
+The one-time final promotion identity is completed and permanently consumed.
+Confirmation-B remains the headline evidence. Qwen/4090 remains pending.

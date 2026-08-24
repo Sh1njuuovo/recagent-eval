@@ -261,10 +261,15 @@ RRF 和 percentile fusion 也未通过验证门禁。因此下一步合理实验
 
 - 提高 dense 候选召回（当前仅 28.8%）与并集候选召回（77.6%），例如扩充
   dense 通道的 top-k、改进 item text schema 或增加候选策略。
-- P0 证据卫生完成后申请一次性 frozen 授权；失败、崩溃或负结果均不调参、不重跑。
+- current_v2b 锁定后，一次性 final promotion evaluation 已完成；该 identity
+  永久消费，50-case labels 不再用于调参。
 - Qwen smoke 与主结果分开报告；Qwen/vLLM 4090 冒烟待服务器空闲。
 
-The frozen test remains unconsumed. Qwen/4090 remains pending.
+50-case promotion 结果为 Recall@10 0.08、NDCG@10 0.03964；同一 case
+fingerprint 曾用于历史 DeepSeek 系统实验，因此它是一次性泛化补充，不是项目历史上
+未使用的 holdout。该次未同步运行 current_v2b 对应 ItemCF/ALS baseline，不能声明
+在这 50 cases 上显著胜出。Confirmation-B 仍是算法比较主证据。Qwen/4090 remains
+pending.
 
 ## 7. 工程方法论
 
