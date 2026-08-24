@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import stat
 from dataclasses import dataclass
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from recagent_eval.safe_io import read_regular_file
 
 PACKAGE_MEMBER_NAMES = (
     "model.json",
@@ -93,6 +97,45 @@ class SourceInventory(BaseModel):
         if self.fingerprint != canonical_payload_sha256(self):
             raise ValueError("source inventory fingerprint mismatch")
         return self
+
+
+def load_source_inventory(path: str | os.PathLike[str]) -> SourceInventory:
+    try:
+        raw = read_regular_file(Path(path), max_bytes=1024 * 1024)
+        return SourceInventory.model_validate_json(raw)
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"invalid promotion source inventory: {exc}") from exc
+
+
+def verify_source_files(
+    inventory: SourceInventory,
+    source_paths: dict[str, os.PathLike[str]],
+) -> None:
+    if set(source_paths) != set(PACKAGE_MEMBER_NAMES):
+        raise ValueError("source mapping package members are incomplete")
+    for name in PACKAGE_MEMBER_NAMES:
+        path = os.fspath(source_paths[name])
+        try:
+            descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        except FileNotFoundError as exc:
+            raise ValueError(f"source member {name} is missing") from exc
+        except OSError as exc:
+            raise ValueError(f"source member {name} is unsafe: {exc}") from exc
+        try:
+            metadata = os.fstat(descriptor)
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+                raise ValueError(f"source member {name} is not a unique regular file")
+            digest = hashlib.sha256()
+            with os.fdopen(descriptor, "rb") as stream:
+                descriptor = -1
+                while chunk := stream.read(1024 * 1024):
+                    digest.update(chunk)
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+        expected = inventory.members[name]
+        if metadata.st_size != expected.size_bytes or digest.hexdigest() != expected.sha256:
+            raise ValueError(f"source member {name} identity mismatch")
 
 
 class PromotionManifest(BaseModel):

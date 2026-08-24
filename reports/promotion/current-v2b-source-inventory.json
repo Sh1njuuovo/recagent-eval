@@ -1,0 +1,51 @@
+{
+  "fingerprint": "6498fb3b8abb14867dcaadce24bb0f5acb9f49f8415fd8d32a5b1ae8d5c10d9e",
+  "members": {
+    "bundle.json": {
+      "path": "artifacts/promotion/current-v2b/bundle.json",
+      "sha256": "bfeed529d6f4f808f20f468a0fa4c1528c78a1001ccdecc7115bb4eb7bb95191",
+      "size_bytes": 874
+    },
+    "latent.npz": {
+      "path": "artifacts/promotion/current-v2b/latent.npz",
+      "sha256": "72c472db58a08dec428bd0abc690ba2be55b4f932cd34accf629b171372d6780",
+      "size_bytes": 310726
+    },
+    "latent.npz.json": {
+      "path": "artifacts/promotion/current-v2b/latent.npz.json",
+      "sha256": "8189ae5b4f04bd0ed2d9e895268c51656d01f78b63512132e27610fe4a4960f8",
+      "size_bytes": 34936
+    },
+    "model.json": {
+      "path": "artifacts/promotion/current-v2b/model.json",
+      "sha256": "ada711f9df701a63b008d9fed4b7b997916e2edfe83c0a329ee286b114d32397",
+      "size_bytes": 935361
+    },
+    "semantic.npz": {
+      "path": "artifacts/promotion/current-v2b/semantic.npz",
+      "sha256": "a37cc0ec769f8f77544bdd9a6ae291cc3718b718d97a8ac00c858d59d75f8c84",
+      "size_bytes": 5995876
+    },
+    "semantic.npz.json": {
+      "path": "artifacts/promotion/current-v2b/semantic.npz.json",
+      "sha256": "229df40442fd02adc66aeb4ce9e9fe7c84935df28594598ea3712f965353afa9",
+      "size_bytes": 38652
+    },
+    "validation.json": {
+      "path": "artifacts/promotion/current-v2b/validation.json",
+      "sha256": "30433419803e52df0f9bf6fb74f65247174e99bbda9808c4977bf0a8394202af",
+      "size_bytes": 28192906
+    }
+  },
+  "provenance": "observed_existing_bytes",
+  "schema_version": "frozen-promotion-source-inventory/v1",
+  "semantic": {
+    "cache_manifest_fingerprint": "2344bf8a897a5493c55537b52c477a71b28c615c4ec81bdcb5c657039a80e0ec",
+    "dataset_fingerprint": "c79c4d31b8f4b0c48440281a020de95ea5b878ba6373e4b1134ec206ae40c792",
+    "dimension": 384,
+    "dtype": "float32",
+    "immutable_revision": "1110a243fdf4706b3f48f1d95db1a4f5529b4d41",
+    "model_name": "sentence-transformers/all-MiniLM-L6-v2",
+    "normalization": "l2_unit"
+  }
+}

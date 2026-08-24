@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -14,7 +17,9 @@ from recagent_eval.promotion import (
     SourceInventory,
     canonical_payload_sha256,
     derive_execution_paths,
+    load_source_inventory,
     validate_relative_path,
+    verify_source_files,
 )
 
 
@@ -164,3 +169,47 @@ def test_file_and_semantic_identity_reject_weak_values() -> None:
         FileIdentity(path="x", sha256="short", size_bytes=1)
     with pytest.raises(ValidationError):
         SemanticCacheIdentity.model_validate({**_semantic(), "dtype": "float64"})
+
+
+def _inventory_for_sources(source_paths: dict[str, Path]) -> SourceInventory:
+    members = {
+        name: {
+            "path": f"artifacts/promotion/current-v2b/{name}",
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "size_bytes": path.stat().st_size,
+        }
+        for name, path in source_paths.items()
+    }
+    payload = {
+        "schema_version": "frozen-promotion-source-inventory/v1",
+        "members": members,
+        "semantic": _semantic(),
+        "provenance": "observed_existing_bytes",
+    }
+    payload["fingerprint"] = canonical_payload_sha256(payload)
+    return SourceInventory.model_validate(payload)
+
+
+def test_source_verification_fails_closed_on_missing_or_changed_original(tmp_path) -> None:
+    sources = {}
+    for name in PACKAGE_MEMBER_NAMES:
+        path = tmp_path / name.replace("/", "-")
+        path.write_bytes(name.encode())
+        sources[name] = path
+    inventory = _inventory_for_sources(sources)
+    verify_source_files(inventory, sources)
+
+    sources["model.json"].write_bytes(b"retrained substitute")
+    with pytest.raises(ValueError, match="model.json.*identity"):
+        verify_source_files(inventory, sources)
+
+    sources["model.json"].unlink()
+    with pytest.raises(ValueError, match="model.json.*missing"):
+        verify_source_files(inventory, sources)
+
+
+def test_committed_source_inventory_is_strict_and_self_fingerprinted() -> None:
+    path = Path("reports/promotion/current-v2b-source-inventory.json")
+    inventory = load_source_inventory(path)
+    assert inventory.fingerprint == canonical_payload_sha256(json.loads(path.read_text()))
+    assert set(inventory.members) == set(PACKAGE_MEMBER_NAMES)
