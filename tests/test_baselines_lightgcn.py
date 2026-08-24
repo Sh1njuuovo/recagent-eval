@@ -5,6 +5,7 @@ import json
 import numpy as np
 import pytest
 
+import recagent_eval.baselines.lightgcn as module
 from recagent_eval.baseline_eval import BASELINE_SCORERS
 from recagent_eval.baselines.lightgcn import (
     LightGCN,
@@ -94,3 +95,30 @@ def test_lightgcn_scorer_handles_empty_history_users() -> None:
     ledger = {"cohorts": {"development": users}}
     result = score_lightgcn(movies, split, users, ledger=ledger)
     assert len(result["rows"]) == 3
+
+
+def test_lightgcn_scorer_uses_locked_params_without_selection(monkeypatch) -> None:
+    movies = _movies()
+    split = leakage_safe_ranking_split(_ratings())
+    users = sorted(split.validation_targets)[:3]
+    monkeypatch.setattr(
+        module,
+        "select_lightgcn_params",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("grid rerun")),
+    )
+    result = score_lightgcn(
+        movies,
+        split,
+        users,
+        selected_params={
+            "rank": 8,
+            "layers": 2,
+            "learning_rate": 1e-3,
+            "reg": 1e-3,
+            "epochs": 1,
+        },
+        selection_fingerprint="s" * 64,
+        seed=2026,
+    )
+    assert result["seed"] == 2026
+    assert result["config_fingerprint"] == "s" * 64

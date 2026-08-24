@@ -171,3 +171,41 @@ def test_metric_json_rejects_empty_rows() -> None:
             model_size_bytes=0,
             environment={},
         )
+
+
+def test_metric_json_preserves_recovered_parameter_provenance() -> None:
+    row = MetricRow(1, 1.0, 1.0, 1.0, 1.0, True, 1.0, (1,))
+    recovered = {
+        "source": "recovered",
+        "value": {"rank": 16},
+        "recovery": {
+            "status": "recovered_after_run",
+            "command": "recover",
+            "source_artifact_sha256": "a" * 64,
+            "input_fingerprint": "b" * 64,
+            "output_fingerprint": "c" * 64,
+            "commit_sha": "d" * 40,
+        },
+    }
+    artifact = metric_json(
+        [row],
+        method="bpr_mf",
+        cohort="confirmation_b",
+        universe_size=1,
+        config_fingerprint="c" * 64,
+        dataset_fingerprint="d" * 64,
+        model_fingerprint="m" * 64,
+        cohort_ledger_fingerprint="l" * 64,
+        selected_params={"rank": 16},
+        parameter_grid=[],
+        seed=7,
+        dependency_versions={"python": "3.13"},
+        hardware={"platform": "Darwin"},
+        training_seconds=1.0,
+        resource_usage={"metric_name": "process_peak_rss_mib", "normalized_mib": 1.0},
+        model_size_bytes=1,
+        environment={},
+        selected_params_provenance=recovered,
+    )
+    assert artifact["selected_params"] == recovered
+    assert artifact["seed"] == {"source": "observed", "value": 7}

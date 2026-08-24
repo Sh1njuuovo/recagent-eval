@@ -1352,6 +1352,29 @@ def test_evaluate_baselines_rejects_bad_cohort_and_unknown_method(tmp_path) -> N
     assert "unknown baseline method" in result.output
 
 
+def test_evaluate_baselines_rejects_nondefault_seed_without_locked_params(tmp_path) -> None:
+    ledger = tmp_path / "ledger.json"
+    ledger.write_text(json.dumps({"cohorts": {"confirmation_b": [1]}}))
+    result = CliRunner().invoke(
+        app,
+        [
+            "evaluate-baselines",
+            "--ledger",
+            str(ledger),
+            "--cohort",
+            "confirmation_b",
+            "--method",
+            "bpr_mf",
+            "--seed",
+            "7",
+            "--output",
+            str(tmp_path / "out.json"),
+        ],
+    )
+    assert result.exit_code != 0
+    assert "locked-params" in result.output
+
+
 def test_summarize_baselines_rejects_bad_cohort_and_existing_output(tmp_path) -> None:
     output = tmp_path / "summary.json"
     result = CliRunner().invoke(
@@ -1456,3 +1479,24 @@ def test_replay_evidence_rejects_invalid_bundle(tmp_path) -> None:
     )
     assert result.exit_code != 0
     assert "unknown bundle schema" in result.output
+
+
+def test_recover_baseline_params_refuses_existing_output_before_data(tmp_path) -> None:
+    output = tmp_path / "recovery.json"
+    output.write_text("{}")
+    result = CliRunner().invoke(
+        app,
+        [
+            "recover-baseline-params",
+            "--ledger",
+            str(tmp_path / "missing-ledger.json"),
+            "--artifact-dir",
+            str(tmp_path / "missing-artifacts"),
+            "--data-dir",
+            str(tmp_path / "missing-data"),
+            "--output",
+            str(output),
+        ],
+    )
+    assert result.exit_code != 0
+    assert "refusing to overwrite" in result.output

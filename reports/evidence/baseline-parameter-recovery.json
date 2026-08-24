@@ -1,0 +1,1219 @@
+{
+  "cohorts": {
+    "confirmation_a": {
+      "als_direct": {
+        "parameter_grid": {
+          "recovery": {
+            "command": ".venv/bin/recagent-eval recover-baseline-params --ledger reports/audit/2026-08-23-cohort-ledger.json --artifact-dir artifacts/experiments/v2-baselines --data-dir /Users/shinjuu/intern/recagent-eval/data/raw/ml-1m --output reports/evidence/baseline-parameter-recovery.json",
+            "commit_sha": "295ab4a48142b83937d6bc22516dd8ba8e4cf9a0",
+            "input_fingerprint": "26ecb3489f15826e372c601f089151aa3080527e8f459753c8b154c7f415e63e",
+            "output_fingerprint": "cbd307e00ecf967264023db8ab84c9fb27700f2a80b3f29c801eda3707f00a25",
+            "source_artifact_sha256": "831f21a96f2a5f04d79a2bbeb49f096d43dcade72d5d915cc04c9283303d0ec7",
+            "status": "recovered_after_run"
+          },
+          "source": "recovered",
+          "value": [
+            {
+              "alpha": 20.0,
+              "iterations": 10,
+              "lambda_reg": 0.05,
+              "rank": 20
+            },
+            {
+              "alpha": 20.0,
+              "iterations": 10,
+              "lambda_reg": 0.1,
+              "rank": 20
+            },
+            {
+              "alpha": 40.0,
+              "iterations": 10,
+              "lambda_reg": 0.05,
+              "rank": 20
+            },
+            {
+              "alpha": 40.0,
+              "iterations": 10,
+              "lambda_reg": 0.1,
+              "rank": 20
+            },
+            {
+              "alpha": 20.0,
+              "iterations": 12,
+              "lambda_reg": 0.05,
+              "rank": 20
+            },
+            {
+              "alpha": 20.0,
+              "iterations": 12,
+              "lambda_reg": 0.1,
+              "rank": 20
+            },
+            {
+              "alpha": 40.0,
+              "iterations": 12,
+              "lambda_reg": 0.05,
+              "rank": 20
+            },
+            {
+              "alpha": 40.0,
+              "iterations": 12,
+              "lambda_reg": 0.1,
+              "rank": 20
+            },
+            {
+              "alpha": 20.0,
+              "iterations": 10,
+              "lambda_reg": 0.05,
+              "rank": 40
+            },
+            {
+              "alpha": 20.0,
+              "iterations": 10,
+              "lambda_reg": 0.1,
+              "rank": 40
+            },
+            {
+              "alpha": 40.0,
+              "iterations": 10,
+              "lambda_reg": 0.05,
+              "rank": 40
+            },
+            {
+              "alpha": 40.0,
+              "iterations": 10,
+              "lambda_reg": 0.1,
+              "rank": 40
+            },
+            {
+              "alpha": 20.0,
+              "iterations": 12,
+              "lambda_reg": 0.05,
+              "rank": 40
+            },
+            {
+              "alpha": 20.0,
+              "iterations": 12,
+              "lambda_reg": 0.1,
+              "rank": 40
+            },
+            {
+              "alpha": 40.0,
+              "iterations": 12,
+              "lambda_reg": 0.05,
+              "rank": 40
+            },
+            {
+              "alpha": 40.0,
+              "iterations": 12,
+              "lambda_reg": 0.1,
+              "rank": 40
+            }
+          ]
+        },
+        "seed": {
+          "recovery": {
+            "command": ".venv/bin/recagent-eval recover-baseline-params --ledger reports/audit/2026-08-23-cohort-ledger.json --artifact-dir artifacts/experiments/v2-baselines --data-dir /Users/shinjuu/intern/recagent-eval/data/raw/ml-1m --output reports/evidence/baseline-parameter-recovery.json",
+            "commit_sha": "295ab4a48142b83937d6bc22516dd8ba8e4cf9a0",
+            "input_fingerprint": "26ecb3489f15826e372c601f089151aa3080527e8f459753c8b154c7f415e63e",
+            "output_fingerprint": "73475cb40a568e8da8a045ced110137e159f890ac4da883b6b17dc651b3a8049",
+            "source_artifact_sha256": "831f21a96f2a5f04d79a2bbeb49f096d43dcade72d5d915cc04c9283303d0ec7",
+            "status": "recovered_after_run"
+          },
+          "source": "recovered",
+          "value": 42
+        },
+        "selected_params": {
+          "recovery": {
+            "command": ".venv/bin/recagent-eval recover-baseline-params --ledger reports/audit/2026-08-23-cohort-ledger.json --artifact-dir artifacts/experiments/v2-baselines --data-dir /Users/shinjuu/intern/recagent-eval/data/raw/ml-1m --output reports/evidence/baseline-parameter-recovery.json",
+            "commit_sha": "295ab4a48142b83937d6bc22516dd8ba8e4cf9a0",
+            "input_fingerprint": "26ecb3489f15826e372c601f089151aa3080527e8f459753c8b154c7f415e63e",
+            "output_fingerprint": "7003d56772e35cd44eb2a7234366db0a770c34ecaede76d091b211b398facea2",
+            "source_artifact_sha256": "831f21a96f2a5f04d79a2bbeb49f096d43dcade72d5d915cc04c9283303d0ec7",
+            "status": "recovered_after_run"
+          },
+          "source": "recovered",
+          "value": {
+            "alpha": 20.0,
+            "iterations": 10,
+            "lambda_reg": 0.05,
+            "rank": 20
+          }
+        },
+        "selection_fingerprint": "ecc4aaadff1f49c6f29ff03abc6f7fac4462ecaabe9ed84c123809262fd072ef"
+      },
+      "bpr_mf": {
+        "parameter_grid": {
+          "recovery": {
+            "command": ".venv/bin/recagent-eval recover-baseline-params --ledger reports/audit/2026-08-23-cohort-ledger.json --artifact-dir artifacts/experiments/v2-baselines --data-dir /Users/shinjuu/intern/recagent-eval/data/raw/ml-1m --output reports/evidence/baseline-parameter-recovery.json",
+            "commit_sha": "295ab4a48142b83937d6bc22516dd8ba8e4cf9a0",
+            "input_fingerprint": "cf4ece37a2396dd16ce41a165f021ea1658c1915de1a83fd916171bb10781033",
+            "output_fingerprint": "e0f0e8d041c5281558436ec465435b572ecc72c6fac9d3cb623fd8b70cb044bb",
+            "source_artifact_sha256": "453e39b1dada427042fa5fc57da671ff3790cc79017007f85a0222767e6cb5ce",
+            "status": "recovered_after_run"
+          },
+          "source": "recovered",
+          "value": [
+            {
+              "epochs": 10,
+              "learning_rate": 0.001,
+              "rank": 16,
+              "reg": 0.0001
+            },
+            {
+              "epochs": 20,
+              "learning_rate": 0.001,
+              "rank": 16,
+              "reg": 0.0001
+            },
+            {
+              "epochs": 10,
+              "learning_rate": 0.001,
+              "rank": 16,
+              "reg": 0.001
+            },
+            {
+              "epochs": 20,
+              "learning_rate": 0.001,
+              "rank": 16,
+              "reg": 0.001
+            },
+            {
+              "epochs": 10,
+              "learning_rate": 0.005,
+              "rank": 16,
+              "reg": 0.0001
+            },
+            {
+              "epochs": 20,
+              "learning_rate": 0.005,
+              "rank": 16,
+              "reg": 0.0001
+            },
+            {
+              "epochs": 10,
+              "learning_rate": 0.005,
+              "rank": 16,
+              "reg": 0.001
+            },
+            {
+              "epochs": 20,
+              "learning_rate": 0.005,
+              "rank": 16,
+              "reg": 0.001
+            },
+            {
+              "epochs": 10,
+              "learning_rate": 0.001,
+              "rank": 32,
+              "reg": 0.0001
+            },
+            {
+              "epochs": 20,
+              "learning_rate": 0.001,
+              "rank": 32,
+              "reg": 0.0001
+            },
+            {
+              "epochs": 10,
+              "learning_rate": 0.001,
+              "rank": 32,
+              "reg": 0.001
+            },
+            {
+              "epochs": 20,
+              "learning_rate": 0.001,
+              "rank": 32,
+              "reg": 0.001
+            },
+            {
+              "epochs": 10,
+              "learning_rate": 0.005,
+              "rank": 32,
+              "reg": 0.0001
+            },
+            {
+              "epochs": 20,
+              "learning_rate": 0.005,
+              "rank": 32,
+              "reg": 0.0001
+            },
+            {
+              "epochs": 10,
+              "learning_rate": 0.005,
+              "rank": 32,
+              "reg": 0.001
+            },
+            {
+              "epochs": 20,
+              "learning_rate": 0.005,
+              "rank": 32,
+              "reg": 0.001
+            }
+          ]
+        },
+        "seed": {
+          "recovery": {
+            "command": ".venv/bin/recagent-eval recover-baseline-params --ledger reports/audit/2026-08-23-cohort-ledger.json --artifact-dir artifacts/experiments/v2-baselines --data-dir /Users/shinjuu/intern/recagent-eval/data/raw/ml-1m --output reports/evidence/baseline-parameter-recovery.json",
+            "commit_sha": "295ab4a48142b83937d6bc22516dd8ba8e4cf9a0",
+            "input_fingerprint": "cf4ece37a2396dd16ce41a165f021ea1658c1915de1a83fd916171bb10781033",
+            "output_fingerprint": "73475cb40a568e8da8a045ced110137e159f890ac4da883b6b17dc651b3a8049",
+            "source_artifact_sha256": "453e39b1dada427042fa5fc57da671ff3790cc79017007f85a0222767e6cb5ce",
+            "status": "recovered_after_run"
+          },
+          "source": "recovered",
+          "value": 42
+        },
+        "selected_params": {
+          "recovery": {
+            "command": ".venv/bin/recagent-eval recover-baseline-params --ledger reports/audit/2026-08-23-cohort-ledger.json --artifact-dir artifacts/experiments/v2-baselines --data-dir /Users/shinjuu/intern/recagent-eval/data/raw/ml-1m --output reports/evidence/baseline-parameter-recovery.json",
+            "commit_sha": "295ab4a48142b83937d6bc22516dd8ba8e4cf9a0",
+            "input_fingerprint": "cf4ece37a2396dd16ce41a165f021ea1658c1915de1a83fd916171bb10781033",
+            "output_fingerprint": "c853736cb7d921f814fdd844b4b32ea0181547521a8ee5779317ba823bb77ca1",
+            "source_artifact_sha256": "453e39b1dada427042fa5fc57da671ff3790cc79017007f85a0222767e6cb5ce",
+            "status": "recovered_after_run"
+          },
+          "source": "recovered",
+          "value": {
+            "epochs": 20,
+            "learning_rate": 0.005,
+            "rank": 16,
+            "reg": 0.001
+          }
+        },
+        "selection_fingerprint": "8b9a78e9d7b1f87ee911b3aaad58befd93258c70faf6d915882b673f5a65be8a"
+      },
+      "current_v2b": {
+        "parameter_grid": {
+          "recovery": {
+            "command": ".venv/bin/recagent-eval recover-baseline-params --ledger reports/audit/2026-08-23-cohort-ledger.json --artifact-dir artifacts/experiments/v2-baselines --data-dir /Users/shinjuu/intern/recagent-eval/data/raw/ml-1m --output reports/evidence/baseline-parameter-recovery.json",
+            "commit_sha": "295ab4a48142b83937d6bc22516dd8ba8e4cf9a0",
+            "input_fingerprint": "3db8d8f9fe8eb3d9157aef9d09a10dc5cc9b54781678e3d1cce750144d5ed449",
+            "output_fingerprint": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "source_artifact_sha256": "8e551d163cf0d6340f64107be858945f13dfa6e2d4664da6e9d06fb9b3f9e8eb",
+            "status": "recovered_after_run"
+          },
+          "source": "recovered",
+          "value": []
+        },
+        "seed": {
+          "recovery": {
+            "command": ".venv/bin/recagent-eval recover-baseline-params --ledger reports/audit/2026-08-23-cohort-ledger.json --artifact-dir artifacts/experiments/v2-baselines --data-dir /Users/shinjuu/intern/recagent-eval/data/raw/ml-1m --output reports/evidence/baseline-parameter-recovery.json",
+            "commit_sha": "295ab4a48142b83937d6bc22516dd8ba8e4cf9a0",
+            "input_fingerprint": "3db8d8f9fe8eb3d9157aef9d09a10dc5cc9b54781678e3d1cce750144d5ed449",
+            "output_fingerprint": "73475cb40a568e8da8a045ced110137e159f890ac4da883b6b17dc651b3a8049",
+            "source_artifact_sha256": "8e551d163cf0d6340f64107be858945f13dfa6e2d4664da6e9d06fb9b3f9e8eb",
+            "status": "recovered_after_run"
+          },
+          "source": "recovered",
+          "value": 42
+        },
+        "selected_params": {
+          "recovery": {
+            "command": ".venv/bin/recagent-eval recover-baseline-params --ledger reports/audit/2026-08-23-cohort-ledger.json --artifact-dir artifacts/experiments/v2-baselines --data-dir /Users/shinjuu/intern/recagent-eval/data/raw/ml-1m --output reports/evidence/baseline-parameter-recovery.json",
+            "commit_sha": "295ab4a48142b83937d6bc22516dd8ba8e4cf9a0",
+            "input_fingerprint": "3db8d8f9fe8eb3d9157aef9d09a10dc5cc9b54781678e3d1cce750144d5ed449",
+            "output_fingerprint": "7ed209bcb478cbe380d42a959a0ffeade9ad51f1e460a98c6719005b0ed4ef2d",
+            "source_artifact_sha256": "8e551d163cf0d6340f64107be858945f13dfa6e2d4664da6e9d06fb9b3f9e8eb",
+            "status": "recovered_after_run"
+          },
+          "source": "recovered",
+          "value": {
+            "enable_memory": true,
+            "enable_semantic_retrieval": true,
+            "latent_alpha": 40.0,
+            "latent_artifact_path": "artifacts/experiments/v2-latent-bfeat-500/latent.npz",
+            "latent_enabled": true,
+            "latent_iterations": 12,
+            "latent_lambda_reg": 0.1,
+            "latent_rank": 20,
+            "latent_seed": 42,
+            "latent_top_k": 500,
+            "learned_bundle_manifest_path": null,
+            "learned_candidate_policy_fingerprint": null,
+            "learned_case_fingerprint": null,
+            "learned_config_fingerprint": null,
+            "learned_consumption_dir": null,
+            "learned_dataset_fingerprint": null,
+            "learned_evidence_path": null,
+            "learned_gate_fingerprint": null,
+            "learned_model_path": null,
+            "name": "v2-dense-lambdamart-latent-bfeat",
+            "ranker_feature_version": "v2b",
+            "ranker_kind": "minmax_linear",
+            "ranker_max_negatives": null,
+            "ranker_negative_policy": "all",
+            "required_retrieval_tools": [
+              "itemcf_retrieve",
+              "semantic_retrieve"
+            ],
+            "retrieval_top_k": 500,
+            "rrf_k": 60,
+            "score_calibration": "raw",
+            "seed": 42,
+            "semantic_cache_path": "artifacts/embeddings/movielens-minilm.npz",
+            "semantic_device": "cpu",
+            "semantic_kind": "dense",
+            "semantic_model_name": "sentence-transformers/all-MiniLM-L6-v2",
+            "semantic_model_revision": null,
+            "semantic_profile_history_cap": 50,
+            "semantic_top_k": 1500,
+            "structured_planning": true,
+            "weights": [
+              0.7,
+              0.3,
+              0.0
+            ]
+          }
+        },
+        "selection_fingerprint": "530ec64871b9e042da5e566d1a1ad9358dbed811dace4caaaa9de15419b3800c"
+      },
+      "itemcf_direct": {
+        "parameter_grid": {
+          "recovery": {
+            "command": ".venv/bin/recagent-eval recover-baseline-params --ledger reports/audit/2026-08-23-cohort-ledger.json --artifact-dir artifacts/experiments/v2-baselines --data-dir /Users/shinjuu/intern/recagent-eval/data/raw/ml-1m --output reports/evidence/baseline-parameter-recovery.json",
+            "commit_sha": "295ab4a48142b83937d6bc22516dd8ba8e4cf9a0",
+            "input_fingerprint": "d7cb70a495b38b09591dd78463ce85ad6556d702dae08e96ba1fe131368e352e",
+            "output_fingerprint": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "source_artifact_sha256": "8339bf5c02c21a9d890ec6a4d269aa7b6727cb14813b8ad20cba4fa181c4037c",
+            "status": "recovered_after_run"
+          },
+          "source": "recovered",
+          "value": []
+        },
+        "seed": {
+          "recovery": {
+            "command": ".venv/bin/recagent-eval recover-baseline-params --ledger reports/audit/2026-08-23-cohort-ledger.json --artifact-dir artifacts/experiments/v2-baselines --data-dir /Users/shinjuu/intern/recagent-eval/data/raw/ml-1m --output reports/evidence/baseline-parameter-recovery.json",
+            "commit_sha": "295ab4a48142b83937d6bc22516dd8ba8e4cf9a0",
+            "input_fingerprint": "d7cb70a495b38b09591dd78463ce85ad6556d702dae08e96ba1fe131368e352e",
+            "output_fingerprint": "0296f22b01d3da51783b5e145c24403c9066251dff0d2f86a33204d0d2b0cd38",
+            "source_artifact_sha256": "8339bf5c02c21a9d890ec6a4d269aa7b6727cb14813b8ad20cba4fa181c4037c",
+            "status": "recovered_after_run"
+          },
+          "source": "recovered",
+          "value": "not_applicable"
+        },
+        "selected_params": {
+          "recovery": {
+            "command": ".venv/bin/recagent-eval recover-baseline-params --ledger reports/audit/2026-08-23-cohort-ledger.json --artifact-dir artifacts/experiments/v2-baselines --data-dir /Users/shinjuu/intern/recagent-eval/data/raw/ml-1m --output reports/evidence/baseline-parameter-recovery.json",
+            "commit_sha": "295ab4a48142b83937d6bc22516dd8ba8e4cf9a0",
+            "input_fingerprint": "d7cb70a495b38b09591dd78463ce85ad6556d702dae08e96ba1fe131368e352e",
+            "output_fingerprint": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "source_artifact_sha256": "8339bf5c02c21a9d890ec6a4d269aa7b6727cb14813b8ad20cba4fa181c4037c",
+            "status": "recovered_after_run"
+          },
+          "source": "recovered",
+          "value": {}
+        },
+        "selection_fingerprint": "54771aa723a2e4fd177dc67bc9e30fd81466015b8d822d0925399666b22be65c"
+      },
+      "lightgcn": {
+        "parameter_grid": {
+          "recovery": {
+            "command": ".venv/bin/recagent-eval recover-baseline-params --ledger reports/audit/2026-08-23-cohort-ledger.json --artifact-dir artifacts/experiments/v2-baselines --data-dir /Users/shinjuu/intern/recagent-eval/data/raw/ml-1m --output reports/evidence/baseline-parameter-recovery.json",
+            "commit_sha": "295ab4a48142b83937d6bc22516dd8ba8e4cf9a0",
+            "input_fingerprint": "a34c7ba0e363ba5b666fe7628e2ae74724746509425bf1761196d789386cf53a",
+            "output_fingerprint": "618399a7e87abfcd2d684cb2c35c64c50325322db5a62ee7437a6534a977d646",
+            "source_artifact_sha256": "90708e59593bbedd3a4191fdfbf2a4e1030571b40971505a268b8bb6f581a9e4",
+            "status": "recovered_after_run"
+          },
+          "source": "recovered",
+          "value": [
+            {
+              "epochs": 20,
+              "layers": 2,
+              "learning_rate": 0.001,
+              "rank": 32,
+              "reg": 0.0001
+            },
+            {
+              "epochs": 20,
+              "layers": 2,
+              "learning_rate": 0.001,
+              "rank": 32,
+              "reg": 0.001
+            },
+            {
+              "epochs": 20,
+              "layers": 2,
+              "learning_rate": 0.005,
+              "rank": 32,
+              "reg": 0.0001
+            },
+            {
+              "epochs": 20,
+              "layers": 2,
+              "learning_rate": 0.005,
+              "rank": 32,
+              "reg": 0.001
+            },
+            {
+              "epochs": 20,
+              "layers": 3,
+              "learning_rate": 0.001,
+              "rank": 32,
+              "reg": 0.0001
+            },
+            {
+              "epochs": 20,
+              "layers": 3,
+              "learning_rate": 0.001,
+              "rank": 32,
+              "reg": 0.001
+            },
+            {
+              "epochs": 20,
+              "layers": 3,
+              "learning_rate": 0.005,
+              "rank": 32,
+              "reg": 0.0001
+            },
+            {
+              "epochs": 20,
+              "layers": 3,
+              "learning_rate": 0.005,
+              "rank": 32,
+              "reg": 0.001
+            },
+            {
+              "epochs": 20,
+              "layers": 2,
+              "learning_rate": 0.001,
+              "rank": 64,
+              "reg": 0.0001
+            },
+            {
+              "epochs": 20,
+              "layers": 2,
+              "learning_rate": 0.001,
+              "rank": 64,
+              "reg": 0.001
+            },
+            {
+              "epochs": 20,
+              "layers": 2,
+              "learning_rate": 0.005,
+              "rank": 64,
+              "reg": 0.0001
+            },
+            {
+              "epochs": 20,
+              "layers": 2,
+              "learning_rate": 0.005,
+              "rank": 64,
+              "reg": 0.001
+            },
+            {
+              "epochs": 20,
+              "layers": 3,
+              "learning_rate": 0.001,
+              "rank": 64,
+              "reg": 0.0001
+            },
+            {
+              "epochs": 20,
+              "layers": 3,
+              "learning_rate": 0.001,
+              "rank": 64,
+              "reg": 0.001
+            },
+            {
+              "epochs": 20,
+              "layers": 3,
+              "learning_rate": 0.005,
+              "rank": 64,
+              "reg": 0.0001
+            },
+            {
+              "epochs": 20,
+              "layers": 3,
+              "learning_rate": 0.005,
+              "rank": 64,
+              "reg": 0.001
+            }
+          ]
+        },
+        "seed": {
+          "recovery": {
+            "command": ".venv/bin/recagent-eval recover-baseline-params --ledger reports/audit/2026-08-23-cohort-ledger.json --artifact-dir artifacts/experiments/v2-baselines --data-dir /Users/shinjuu/intern/recagent-eval/data/raw/ml-1m --output reports/evidence/baseline-parameter-recovery.json",
+            "commit_sha": "295ab4a48142b83937d6bc22516dd8ba8e4cf9a0",
+            "input_fingerprint": "a34c7ba0e363ba5b666fe7628e2ae74724746509425bf1761196d789386cf53a",
+            "output_fingerprint": "73475cb40a568e8da8a045ced110137e159f890ac4da883b6b17dc651b3a8049",
+            "source_artifact_sha256": "90708e59593bbedd3a4191fdfbf2a4e1030571b40971505a268b8bb6f581a9e4",
+            "status": "recovered_after_run"
+          },
+          "source": "recovered",
+          "value": 42
+        },
+        "selected_params": {
+          "recovery": {
+            "command": ".venv/bin/recagent-eval recover-baseline-params --ledger reports/audit/2026-08-23-cohort-ledger.json --artifact-dir artifacts/experiments/v2-baselines --data-dir /Users/shinjuu/intern/recagent-eval/data/raw/ml-1m --output reports/evidence/baseline-parameter-recovery.json",
+            "commit_sha": "295ab4a48142b83937d6bc22516dd8ba8e4cf9a0",
+            "input_fingerprint": "a34c7ba0e363ba5b666fe7628e2ae74724746509425bf1761196d789386cf53a",
+            "output_fingerprint": "0d342a348dc9019eb19e660315d14e7125f3455867729a4746e20fea7528a8c9",
+            "source_artifact_sha256": "90708e59593bbedd3a4191fdfbf2a4e1030571b40971505a268b8bb6f581a9e4",
+            "status": "recovered_after_run"
+          },
+          "source": "recovered",
+          "value": {
+            "epochs": 20,
+            "layers": 3,
+            "learning_rate": 0.005,
+            "rank": 64,
+            "reg": 0.001
+          }
+        },
+        "selection_fingerprint": "5a1daf2151ca5adb0ae6cb7b5fd4370b4fc73064d7093ca511f09fe165b8f031"
+      },
+      "popularity": {
+        "parameter_grid": {
+          "recovery": {
+            "command": ".venv/bin/recagent-eval recover-baseline-params --ledger reports/audit/2026-08-23-cohort-ledger.json --artifact-dir artifacts/experiments/v2-baselines --data-dir /Users/shinjuu/intern/recagent-eval/data/raw/ml-1m --output reports/evidence/baseline-parameter-recovery.json",
+            "commit_sha": "295ab4a48142b83937d6bc22516dd8ba8e4cf9a0",
+            "input_fingerprint": "dcc64c0bac03695fdda06553628685b85f7468b4e614d86f7da213293848504f",
+            "output_fingerprint": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "source_artifact_sha256": "f4ba734aed67c7147bcf42a8d7962802b9e8bb23d86d8185c747e34449a6f85f",
+            "status": "recovered_after_run"
+          },
+          "source": "recovered",
+          "value": []
+        },
+        "seed": {
+          "recovery": {
+            "command": ".venv/bin/recagent-eval recover-baseline-params --ledger reports/audit/2026-08-23-cohort-ledger.json --artifact-dir artifacts/experiments/v2-baselines --data-dir /Users/shinjuu/intern/recagent-eval/data/raw/ml-1m --output reports/evidence/baseline-parameter-recovery.json",
+            "commit_sha": "295ab4a48142b83937d6bc22516dd8ba8e4cf9a0",
+            "input_fingerprint": "dcc64c0bac03695fdda06553628685b85f7468b4e614d86f7da213293848504f",
+            "output_fingerprint": "0296f22b01d3da51783b5e145c24403c9066251dff0d2f86a33204d0d2b0cd38",
+            "source_artifact_sha256": "f4ba734aed67c7147bcf42a8d7962802b9e8bb23d86d8185c747e34449a6f85f",
+            "status": "recovered_after_run"
+          },
+          "source": "recovered",
+          "value": "not_applicable"
+        },
+        "selected_params": {
+          "recovery": {
+            "command": ".venv/bin/recagent-eval recover-baseline-params --ledger reports/audit/2026-08-23-cohort-ledger.json --artifact-dir artifacts/experiments/v2-baselines --data-dir /Users/shinjuu/intern/recagent-eval/data/raw/ml-1m --output reports/evidence/baseline-parameter-recovery.json",
+            "commit_sha": "295ab4a48142b83937d6bc22516dd8ba8e4cf9a0",
+            "input_fingerprint": "dcc64c0bac03695fdda06553628685b85f7468b4e614d86f7da213293848504f",
+            "output_fingerprint": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "source_artifact_sha256": "f4ba734aed67c7147bcf42a8d7962802b9e8bb23d86d8185c747e34449a6f85f",
+            "status": "recovered_after_run"
+          },
+          "source": "recovered",
+          "value": {}
+        },
+        "selection_fingerprint": "d65ef87cfa1a8312414eb6659e1303a5ea9da59863df35df6c63233e6e9c3b0c"
+      }
+    },
+    "confirmation_b": {
+      "als_direct": {
+        "parameter_grid": {
+          "recovery": {
+            "command": ".venv/bin/recagent-eval recover-baseline-params --ledger reports/audit/2026-08-23-cohort-ledger.json --artifact-dir artifacts/experiments/v2-baselines --data-dir /Users/shinjuu/intern/recagent-eval/data/raw/ml-1m --output reports/evidence/baseline-parameter-recovery.json",
+            "commit_sha": "295ab4a48142b83937d6bc22516dd8ba8e4cf9a0",
+            "input_fingerprint": "7cf9094ba82e1e2d6dd75ee8c0c9fdbd650153e20b80afa1cadbe7aec8d819ad",
+            "output_fingerprint": "cbd307e00ecf967264023db8ab84c9fb27700f2a80b3f29c801eda3707f00a25",
+            "source_artifact_sha256": "a6863bec24254c9bf9c83f78831f99938eb874b8bc1b41c4f7df20cbe39a1806",
+            "status": "recovered_after_run"
+          },
+          "source": "recovered",
+          "value": [
+            {
+              "alpha": 20.0,
+              "iterations": 10,
+              "lambda_reg": 0.05,
+              "rank": 20
+            },
+            {
+              "alpha": 20.0,
+              "iterations": 10,
+              "lambda_reg": 0.1,
+              "rank": 20
+            },
+            {
+              "alpha": 40.0,
+              "iterations": 10,
+              "lambda_reg": 0.05,
+              "rank": 20
+            },
+            {
+              "alpha": 40.0,
+              "iterations": 10,
+              "lambda_reg": 0.1,
+              "rank": 20
+            },
+            {
+              "alpha": 20.0,
+              "iterations": 12,
+              "lambda_reg": 0.05,
+              "rank": 20
+            },
+            {
+              "alpha": 20.0,
+              "iterations": 12,
+              "lambda_reg": 0.1,
+              "rank": 20
+            },
+            {
+              "alpha": 40.0,
+              "iterations": 12,
+              "lambda_reg": 0.05,
+              "rank": 20
+            },
+            {
+              "alpha": 40.0,
+              "iterations": 12,
+              "lambda_reg": 0.1,
+              "rank": 20
+            },
+            {
+              "alpha": 20.0,
+              "iterations": 10,
+              "lambda_reg": 0.05,
+              "rank": 40
+            },
+            {
+              "alpha": 20.0,
+              "iterations": 10,
+              "lambda_reg": 0.1,
+              "rank": 40
+            },
+            {
+              "alpha": 40.0,
+              "iterations": 10,
+              "lambda_reg": 0.05,
+              "rank": 40
+            },
+            {
+              "alpha": 40.0,
+              "iterations": 10,
+              "lambda_reg": 0.1,
+              "rank": 40
+            },
+            {
+              "alpha": 20.0,
+              "iterations": 12,
+              "lambda_reg": 0.05,
+              "rank": 40
+            },
+            {
+              "alpha": 20.0,
+              "iterations": 12,
+              "lambda_reg": 0.1,
+              "rank": 40
+            },
+            {
+              "alpha": 40.0,
+              "iterations": 12,
+              "lambda_reg": 0.05,
+              "rank": 40
+            },
+            {
+              "alpha": 40.0,
+              "iterations": 12,
+              "lambda_reg": 0.1,
+              "rank": 40
+            }
+          ]
+        },
+        "seed": {
+          "recovery": {
+            "command": ".venv/bin/recagent-eval recover-baseline-params --ledger reports/audit/2026-08-23-cohort-ledger.json --artifact-dir artifacts/experiments/v2-baselines --data-dir /Users/shinjuu/intern/recagent-eval/data/raw/ml-1m --output reports/evidence/baseline-parameter-recovery.json",
+            "commit_sha": "295ab4a48142b83937d6bc22516dd8ba8e4cf9a0",
+            "input_fingerprint": "7cf9094ba82e1e2d6dd75ee8c0c9fdbd650153e20b80afa1cadbe7aec8d819ad",
+            "output_fingerprint": "73475cb40a568e8da8a045ced110137e159f890ac4da883b6b17dc651b3a8049",
+            "source_artifact_sha256": "a6863bec24254c9bf9c83f78831f99938eb874b8bc1b41c4f7df20cbe39a1806",
+            "status": "recovered_after_run"
+          },
+          "source": "recovered",
+          "value": 42
+        },
+        "selected_params": {
+          "recovery": {
+            "command": ".venv/bin/recagent-eval recover-baseline-params --ledger reports/audit/2026-08-23-cohort-ledger.json --artifact-dir artifacts/experiments/v2-baselines --data-dir /Users/shinjuu/intern/recagent-eval/data/raw/ml-1m --output reports/evidence/baseline-parameter-recovery.json",
+            "commit_sha": "295ab4a48142b83937d6bc22516dd8ba8e4cf9a0",
+            "input_fingerprint": "7cf9094ba82e1e2d6dd75ee8c0c9fdbd650153e20b80afa1cadbe7aec8d819ad",
+            "output_fingerprint": "7003d56772e35cd44eb2a7234366db0a770c34ecaede76d091b211b398facea2",
+            "source_artifact_sha256": "a6863bec24254c9bf9c83f78831f99938eb874b8bc1b41c4f7df20cbe39a1806",
+            "status": "recovered_after_run"
+          },
+          "source": "recovered",
+          "value": {
+            "alpha": 20.0,
+            "iterations": 10,
+            "lambda_reg": 0.05,
+            "rank": 20
+          }
+        },
+        "selection_fingerprint": "ecc4aaadff1f49c6f29ff03abc6f7fac4462ecaabe9ed84c123809262fd072ef"
+      },
+      "bpr_mf": {
+        "parameter_grid": {
+          "recovery": {
+            "command": ".venv/bin/recagent-eval recover-baseline-params --ledger reports/audit/2026-08-23-cohort-ledger.json --artifact-dir artifacts/experiments/v2-baselines --data-dir /Users/shinjuu/intern/recagent-eval/data/raw/ml-1m --output reports/evidence/baseline-parameter-recovery.json",
+            "commit_sha": "295ab4a48142b83937d6bc22516dd8ba8e4cf9a0",
+            "input_fingerprint": "f3b141fb1218757ac1a4972920d34a01a63713a28b860449f725f773b7bcac1b",
+            "output_fingerprint": "e0f0e8d041c5281558436ec465435b572ecc72c6fac9d3cb623fd8b70cb044bb",
+            "source_artifact_sha256": "1cf1382c2041e405c2081f690434ccca646ef0d14071932aa818c691df7a20e1",
+            "status": "recovered_after_run"
+          },
+          "source": "recovered",
+          "value": [
+            {
+              "epochs": 10,
+              "learning_rate": 0.001,
+              "rank": 16,
+              "reg": 0.0001
+            },
+            {
+              "epochs": 20,
+              "learning_rate": 0.001,
+              "rank": 16,
+              "reg": 0.0001
+            },
+            {
+              "epochs": 10,
+              "learning_rate": 0.001,
+              "rank": 16,
+              "reg": 0.001
+            },
+            {
+              "epochs": 20,
+              "learning_rate": 0.001,
+              "rank": 16,
+              "reg": 0.001
+            },
+            {
+              "epochs": 10,
+              "learning_rate": 0.005,
+              "rank": 16,
+              "reg": 0.0001
+            },
+            {
+              "epochs": 20,
+              "learning_rate": 0.005,
+              "rank": 16,
+              "reg": 0.0001
+            },
+            {
+              "epochs": 10,
+              "learning_rate": 0.005,
+              "rank": 16,
+              "reg": 0.001
+            },
+            {
+              "epochs": 20,
+              "learning_rate": 0.005,
+              "rank": 16,
+              "reg": 0.001
+            },
+            {
+              "epochs": 10,
+              "learning_rate": 0.001,
+              "rank": 32,
+              "reg": 0.0001
+            },
+            {
+              "epochs": 20,
+              "learning_rate": 0.001,
+              "rank": 32,
+              "reg": 0.0001
+            },
+            {
+              "epochs": 10,
+              "learning_rate": 0.001,
+              "rank": 32,
+              "reg": 0.001
+            },
+            {
+              "epochs": 20,
+              "learning_rate": 0.001,
+              "rank": 32,
+              "reg": 0.001
+            },
+            {
+              "epochs": 10,
+              "learning_rate": 0.005,
+              "rank": 32,
+              "reg": 0.0001
+            },
+            {
+              "epochs": 20,
+              "learning_rate": 0.005,
+              "rank": 32,
+              "reg": 0.0001
+            },
+            {
+              "epochs": 10,
+              "learning_rate": 0.005,
+              "rank": 32,
+              "reg": 0.001
+            },
+            {
+              "epochs": 20,
+              "learning_rate": 0.005,
+              "rank": 32,
+              "reg": 0.001
+            }
+          ]
+        },
+        "seed": {
+          "recovery": {
+            "command": ".venv/bin/recagent-eval recover-baseline-params --ledger reports/audit/2026-08-23-cohort-ledger.json --artifact-dir artifacts/experiments/v2-baselines --data-dir /Users/shinjuu/intern/recagent-eval/data/raw/ml-1m --output reports/evidence/baseline-parameter-recovery.json",
+            "commit_sha": "295ab4a48142b83937d6bc22516dd8ba8e4cf9a0",
+            "input_fingerprint": "f3b141fb1218757ac1a4972920d34a01a63713a28b860449f725f773b7bcac1b",
+            "output_fingerprint": "73475cb40a568e8da8a045ced110137e159f890ac4da883b6b17dc651b3a8049",
+            "source_artifact_sha256": "1cf1382c2041e405c2081f690434ccca646ef0d14071932aa818c691df7a20e1",
+            "status": "recovered_after_run"
+          },
+          "source": "recovered",
+          "value": 42
+        },
+        "selected_params": {
+          "recovery": {
+            "command": ".venv/bin/recagent-eval recover-baseline-params --ledger reports/audit/2026-08-23-cohort-ledger.json --artifact-dir artifacts/experiments/v2-baselines --data-dir /Users/shinjuu/intern/recagent-eval/data/raw/ml-1m --output reports/evidence/baseline-parameter-recovery.json",
+            "commit_sha": "295ab4a48142b83937d6bc22516dd8ba8e4cf9a0",
+            "input_fingerprint": "f3b141fb1218757ac1a4972920d34a01a63713a28b860449f725f773b7bcac1b",
+            "output_fingerprint": "c853736cb7d921f814fdd844b4b32ea0181547521a8ee5779317ba823bb77ca1",
+            "source_artifact_sha256": "1cf1382c2041e405c2081f690434ccca646ef0d14071932aa818c691df7a20e1",
+            "status": "recovered_after_run"
+          },
+          "source": "recovered",
+          "value": {
+            "epochs": 20,
+            "learning_rate": 0.005,
+            "rank": 16,
+            "reg": 0.001
+          }
+        },
+        "selection_fingerprint": "8b9a78e9d7b1f87ee911b3aaad58befd93258c70faf6d915882b673f5a65be8a"
+      },
+      "current_v2b": {
+        "parameter_grid": {
+          "recovery": {
+            "command": ".venv/bin/recagent-eval recover-baseline-params --ledger reports/audit/2026-08-23-cohort-ledger.json --artifact-dir artifacts/experiments/v2-baselines --data-dir /Users/shinjuu/intern/recagent-eval/data/raw/ml-1m --output reports/evidence/baseline-parameter-recovery.json",
+            "commit_sha": "295ab4a48142b83937d6bc22516dd8ba8e4cf9a0",
+            "input_fingerprint": "e1ba88908e2eeb68f88c97f5bdc1a7c63c3fa0904b25573db1d98e51c4e205c9",
+            "output_fingerprint": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "source_artifact_sha256": "e6162dc0f09fe9a202cc0a8cb5e875e147b32657b82708a50780daf61d6d3d3a",
+            "status": "recovered_after_run"
+          },
+          "source": "recovered",
+          "value": []
+        },
+        "seed": {
+          "recovery": {
+            "command": ".venv/bin/recagent-eval recover-baseline-params --ledger reports/audit/2026-08-23-cohort-ledger.json --artifact-dir artifacts/experiments/v2-baselines --data-dir /Users/shinjuu/intern/recagent-eval/data/raw/ml-1m --output reports/evidence/baseline-parameter-recovery.json",
+            "commit_sha": "295ab4a48142b83937d6bc22516dd8ba8e4cf9a0",
+            "input_fingerprint": "e1ba88908e2eeb68f88c97f5bdc1a7c63c3fa0904b25573db1d98e51c4e205c9",
+            "output_fingerprint": "73475cb40a568e8da8a045ced110137e159f890ac4da883b6b17dc651b3a8049",
+            "source_artifact_sha256": "e6162dc0f09fe9a202cc0a8cb5e875e147b32657b82708a50780daf61d6d3d3a",
+            "status": "recovered_after_run"
+          },
+          "source": "recovered",
+          "value": 42
+        },
+        "selected_params": {
+          "recovery": {
+            "command": ".venv/bin/recagent-eval recover-baseline-params --ledger reports/audit/2026-08-23-cohort-ledger.json --artifact-dir artifacts/experiments/v2-baselines --data-dir /Users/shinjuu/intern/recagent-eval/data/raw/ml-1m --output reports/evidence/baseline-parameter-recovery.json",
+            "commit_sha": "295ab4a48142b83937d6bc22516dd8ba8e4cf9a0",
+            "input_fingerprint": "e1ba88908e2eeb68f88c97f5bdc1a7c63c3fa0904b25573db1d98e51c4e205c9",
+            "output_fingerprint": "7ed209bcb478cbe380d42a959a0ffeade9ad51f1e460a98c6719005b0ed4ef2d",
+            "source_artifact_sha256": "e6162dc0f09fe9a202cc0a8cb5e875e147b32657b82708a50780daf61d6d3d3a",
+            "status": "recovered_after_run"
+          },
+          "source": "recovered",
+          "value": {
+            "enable_memory": true,
+            "enable_semantic_retrieval": true,
+            "latent_alpha": 40.0,
+            "latent_artifact_path": "artifacts/experiments/v2-latent-bfeat-500/latent.npz",
+            "latent_enabled": true,
+            "latent_iterations": 12,
+            "latent_lambda_reg": 0.1,
+            "latent_rank": 20,
+            "latent_seed": 42,
+            "latent_top_k": 500,
+            "learned_bundle_manifest_path": null,
+            "learned_candidate_policy_fingerprint": null,
+            "learned_case_fingerprint": null,
+            "learned_config_fingerprint": null,
+            "learned_consumption_dir": null,
+            "learned_dataset_fingerprint": null,
+            "learned_evidence_path": null,
+            "learned_gate_fingerprint": null,
+            "learned_model_path": null,
+            "name": "v2-dense-lambdamart-latent-bfeat",
+            "ranker_feature_version": "v2b",
+            "ranker_kind": "minmax_linear",
+            "ranker_max_negatives": null,
+            "ranker_negative_policy": "all",
+            "required_retrieval_tools": [
+              "itemcf_retrieve",
+              "semantic_retrieve"
+            ],
+            "retrieval_top_k": 500,
+            "rrf_k": 60,
+            "score_calibration": "raw",
+            "seed": 42,
+            "semantic_cache_path": "artifacts/embeddings/movielens-minilm.npz",
+            "semantic_device": "cpu",
+            "semantic_kind": "dense",
+            "semantic_model_name": "sentence-transformers/all-MiniLM-L6-v2",
+            "semantic_model_revision": null,
+            "semantic_profile_history_cap": 50,
+            "semantic_top_k": 1500,
+            "structured_planning": true,
+            "weights": [
+              0.7,
+              0.3,
+              0.0
+            ]
+          }
+        },
+        "selection_fingerprint": "530ec64871b9e042da5e566d1a1ad9358dbed811dace4caaaa9de15419b3800c"
+      },
+      "itemcf_direct": {
+        "parameter_grid": {
+          "recovery": {
+            "command": ".venv/bin/recagent-eval recover-baseline-params --ledger reports/audit/2026-08-23-cohort-ledger.json --artifact-dir artifacts/experiments/v2-baselines --data-dir /Users/shinjuu/intern/recagent-eval/data/raw/ml-1m --output reports/evidence/baseline-parameter-recovery.json",
+            "commit_sha": "295ab4a48142b83937d6bc22516dd8ba8e4cf9a0",
+            "input_fingerprint": "1a2def27e653374e0b714a9c280e289b2face481d8a259b4234272074680bee0",
+            "output_fingerprint": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "source_artifact_sha256": "c7d8904c04e4d2c39205fa713a67ba9d64c7f17df0e00c0e3aebc5805b6f2bc1",
+            "status": "recovered_after_run"
+          },
+          "source": "recovered",
+          "value": []
+        },
+        "seed": {
+          "recovery": {
+            "command": ".venv/bin/recagent-eval recover-baseline-params --ledger reports/audit/2026-08-23-cohort-ledger.json --artifact-dir artifacts/experiments/v2-baselines --data-dir /Users/shinjuu/intern/recagent-eval/data/raw/ml-1m --output reports/evidence/baseline-parameter-recovery.json",
+            "commit_sha": "295ab4a48142b83937d6bc22516dd8ba8e4cf9a0",
+            "input_fingerprint": "1a2def27e653374e0b714a9c280e289b2face481d8a259b4234272074680bee0",
+            "output_fingerprint": "0296f22b01d3da51783b5e145c24403c9066251dff0d2f86a33204d0d2b0cd38",
+            "source_artifact_sha256": "c7d8904c04e4d2c39205fa713a67ba9d64c7f17df0e00c0e3aebc5805b6f2bc1",
+            "status": "recovered_after_run"
+          },
+          "source": "recovered",
+          "value": "not_applicable"
+        },
+        "selected_params": {
+          "recovery": {
+            "command": ".venv/bin/recagent-eval recover-baseline-params --ledger reports/audit/2026-08-23-cohort-ledger.json --artifact-dir artifacts/experiments/v2-baselines --data-dir /Users/shinjuu/intern/recagent-eval/data/raw/ml-1m --output reports/evidence/baseline-parameter-recovery.json",
+            "commit_sha": "295ab4a48142b83937d6bc22516dd8ba8e4cf9a0",
+            "input_fingerprint": "1a2def27e653374e0b714a9c280e289b2face481d8a259b4234272074680bee0",
+            "output_fingerprint": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "source_artifact_sha256": "c7d8904c04e4d2c39205fa713a67ba9d64c7f17df0e00c0e3aebc5805b6f2bc1",
+            "status": "recovered_after_run"
+          },
+          "source": "recovered",
+          "value": {}
+        },
+        "selection_fingerprint": "54771aa723a2e4fd177dc67bc9e30fd81466015b8d822d0925399666b22be65c"
+      },
+      "lightgcn": {
+        "parameter_grid": {
+          "recovery": {
+            "command": ".venv/bin/recagent-eval recover-baseline-params --ledger reports/audit/2026-08-23-cohort-ledger.json --artifact-dir artifacts/experiments/v2-baselines --data-dir /Users/shinjuu/intern/recagent-eval/data/raw/ml-1m --output reports/evidence/baseline-parameter-recovery.json",
+            "commit_sha": "295ab4a48142b83937d6bc22516dd8ba8e4cf9a0",
+            "input_fingerprint": "87781998d2c22586f62fbfcd0921dae60d3fd6667076aef53f7cb152fc7dd91a",
+            "output_fingerprint": "618399a7e87abfcd2d684cb2c35c64c50325322db5a62ee7437a6534a977d646",
+            "source_artifact_sha256": "45188665531a000cda8a633a739056edaec4cfaec6722cecb4343c7b93d6b322",
+            "status": "recovered_after_run"
+          },
+          "source": "recovered",
+          "value": [
+            {
+              "epochs": 20,
+              "layers": 2,
+              "learning_rate": 0.001,
+              "rank": 32,
+              "reg": 0.0001
+            },
+            {
+              "epochs": 20,
+              "layers": 2,
+              "learning_rate": 0.001,
+              "rank": 32,
+              "reg": 0.001
+            },
+            {
+              "epochs": 20,
+              "layers": 2,
+              "learning_rate": 0.005,
+              "rank": 32,
+              "reg": 0.0001
+            },
+            {
+              "epochs": 20,
+              "layers": 2,
+              "learning_rate": 0.005,
+              "rank": 32,
+              "reg": 0.001
+            },
+            {
+              "epochs": 20,
+              "layers": 3,
+              "learning_rate": 0.001,
+              "rank": 32,
+              "reg": 0.0001
+            },
+            {
+              "epochs": 20,
+              "layers": 3,
+              "learning_rate": 0.001,
+              "rank": 32,
+              "reg": 0.001
+            },
+            {
+              "epochs": 20,
+              "layers": 3,
+              "learning_rate": 0.005,
+              "rank": 32,
+              "reg": 0.0001
+            },
+            {
+              "epochs": 20,
+              "layers": 3,
+              "learning_rate": 0.005,
+              "rank": 32,
+              "reg": 0.001
+            },
+            {
+              "epochs": 20,
+              "layers": 2,
+              "learning_rate": 0.001,
+              "rank": 64,
+              "reg": 0.0001
+            },
+            {
+              "epochs": 20,
+              "layers": 2,
+              "learning_rate": 0.001,
+              "rank": 64,
+              "reg": 0.001
+            },
+            {
+              "epochs": 20,
+              "layers": 2,
+              "learning_rate": 0.005,
+              "rank": 64,
+              "reg": 0.0001
+            },
+            {
+              "epochs": 20,
+              "layers": 2,
+              "learning_rate": 0.005,
+              "rank": 64,
+              "reg": 0.001
+            },
+            {
+              "epochs": 20,
+              "layers": 3,
+              "learning_rate": 0.001,
+              "rank": 64,
+              "reg": 0.0001
+            },
+            {
+              "epochs": 20,
+              "layers": 3,
+              "learning_rate": 0.001,
+              "rank": 64,
+              "reg": 0.001
+            },
+            {
+              "epochs": 20,
+              "layers": 3,
+              "learning_rate": 0.005,
+              "rank": 64,
+              "reg": 0.0001
+            },
+            {
+              "epochs": 20,
+              "layers": 3,
+              "learning_rate": 0.005,
+              "rank": 64,
+              "reg": 0.001
+            }
+          ]
+        },
+        "seed": {
+          "recovery": {
+            "command": ".venv/bin/recagent-eval recover-baseline-params --ledger reports/audit/2026-08-23-cohort-ledger.json --artifact-dir artifacts/experiments/v2-baselines --data-dir /Users/shinjuu/intern/recagent-eval/data/raw/ml-1m --output reports/evidence/baseline-parameter-recovery.json",
+            "commit_sha": "295ab4a48142b83937d6bc22516dd8ba8e4cf9a0",
+            "input_fingerprint": "87781998d2c22586f62fbfcd0921dae60d3fd6667076aef53f7cb152fc7dd91a",
+            "output_fingerprint": "73475cb40a568e8da8a045ced110137e159f890ac4da883b6b17dc651b3a8049",
+            "source_artifact_sha256": "45188665531a000cda8a633a739056edaec4cfaec6722cecb4343c7b93d6b322",
+            "status": "recovered_after_run"
+          },
+          "source": "recovered",
+          "value": 42
+        },
+        "selected_params": {
+          "recovery": {
+            "command": ".venv/bin/recagent-eval recover-baseline-params --ledger reports/audit/2026-08-23-cohort-ledger.json --artifact-dir artifacts/experiments/v2-baselines --data-dir /Users/shinjuu/intern/recagent-eval/data/raw/ml-1m --output reports/evidence/baseline-parameter-recovery.json",
+            "commit_sha": "295ab4a48142b83937d6bc22516dd8ba8e4cf9a0",
+            "input_fingerprint": "87781998d2c22586f62fbfcd0921dae60d3fd6667076aef53f7cb152fc7dd91a",
+            "output_fingerprint": "0d342a348dc9019eb19e660315d14e7125f3455867729a4746e20fea7528a8c9",
+            "source_artifact_sha256": "45188665531a000cda8a633a739056edaec4cfaec6722cecb4343c7b93d6b322",
+            "status": "recovered_after_run"
+          },
+          "source": "recovered",
+          "value": {
+            "epochs": 20,
+            "layers": 3,
+            "learning_rate": 0.005,
+            "rank": 64,
+            "reg": 0.001
+          }
+        },
+        "selection_fingerprint": "5a1daf2151ca5adb0ae6cb7b5fd4370b4fc73064d7093ca511f09fe165b8f031"
+      },
+      "popularity": {
+        "parameter_grid": {
+          "recovery": {
+            "command": ".venv/bin/recagent-eval recover-baseline-params --ledger reports/audit/2026-08-23-cohort-ledger.json --artifact-dir artifacts/experiments/v2-baselines --data-dir /Users/shinjuu/intern/recagent-eval/data/raw/ml-1m --output reports/evidence/baseline-parameter-recovery.json",
+            "commit_sha": "295ab4a48142b83937d6bc22516dd8ba8e4cf9a0",
+            "input_fingerprint": "3454c181b7897015c25c185a9119a9c6725a2aef98c94362fc0e6ac18d2a8c5f",
+            "output_fingerprint": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "source_artifact_sha256": "472c225dd82f7e2e8ade12d715c7414e659ccf3aaa1d9c552c8cd94fc1440828",
+            "status": "recovered_after_run"
+          },
+          "source": "recovered",
+          "value": []
+        },
+        "seed": {
+          "recovery": {
+            "command": ".venv/bin/recagent-eval recover-baseline-params --ledger reports/audit/2026-08-23-cohort-ledger.json --artifact-dir artifacts/experiments/v2-baselines --data-dir /Users/shinjuu/intern/recagent-eval/data/raw/ml-1m --output reports/evidence/baseline-parameter-recovery.json",
+            "commit_sha": "295ab4a48142b83937d6bc22516dd8ba8e4cf9a0",
+            "input_fingerprint": "3454c181b7897015c25c185a9119a9c6725a2aef98c94362fc0e6ac18d2a8c5f",
+            "output_fingerprint": "0296f22b01d3da51783b5e145c24403c9066251dff0d2f86a33204d0d2b0cd38",
+            "source_artifact_sha256": "472c225dd82f7e2e8ade12d715c7414e659ccf3aaa1d9c552c8cd94fc1440828",
+            "status": "recovered_after_run"
+          },
+          "source": "recovered",
+          "value": "not_applicable"
+        },
+        "selected_params": {
+          "recovery": {
+            "command": ".venv/bin/recagent-eval recover-baseline-params --ledger reports/audit/2026-08-23-cohort-ledger.json --artifact-dir artifacts/experiments/v2-baselines --data-dir /Users/shinjuu/intern/recagent-eval/data/raw/ml-1m --output reports/evidence/baseline-parameter-recovery.json",
+            "commit_sha": "295ab4a48142b83937d6bc22516dd8ba8e4cf9a0",
+            "input_fingerprint": "3454c181b7897015c25c185a9119a9c6725a2aef98c94362fc0e6ac18d2a8c5f",
+            "output_fingerprint": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "source_artifact_sha256": "472c225dd82f7e2e8ade12d715c7414e659ccf3aaa1d9c552c8cd94fc1440828",
+            "status": "recovered_after_run"
+          },
+          "source": "recovered",
+          "value": {}
+        },
+        "selection_fingerprint": "d65ef87cfa1a8312414eb6659e1303a5ea9da59863df35df6c63233e6e9c3b0c"
+      }
+    }
+  },
+  "command": ".venv/bin/recagent-eval recover-baseline-params --ledger reports/audit/2026-08-23-cohort-ledger.json --artifact-dir artifacts/experiments/v2-baselines --data-dir /Users/shinjuu/intern/recagent-eval/data/raw/ml-1m --output reports/evidence/baseline-parameter-recovery.json",
+  "commit_sha": "295ab4a48142b83937d6bc22516dd8ba8e4cf9a0",
+  "fingerprint": "cd042f55871806309ed80735b007bdb852b1761796a507bc0eba470fe1bbdb3f",
+  "schema_version": "baseline-parameter-recovery/v1",
+  "status": "recovered_after_run"
+}

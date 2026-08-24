@@ -4,6 +4,7 @@ import hashlib
 import json
 import subprocess
 import time
+from dataclasses import asdict
 from pathlib import Path
 from typing import Annotated
 
@@ -41,7 +42,11 @@ from recagent_eval.data import (
     load_movielens_ratings,
 )
 from recagent_eval.dataset import download_movielens_1m
-from recagent_eval.evidence import runtime_dependency_versions, runtime_hardware
+from recagent_eval.evidence import (
+    canonical_digest,
+    runtime_dependency_versions,
+    runtime_hardware,
+)
 from recagent_eval.evidence_replay import (
     build_compact_bundle,
     replay_compact_bundle,
@@ -89,6 +94,7 @@ from recagent_eval.retrieval import (
     DenseSemanticRetriever,
     TfidfSemanticRetriever,
 )
+from recagent_eval.robustness import build_parameter_recovery_manifest
 from recagent_eval.runner import ExperimentConfig, case_fingerprint, run_experiment
 from recagent_eval.safe_io import ensure_distinct_files
 from recagent_eval.tuning import (
@@ -877,6 +883,8 @@ def evaluate_baselines(
     ),
     max_users: Annotated[int, typer.Option(min=1)] = 1000,
     max_training_users: Annotated[int | None, typer.Option()] = None,
+    locked_params_path: Annotated[Path | None, typer.Option("--locked-params")] = None,
+    seed: Annotated[int, typer.Option()] = 42,
 ) -> None:
     """Evaluate one registered baseline method on one cohort."""
     if output.exists():
@@ -887,6 +895,8 @@ def evaluate_baselines(
         raise typer.BadParameter(
             f"unknown baseline method {method!r}; registered: {sorted(BASELINE_SCORERS)}"
         )
+    if seed != 42 and locked_params_path is None:
+        raise typer.BadParameter("non-default seed requires --locked-params")
     try:
         ledger = json.loads(ledger_path.read_text())
         users = [int(user) for user in ledger["cohorts"][cohort][:max_users]]
@@ -895,13 +905,39 @@ def evaluate_baselines(
     movies, ratings = _load_dataset(data_dir)
     split = leakage_safe_ranking_split(ratings)
     scorer = BASELINE_SCORERS[method]
+    scorer_kwargs: dict[str, object] = {
+        "ledger": ledger,
+        "max_training_users": max_training_users,
+    }
+    selected_params_provenance = None
+    parameter_grid_provenance = None
+    if locked_params_path is not None:
+        if method not in {"bpr_mf", "lightgcn"}:
+            raise typer.BadParameter("locked params are supported only for BPR-MF and LightGCN")
+        try:
+            recovery_manifest = json.loads(locked_params_path.read_text())
+            recorded = recovery_manifest.pop("fingerprint")
+            if recorded != canonical_digest(recovery_manifest):
+                raise ValueError("parameter recovery fingerprint drift")
+            recovery_manifest["fingerprint"] = recorded
+            method_recovery = recovery_manifest["cohorts"][cohort][method]
+            selected_params_provenance = method_recovery["selected_params"]
+            parameter_grid_provenance = method_recovery["parameter_grid"]
+            scorer_kwargs.update(
+                {
+                    "selected_params": selected_params_provenance["value"],
+                    "selection_fingerprint": method_recovery["selection_fingerprint"],
+                    "seed": seed,
+                }
+            )
+        except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+            raise typer.BadParameter(f"invalid locked params: {exc}") from exc
     try:
         result = scorer(
             movies,
             split,
             users,
-            ledger=ledger,
-            max_training_users=max_training_users,
+            **scorer_kwargs,
         )
     except (OSError, ValueError) as exc:
         raise typer.BadParameter(str(exc)) from exc
@@ -924,6 +960,8 @@ def evaluate_baselines(
         model_size_bytes=result["model_size_bytes"],
         environment=result["environment"],
         bootstrap=result.get("bootstrap_vs_itemcf"),
+        selected_params_provenance=selected_params_provenance,
+        parameter_grid_provenance=parameter_grid_provenance,
     )
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(
@@ -1010,6 +1048,8 @@ def build_evidence_bundle_cli(
         summary_bytes = summary_path.read_bytes()
         summary = json.loads(summary_bytes)
         recovery = json.loads(recovery_path.read_bytes())
+        if recovery.get("schema_version") == "baseline-parameter-recovery/v1":
+            recovery = recovery["cohorts"][cohort]
         methods = sorted(summary["aggregates"])
         file_cohort = cohort.replace("_", "-")
         source_artifacts = {
@@ -1037,6 +1077,95 @@ def build_evidence_bundle_cli(
     except (OSError, ValueError, KeyError, subprocess.CalledProcessError) as exc:
         raise typer.BadParameter(str(exc)) from exc
     typer.echo(json.dumps({"fingerprint": bundle["fingerprint"], "output": str(output)}))
+
+
+@app.command("recover-baseline-params")
+def recover_baseline_params_cli(
+    ledger_path: Annotated[Path, typer.Option("--ledger")],
+    artifact_dir: Annotated[Path, typer.Option()],
+    data_dir: Annotated[Path, typer.Option()] = Path("data/raw/ml-1m"),
+    output: Annotated[Path, typer.Option()] = Path(
+        "reports/evidence/baseline-parameter-recovery.json"
+    ),
+) -> None:
+    """Deterministically recover v1 selected parameters once for evidence binding."""
+    if output.exists():
+        raise typer.BadParameter(f"refusing to overwrite existing evidence: {output}")
+    try:
+        ledger = json.loads(ledger_path.read_text())
+        dev_users = [int(user) for user in ledger["cohorts"]["development"]]
+        movies, ratings = _load_dataset(data_dir)
+        split = leakage_safe_ranking_split(ratings)
+        als_selection = _als_registration.select_als_params(movies, split, dev_users)
+        bpr_selection = _bpr_registration.select_bpr_params(movies, split, dev_users)
+        lightgcn_selection = _lightgcn_registration.select_lightgcn_params(
+            movies, split, dev_users
+        )
+        lightgcn_selection["selected_params"] = {
+            **lightgcn_selection["selected_params"],
+            "epochs": int(lightgcn_selection["epochs"]),
+        }
+        lightgcn_selection["grid"] = [
+            {**params, "epochs": int(lightgcn_selection["epochs"])}
+            for params in lightgcn_selection["grid"]
+        ]
+        current_config = load_experiment_config(
+            Path("configs/v2_dense_latent_bfeat.yaml")
+        )
+        selections = {
+            "popularity": {
+                "selected_params": {},
+                "grid": [],
+                "fingerprint": hashlib.sha256(b"popularity/v1").hexdigest(),
+                "seed": "not_applicable",
+            },
+            "itemcf_direct": {
+                "selected_params": {},
+                "grid": [],
+                "fingerprint": hashlib.sha256(b"itemcf_direct/v1").hexdigest(),
+                "seed": "not_applicable",
+            },
+            "als_direct": als_selection,
+            "bpr_mf": bpr_selection,
+            "lightgcn": lightgcn_selection,
+            "current_v2b": {
+                "selected_params": asdict(current_config),
+                "grid": [],
+                "fingerprint": lambdamart_config_fingerprint(current_config),
+                "seed": current_config.seed,
+            },
+        }
+        source_artifacts = {
+            cohort: {
+                method: (
+                    artifact_dir
+                    / f"{method.replace('_', '-')}-{cohort.replace('_', '-')}.json"
+                ).read_bytes()
+                for method in selections
+            }
+            for cohort in ("confirmation_a", "confirmation_b")
+        }
+        commit_sha = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        command = (
+            ".venv/bin/recagent-eval recover-baseline-params "
+            f"--ledger {ledger_path} --artifact-dir {artifact_dir} "
+            f"--data-dir {data_dir} --output {output}"
+        )
+        manifest = build_parameter_recovery_manifest(
+            selections=selections,
+            source_artifacts=source_artifacts,
+            command=command,
+            commit_sha=commit_sha,
+        )
+        write_new_json(output, manifest)
+    except (OSError, ValueError, KeyError, TypeError, subprocess.CalledProcessError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(json.dumps({"fingerprint": manifest["fingerprint"], "output": str(output)}))
 
 
 @app.command("replay-evidence")

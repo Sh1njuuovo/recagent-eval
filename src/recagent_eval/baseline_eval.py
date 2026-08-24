@@ -114,6 +114,9 @@ def metric_json(
     model_size_bytes: int,
     environment: Mapping[str, str],
     bootstrap: Mapping[str, object] | None = None,
+    selected_params_provenance: Mapping[str, object] | None = None,
+    parameter_grid_provenance: Mapping[str, object] | None = None,
+    seed_provenance: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     if not rows:
         raise ValueError("baseline evidence requires non-empty rows")
@@ -154,9 +157,15 @@ def metric_json(
         "training_seconds": training_seconds,
         "resource_usage": dict(resource_usage),
         "model_size_bytes": model_size_bytes,
-        "selected_params": provenance_value(selected_params, source="observed"),
-        "parameter_grid": provenance_value(parameter_grid, source="observed"),
-        "seed": provenance_value(seed, source="observed"),
+        "selected_params": dict(selected_params_provenance)
+        if selected_params_provenance is not None
+        else provenance_value(selected_params, source="observed"),
+        "parameter_grid": dict(parameter_grid_provenance)
+        if parameter_grid_provenance is not None
+        else provenance_value(parameter_grid, source="observed"),
+        "seed": dict(seed_provenance)
+        if seed_provenance is not None
+        else provenance_value(seed, source="observed"),
         "dependency_versions": provenance_value(
             dict(dependency_versions), source="observed"
         ),

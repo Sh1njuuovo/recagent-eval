@@ -1,0 +1,17 @@
+{
+  "cohort": "confirmation_b",
+  "fingerprint": "a5bbae17582d3b231e98c8338cf81f54aa6eca5c341c9a4c76bc3a939c38aa9a",
+  "methods": {
+    "bpr_mf": [
+      {"metrics": {"source": "derived", "value": {"candidate_recall": 1.0, "constraint_satisfaction_rate": 1.0, "mrr_at_10": 0.012574206349206349, "ndcg_at_10": 0.020466845867727408, "recall_at_10": 0.047}}, "seed": 42, "source_artifact_fingerprint": "f3b141fb1218757ac1a4972920d34a01a63713a28b860449f725f773b7bcac1b", "source_artifact_sha256": "1cf1382c2041e405c2081f690434ccca646ef0d14071932aa818c691df7a20e1", "source_schema": "baseline-evaluation/v1"},
+      {"metrics": {"source": "derived", "value": {"candidate_recall": 1.0, "constraint_satisfaction_rate": 1.0, "mrr_at_10": 0.013592063492063492, "ndcg_at_10": 0.020581728296156065, "recall_at_10": 0.044}}, "seed": 7, "source_artifact_fingerprint": "e75007b887b673a10f0d749d80bbe9870f01e159fef28ce932d00af37bfef054", "source_artifact_sha256": "f8406ed324ced4fc0485d2211161724bb16c3a62c155bbdece75ac72d28fc2be", "source_schema": "baseline-evaluation/v2"},
+      {"metrics": {"source": "derived", "value": {"candidate_recall": 1.0, "constraint_satisfaction_rate": 1.0, "mrr_at_10": 0.011207142857142856, "ndcg_at_10": 0.017887486112273736, "recall_at_10": 0.04}}, "seed": 2026, "source_artifact_fingerprint": "33fcf1c2c2339c8376f2beee25140983fe9cac875255f8be4e10350f9cc54532", "source_artifact_sha256": "075f5844ad69aad38d9cf55f452aba298649ae4edc4035f7ce6973fd00f742cf", "source_schema": "baseline-evaluation/v2"}
+    ],
+    "lightgcn": [
+      {"metrics": {"source": "derived", "value": {"candidate_recall": 1.0, "constraint_satisfaction_rate": 1.0, "mrr_at_10": 0.010628968253968253, "ndcg_at_10": 0.016309393523155444, "recall_at_10": 0.035}}, "seed": 42, "source_artifact_fingerprint": "87781998d2c22586f62fbfcd0921dae60d3fd6667076aef53f7cb152fc7dd91a", "source_artifact_sha256": "45188665531a000cda8a633a739056edaec4cfaec6722cecb4343c7b93d6b322", "source_schema": "baseline-evaluation/v1"},
+      {"metrics": {"source": "derived", "value": {"candidate_recall": 1.0, "constraint_satisfaction_rate": 1.0, "mrr_at_10": 0.011282539682539684, "ndcg_at_10": 0.018523576466929956, "recall_at_10": 0.043}}, "seed": 7, "source_artifact_fingerprint": "d6ec92046b2a3e9014956fb613916ac51d57c41bf8ab9567957971a7e8cf403e", "source_artifact_sha256": "a3c3788c035c1cdc5e7899a48c67bf7308e38e58609818b36447a3b6042e45cd", "source_schema": "baseline-evaluation/v2"},
+      {"metrics": {"source": "derived", "value": {"candidate_recall": 1.0, "constraint_satisfaction_rate": 1.0, "mrr_at_10": 0.011879761904761905, "ndcg_at_10": 0.018536847218909587, "recall_at_10": 0.041}}, "seed": 2026, "source_artifact_fingerprint": "5d4f819c8c92531ee33f67e3c772ec783a5992d42ece6918c7f1b27279ea06f6", "source_artifact_sha256": "b6854ae29bdcb4934eeea1ae7b9ab5d396ea79742d0924c6de95546f1b615826", "source_schema": "baseline-evaluation/v2"}
+    ]
+  },
+  "schema_version": "posthoc-robustness-input/v1"
+}

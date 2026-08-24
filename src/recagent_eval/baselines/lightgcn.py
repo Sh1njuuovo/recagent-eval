@@ -525,14 +525,24 @@ def score_lightgcn(
     *,
     ledger: Mapping[str, object] | None = None,
     max_training_users: int | None = None,
+    selected_params: Mapping[str, float] | None = None,
+    selection_fingerprint: str | None = None,
+    seed: int = 42,
 ) -> dict[str, object]:
-    dev_users = (
-        [int(user) for user in ledger["cohorts"]["development"]]
-        if ledger is not None
-        else sorted(split.validation_targets)[:10]
-    )
-    selection = select_lightgcn_params(movies, split, dev_users)
-    params = selection["selected_params"]
+    if selected_params is None:
+        dev_users = (
+            [int(user) for user in ledger["cohorts"]["development"]]
+            if ledger is not None
+            else sorted(split.validation_targets)[:10]
+        )
+        selection = select_lightgcn_params(movies, split, dev_users)
+        params = selection["selected_params"]
+        config_fingerprint = str(selection["fingerprint"])
+    else:
+        if not selection_fingerprint:
+            raise ValueError("locked LightGCN parameters require selection_fingerprint")
+        params = dict(selected_params)
+        config_fingerprint = selection_fingerprint
     train_rows = split.legal_retrieval_train
     if max_training_users is not None:
         train_users = set(
@@ -546,8 +556,8 @@ def score_lightgcn(
         layers=int(params["layers"]),
         learning_rate=float(params["learning_rate"]),
         reg=float(params["reg"]),
-        epochs=20,
-        seed=42,
+        epochs=int(params.get("epochs", 20)),
+        seed=seed,
     )
     training_seconds = time.perf_counter() - started
     histories = _positive_histories(split.legal_retrieval_train, movies)
@@ -582,12 +592,12 @@ def score_lightgcn(
         )
     return {
         "rows": rows,
-        "config_fingerprint": selection["fingerprint"],
+        "config_fingerprint": config_fingerprint,
         "dataset_fingerprint": ranking_dataset_fingerprint(movies, split),
         "model_fingerprint": model.training_fingerprint,
         "selected_params": dict(params),
-        "parameter_grid": list(selection["grid"]),
-        "seed": 42,
+        "parameter_grid": [dict(grid_params) for grid_params in LIGHTGCN_PARAMETER_GRID],
+        "seed": seed,
         "training_seconds": training_seconds,
         "resource_usage": read_process_peak_rss(),
         "model_size_bytes": int(
