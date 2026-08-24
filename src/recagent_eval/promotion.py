@@ -9,6 +9,7 @@ import stat
 import subprocess
 import tempfile
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Literal
 
@@ -314,6 +315,7 @@ class ExecutionSettings(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     mode: Literal["learned_frozen"]
+    scope: Literal["real", "synthetic"] = "real"
 
 
 @dataclass(frozen=True)
@@ -330,6 +332,7 @@ def derive_execution_paths(
     case_fingerprint: str,
     dataset_fingerprint: str,
     model_checksum: str,
+    scope: Literal["real", "synthetic"] = "real",
 ) -> ExecutionPaths:
     values = {
         "manifest_sha256": _validate_sha256(manifest_sha256),
@@ -338,7 +341,8 @@ def derive_execution_paths(
         "model_checksum": _validate_sha256(model_checksum),
     }
     identity = canonical_payload_sha256(values)
-    root = f"artifacts/frozen/{manifest_sha256[:16]}-{identity[:16]}"
+    base = "artifacts/frozen" if scope == "real" else "artifacts/frozen-rehearsal"
+    root = f"{base}/{manifest_sha256[:16]}-{identity[:16]}"
     return ExecutionPaths(
         marker=f"{root}/marker.json",
         output=f"{root}/metrics.json",
@@ -390,6 +394,7 @@ class PromotionYaml(BaseModel):
             case_fingerprint=manifest.case_fingerprint,
             dataset_fingerprint=manifest.dataset_fingerprint,
             model_checksum=manifest.model_checksum,
+            scope=self.execution.scope,
         )
         if self.marker_path != paths.marker:
             raise ValueError("promotion YAML derived marker path mismatch")
@@ -537,6 +542,7 @@ def preflight_promotion(
         case_fingerprint=manifest.case_fingerprint,
         dataset_fingerprint=manifest.dataset_fingerprint,
         model_checksum=manifest.model_checksum,
+        scope=promotion.execution.scope,
     )
     for label, relative in {"marker": paths.marker, "output": paths.output}.items():
         destination = _repo_destination(root, relative)
@@ -599,3 +605,257 @@ def verify_git_identity(repo_root: Path, manifest: PromotionManifest) -> None:
             "protected production/config/dependency paths changed after implementation commit: "
             + ", ".join(changed)
         )
+
+
+class RunMarker(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal["frozen-run-marker/v1"]
+    state: Literal["started", "completed", "failed"]
+    manifest_sha256: str
+    case_fingerprint: str
+    dataset_fingerprint: str
+    model_checksum: str
+    evidence_fingerprint: str
+    started_at: str
+    finished_at: str | None = None
+    output_sha256: str | None = None
+    output_size_bytes: int | None = None
+    error_type: str | None = None
+    error_digest: str | None = None
+
+    _manifest_sha = field_validator("manifest_sha256")(_validate_sha256)
+    _case_sha = field_validator("case_fingerprint")(_validate_sha256)
+    _dataset_sha = field_validator("dataset_fingerprint")(_validate_sha256)
+    _model_sha = field_validator("model_checksum")(_validate_sha256)
+    _evidence_sha = field_validator("evidence_fingerprint")(_validate_sha256)
+
+    @model_validator(mode="after")
+    def validate_state_fields(self) -> RunMarker:
+        if self.state == "started":
+            if any(
+                value is not None
+                for value in (
+                    self.finished_at,
+                    self.output_sha256,
+                    self.output_size_bytes,
+                    self.error_type,
+                    self.error_digest,
+                )
+            ):
+                raise ValueError("started marker contains terminal fields")
+        elif self.state == "completed":
+            if (
+                self.finished_at is None
+                or self.output_sha256 is None
+                or self.output_size_bytes is None
+                or self.error_type is not None
+                or self.error_digest is not None
+            ):
+                raise ValueError("completed marker fields are incomplete")
+            _validate_sha256(self.output_sha256)
+        elif (
+            self.finished_at is None
+            or not self.error_type
+            or self.error_digest is None
+            or self.output_sha256 is not None
+            or self.output_size_bytes is not None
+        ):
+            raise ValueError("failed marker fields are incomplete")
+        if self.error_digest is not None:
+            _validate_sha256(self.error_digest)
+        return self
+
+
+def _marker_payload(
+    manifest: PromotionManifest,
+    promotion: PromotionYaml,
+    receipt: PreflightReceipt,
+) -> dict[str, object]:
+    return {
+        "schema_version": "frozen-run-marker/v1",
+        "state": "started",
+        "manifest_sha256": promotion.manifest_sha256,
+        "case_fingerprint": manifest.case_fingerprint,
+        "dataset_fingerprint": manifest.dataset_fingerprint,
+        "model_checksum": manifest.model_checksum,
+        "evidence_fingerprint": receipt.fingerprint,
+        "started_at": datetime.now(UTC).isoformat(),
+        "finished_at": None,
+        "output_sha256": None,
+        "output_size_bytes": None,
+        "error_type": None,
+        "error_digest": None,
+    }
+
+
+def _json_bytes(payload: dict[str, object]) -> bytes:
+    return (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode()
+
+
+def _exclusive_write(path: Path, payload: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(
+        path,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+    )
+    with os.fdopen(descriptor, "wb") as stream:
+        stream.write(payload)
+        stream.flush()
+        os.fsync(stream.fileno())
+    parent_fd = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(parent_fd)
+    finally:
+        os.close(parent_fd)
+
+
+def _transition_marker(path: Path, payload: dict[str, object]) -> RunMarker:
+    current = RunMarker.model_validate_json(
+        read_regular_file(path, max_bytes=1024 * 1024)
+    )
+    if current.state != "started":
+        raise ValueError("only a started marker can transition")
+    marker = RunMarker.model_validate(payload)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(_json_bytes(marker.model_dump(mode="json")))
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+        parent_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(parent_fd)
+        finally:
+            os.close(parent_fd)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+    return marker
+
+
+def execute_one_shot(
+    repo_root: Path,
+    manifest: PromotionManifest,
+    promotion: PromotionYaml,
+    receipt: PreflightReceipt,
+    *,
+    case_loader,
+    evaluator,
+    authorized_manifest_sha: str | None = None,
+    after_output_hook=None,
+) -> RunMarker:
+    manifest = PromotionManifest.model_validate(manifest.model_dump(mode="json"))
+    promotion = PromotionYaml.model_validate(promotion.model_dump(mode="json"))
+    receipt = PreflightReceipt.model_validate(receipt.model_dump(mode="json"))
+    if (
+        promotion.execution.scope == "real"
+        and authorized_manifest_sha != promotion.manifest_sha256
+    ):
+        raise ValueError("real execution requires exact manifest SHA authorization")
+    promotion.cross_check(manifest)
+    if receipt.manifest_sha256 != promotion.manifest_sha256:
+        raise ValueError("preflight receipt manifest mismatch")
+    root = repo_root.resolve(strict=True)
+    paths = derive_execution_paths(
+        manifest_sha256=promotion.manifest_sha256,
+        case_fingerprint=manifest.case_fingerprint,
+        dataset_fingerprint=manifest.dataset_fingerprint,
+        model_checksum=manifest.model_checksum,
+        scope=promotion.execution.scope,
+    )
+    marker_path = _repo_destination(root, paths.marker)
+    output_path = _repo_destination(root, paths.output)
+    if os.path.lexists(marker_path):
+        raise ValueError("frozen execution opportunity is permanently consumed")
+    if os.path.lexists(output_path):
+        raise ValueError("frozen output already exists without a new execution opportunity")
+    started_payload = _marker_payload(manifest, promotion, receipt)
+    started = RunMarker.model_validate(started_payload)
+    _exclusive_write(marker_path, _json_bytes(started.model_dump(mode="json")))
+    try:
+        cases = case_loader()
+        metrics = evaluator(cases)
+        if not isinstance(metrics, dict):
+            raise ValueError("frozen evaluator must return a JSON object")
+        output_bytes = _json_bytes(metrics)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{output_path.name}.", suffix=".tmp", dir=output_path.parent
+        )
+        temporary = Path(temporary_name)
+        try:
+            with os.fdopen(descriptor, "wb") as stream:
+                stream.write(output_bytes)
+                stream.flush()
+                os.fsync(stream.fileno())
+            if os.path.lexists(output_path):
+                raise ValueError("frozen output publication refuses to overwrite")
+            os.rename(temporary, output_path)
+            parent_fd = os.open(output_path.parent, os.O_RDONLY)
+            try:
+                os.fsync(parent_fd)
+            finally:
+                os.close(parent_fd)
+        finally:
+            if temporary.exists():
+                temporary.unlink()
+        if after_output_hook is not None:
+            after_output_hook()
+        completed_payload = {
+            **started.model_dump(mode="json"),
+            "state": "completed",
+            "finished_at": datetime.now(UTC).isoformat(),
+            "output_sha256": hashlib.sha256(output_bytes).hexdigest(),
+            "output_size_bytes": len(output_bytes),
+        }
+        return _transition_marker(marker_path, completed_payload)
+    except Exception as exc:
+        failed_payload = {
+            **started.model_dump(mode="json"),
+            "state": "failed",
+            "finished_at": datetime.now(UTC).isoformat(),
+            "error_type": type(exc).__name__,
+            "error_digest": hashlib.sha256(str(exc).encode()).hexdigest(),
+        }
+        _transition_marker(marker_path, failed_payload)
+        raise
+
+
+def audit_one_shot(
+    repo_root: Path,
+    manifest: PromotionManifest,
+    promotion: PromotionYaml,
+) -> dict[str, object]:
+    promotion.cross_check(manifest)
+    paths = derive_execution_paths(
+        manifest_sha256=promotion.manifest_sha256,
+        case_fingerprint=manifest.case_fingerprint,
+        dataset_fingerprint=manifest.dataset_fingerprint,
+        model_checksum=manifest.model_checksum,
+        scope=promotion.execution.scope,
+    )
+    root = repo_root.resolve(strict=True)
+    marker_path = _repo_destination(root, paths.marker)
+    output_path = _repo_destination(root, paths.output)
+    marker = RunMarker.model_validate_json(
+        read_regular_file(marker_path, max_bytes=1024 * 1024)
+    )
+    result: dict[str, object] = {
+        "state": marker.state,
+        "marker_path": paths.marker,
+        "output_path": paths.output,
+        "output_exists": os.path.lexists(output_path),
+        "output_sha256": None,
+        "output_size_bytes": None,
+    }
+    if os.path.lexists(output_path):
+        output_sha, output_size = _file_sha_size(output_path)
+        result["output_sha256"] = output_sha
+        result["output_size_bytes"] = output_size
+    return result

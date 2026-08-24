@@ -14,10 +14,13 @@ from recagent_eval.promotion import (
     PromotionManifest,
     PromotionYaml,
     ReplayVerification,
+    RunMarker,
     SemanticCacheIdentity,
     SourceInventory,
+    audit_one_shot,
     canonical_payload_sha256,
     derive_execution_paths,
+    execute_one_shot,
     load_source_inventory,
     preflight_promotion,
     publish_promotion_package,
@@ -350,12 +353,13 @@ def _published_synthetic_promotion(tmp_path: Path):
         case_fingerprint=manifest.case_fingerprint,
         dataset_fingerprint=manifest.dataset_fingerprint,
         model_checksum=manifest.model_checksum,
+        scope="synthetic",
     )
     promotion_payload = {
         "schema_version": "frozen-promotion-execution/v1",
         "manifest_path": "reports/promotion/current-v2b-manifest.json",
         "manifest_sha256": manifest_sha,
-        "execution": {"mode": "learned_frozen"},
+        "execution": {"mode": "learned_frozen", "scope": "synthetic"},
         "training_config_fingerprint": manifest.training_config_fingerprint,
         "dataset_fingerprint": manifest.dataset_fingerprint,
         "case_fingerprint": manifest.case_fingerprint,
@@ -498,3 +502,156 @@ def test_git_identity_requires_implementation_ancestor_and_no_protected_drift(
     )
     with pytest.raises(ValueError, match="protected"):
         verify_git_identity(tmp_path, manifest)
+
+
+def _synthetic_preflight(tmp_path: Path):
+    manifest, promotion_path = _published_synthetic_promotion(tmp_path)
+
+    def replay(_manifest, _members):
+        return ReplayVerification(
+            ordered_user_ids=manifest.ordered_user_ids,
+            dataset_fingerprint=manifest.dataset_fingerprint,
+            model_checksum=manifest.model_checksum,
+            validation_rows_fingerprint=_sha("7"),
+            validated_components=(
+                "model",
+                "evidence",
+                "bundle",
+                "latent",
+                "semantic",
+            ),
+        )
+
+    receipt = preflight_promotion(
+        tmp_path,
+        promotion_path,
+        dataset_fingerprint_check=lambda _manifest, _members: (
+            manifest.dataset_fingerprint
+        ),
+        validation_replay=replay,
+        git_identity_check=lambda _manifest: None,
+    )
+    promotion = PromotionYaml.model_validate(json.loads(promotion_path.read_text()))
+    return manifest, promotion, receipt
+
+
+def test_synthetic_one_shot_success_publishes_output_before_completed_and_blocks_retry(
+    tmp_path,
+) -> None:
+    manifest, promotion, receipt = _synthetic_preflight(tmp_path)
+    observed = []
+    marker = execute_one_shot(
+        tmp_path,
+        manifest,
+        promotion,
+        receipt,
+        case_loader=lambda: observed.append("load") or ["synthetic-case"],
+        evaluator=lambda cases: observed.append(("evaluate", cases)) or {"cases": 1},
+    )
+
+    assert marker.state == "completed"
+    assert observed == ["load", ("evaluate", ["synthetic-case"])]
+    paths = derive_execution_paths(
+        manifest_sha256=promotion.manifest_sha256,
+        case_fingerprint=manifest.case_fingerprint,
+        dataset_fingerprint=manifest.dataset_fingerprint,
+        model_checksum=manifest.model_checksum,
+        scope="synthetic",
+    )
+    assert json.loads((tmp_path / paths.output).read_text()) == {"cases": 1}
+    with pytest.raises(ValueError, match="permanently consumed"):
+        execute_one_shot(
+            tmp_path,
+            manifest,
+            promotion,
+            receipt,
+            case_loader=lambda: [],
+            evaluator=lambda _cases: {},
+        )
+
+
+def test_synthetic_one_shot_captured_failure_is_permanent(tmp_path) -> None:
+    manifest, promotion, receipt = _synthetic_preflight(tmp_path)
+    with pytest.raises(RuntimeError, match="evaluation failed"):
+        execute_one_shot(
+            tmp_path,
+            manifest,
+            promotion,
+            receipt,
+            case_loader=lambda: ["synthetic-case"],
+            evaluator=lambda _cases: (_ for _ in ()).throw(
+                RuntimeError("evaluation failed")
+            ),
+        )
+    paths = derive_execution_paths(
+        manifest_sha256=promotion.manifest_sha256,
+        case_fingerprint=manifest.case_fingerprint,
+        dataset_fingerprint=manifest.dataset_fingerprint,
+        model_checksum=manifest.model_checksum,
+        scope="synthetic",
+    )
+    marker = RunMarker.model_validate_json((tmp_path / paths.marker).read_bytes())
+    assert marker.state == "failed"
+    with pytest.raises(ValueError, match="permanently consumed"):
+        execute_one_shot(
+            tmp_path,
+            manifest,
+            promotion,
+            receipt,
+            case_loader=lambda: [],
+            evaluator=lambda _cases: {},
+        )
+
+
+def test_synthetic_output_started_crash_window_blocks_retry_and_is_read_only_auditable(
+    tmp_path,
+) -> None:
+    manifest, promotion, receipt = _synthetic_preflight(tmp_path)
+
+    class SimulatedKill(BaseException):
+        pass
+
+    with pytest.raises(SimulatedKill):
+        execute_one_shot(
+            tmp_path,
+            manifest,
+            promotion,
+            receipt,
+            case_loader=lambda: ["synthetic-case"],
+            evaluator=lambda _cases: {"cases": 1},
+            after_output_hook=lambda: (_ for _ in ()).throw(SimulatedKill()),
+        )
+    audit = audit_one_shot(tmp_path, manifest, promotion)
+    assert audit["state"] == "started"
+    assert audit["output_exists"] is True
+    assert audit["output_sha256"]
+    with pytest.raises(ValueError, match="permanently consumed"):
+        execute_one_shot(
+            tmp_path,
+            manifest,
+            promotion,
+            receipt,
+            case_loader=lambda: [],
+            evaluator=lambda _cases: {},
+        )
+
+
+def test_real_scope_requires_authorization_bound_to_exact_manifest(tmp_path) -> None:
+    manifest, promotion, receipt = _synthetic_preflight(tmp_path)
+    real_promotion = PromotionYaml.model_validate(
+        {
+            **promotion.model_dump(mode="json"),
+            "execution": {"mode": "learned_frozen", "scope": "real"},
+        }
+    )
+    with pytest.raises(ValueError, match="exact manifest SHA authorization"):
+        execute_one_shot(
+            tmp_path,
+            manifest,
+            real_promotion,
+            receipt,
+            case_loader=lambda: (_ for _ in ()).throw(
+                AssertionError("authorization failure read cases")
+            ),
+            evaluator=lambda _cases: {},
+        )
