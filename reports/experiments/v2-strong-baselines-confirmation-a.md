@@ -32,7 +32,18 @@
 | popularity_vs_itemcf_direct | -0.0121 | [-0.0204, -0.0037] |
 | popularity_vs_lightgcn | 0.0022 | [0.0003, 0.0043] |
 
-## Success criteria evaluation (Confirmation-A)
+## Evidence identity correction
+
+Confirmation-A is retained as **development/debugging/replication evidence**.
+It is **not final certification**: after its first reading, BPR-MF/LightGCN
+batch-sum loss and initialization behavior and the ALS/dev-CV metric denominator
+were corrected. Under the preregistered evidence rule, any algorithm correction
+after reading a cohort downgrades that cohort's identity.
+
+The rows and bootstrap values below remain useful replication observations and
+have not been overwritten. Success A is decided only from Confirmation-B.
+
+## Development comparison (Confirmation-A)
 
 Pairwise deltas are reported as **row-method minus column-method**. Key
 directional deltas for `current_v2b`:
@@ -45,7 +56,8 @@ directional deltas for `current_v2b`:
 | vs LightGCN | +0.0289 | [0.0156, 0.0415] | yes |
 | vs Popularity | +0.0267 | [0.0135, 0.0398] | yes |
 
-**Success A (effect win) — met on Confirmation-A:**
+If these values had been eligible for certification, the pointwise checklist
+would have read:
 
 1. NDCG@10 > ItemCF with paired-bootstrap 95% CI lower bound > 0:
    current_v2b 0.0524 vs ItemCF 0.0378, CI [0.0024, 0.0267] → **pass**.
@@ -55,8 +67,5 @@ directional deltas for `current_v2b`:
 3. Recall@10 does not regress: 0.099 vs ItemCF 0.075 (+32% relative) → **pass**.
 4. Constraint satisfaction: 100% for every method → **pass**.
 
-The current method was not changed as a result of Confirmation-A (the fixes
-made during baseline development corrected baseline implementation bugs and
-the dev-selection denominator; the current_v2b config and training cohort were
-pre-registered). Confirmation-B runs next to certify the conclusion on a
-second untouched cohort, per the pre-registered protocol.
+These observations do not certify Success A. The original JSON and bug artifacts
+remain historical evidence; the correction changes only their interpretation.

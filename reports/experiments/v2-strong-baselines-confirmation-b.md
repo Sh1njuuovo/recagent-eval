@@ -2,6 +2,8 @@
 
 - Users: 1000
 - Pairwise: 2,000 paired bootstrap, seed 42, NDCG@10 deltas
+- Evidence identity: **sole final certification cohort**; seed 42 is the formal
+  main result.
 
 | Method | Recall@10 | NDCG@10 | MRR@10 | Candidate recall | Constraints |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -54,7 +56,7 @@ Directional deltas are **current_v2b minus the other method**:
    **pass**.
 4. Constraint satisfaction: 100% → **pass**.
 
-## Effect–cost Pareto (Confirmation-B, this implementation)
+## Recorded effect and costs (peak RSS excluded)
 
 | Method | NDCG@10 | Recall@10 | Train (s) | Latency p50/p95 (ms) | Model size (MB) | CPU-only |
 | --- | ---: | ---: | ---: | ---: | ---: | --- |
@@ -65,6 +67,7 @@ Directional deltas are **current_v2b minus the other method**:
 | Popularity | 0.0187 | 0.044 | 0.0 | 0.7 / 0.7 | 0.03 | yes |
 | LightGCN | 0.0163 | 0.035 | 2220.1 | 1.2 / 1.3 | 2.4 | yes |
 
-`current_v2b` leads effect on both cohorts (Success A), so the Pareto claim is
-not required; the table documents the cost of the win (higher training time
-and ~110 ms per-user inference on CPU vs ~1 ms for the direct baselines).
+The table documents recorded training time, latency, and model size for the
+project-local implementations. Peak RSS is excluded because the historical
+field had a platform-unit bug and the runs were not guaranteed to share an
+independent-process measurement protocol. See the correction addendum.
