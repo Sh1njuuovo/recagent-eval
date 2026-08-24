@@ -40,6 +40,7 @@ from recagent_eval.data import (
     load_movielens_ratings,
 )
 from recagent_eval.dataset import download_movielens_1m
+from recagent_eval.evidence import runtime_dependency_versions, runtime_hardware
 from recagent_eval.lambdamart_pipeline import (
     build_validation_rows,
     candidate_policy_fingerprint,
@@ -906,6 +907,12 @@ def evaluate_baselines(
         config_fingerprint=result["config_fingerprint"],
         dataset_fingerprint=result["dataset_fingerprint"],
         model_fingerprint=result["model_fingerprint"],
+        cohort_ledger_fingerprint=ledger["fingerprint"],
+        selected_params=result["selected_params"],
+        parameter_grid=result["parameter_grid"],
+        seed=result["seed"],
+        dependency_versions=runtime_dependency_versions(),
+        hardware=runtime_hardware(),
         training_seconds=result["training_seconds"],
         resource_usage=result["resource_usage"],
         model_size_bytes=result["model_size_bytes"],
@@ -923,6 +930,9 @@ def evaluate_baselines(
 @app.command("summarize-baselines")
 def summarize_baselines_cli(
     cohort: Annotated[str, typer.Option()],
+    ledger_path: Annotated[Path, typer.Option("--ledger")] = Path(
+        "reports/audit/2026-08-23-cohort-ledger.json"
+    ),
     artifact_dir: Annotated[Path, typer.Option()] = Path(
         "artifacts/experiments/v2-baselines"
     ),
@@ -951,7 +961,18 @@ def summarize_baselines_cli(
             artifacts[method] = json.loads(path.read_text())
         except (OSError, json.JSONDecodeError) as exc:
             raise typer.BadParameter(f"invalid baseline artifact {path}: {exc}") from exc
-    summary = summarize_baselines(artifacts, cohort=cohort)
+    try:
+        ledger = json.loads(ledger_path.read_text())
+        expected_user_ids = [int(user) for user in ledger["cohorts"][cohort]]
+        ledger_fingerprint = str(ledger["fingerprint"])
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise typer.BadParameter(f"invalid cohort ledger: {exc}") from exc
+    summary = summarize_baselines(
+        artifacts,
+        cohort=cohort,
+        expected_user_ids=expected_user_ids,
+        cohort_ledger_fingerprint=ledger_fingerprint,
+    )
     md_path = output.with_suffix(".md")
     if md_path.exists():
         raise typer.BadParameter(

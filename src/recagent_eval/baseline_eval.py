@@ -1,13 +1,17 @@
 from __future__ import annotations
 
-import hashlib
-import json
 import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
+
+from recagent_eval.evidence import (
+    BASELINE_SCHEMA_V2,
+    artifact_fingerprint,
+    provenance_value,
+)
 
 BASELINE_SCORERS: dict[str, Callable[..., Any]] = {}
 
@@ -99,20 +103,30 @@ def metric_json(
     config_fingerprint: str,
     dataset_fingerprint: str,
     model_fingerprint: str,
+    cohort_ledger_fingerprint: str,
+    selected_params: object,
+    parameter_grid: object,
+    seed: int | str,
+    dependency_versions: Mapping[str, str],
+    hardware: Mapping[str, object],
     training_seconds: float,
     resource_usage: Mapping[str, object],
     model_size_bytes: int,
     environment: Mapping[str, str],
     bootstrap: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
-    return {
-        "schema_version": "baseline-evaluation/v1",
+    if not rows:
+        raise ValueError("baseline evidence requires non-empty rows")
+    artifact: dict[str, object] = {
+        "schema_version": BASELINE_SCHEMA_V2,
         "method": method,
         "cohort": cohort,
+        "cohort_ledger_fingerprint": cohort_ledger_fingerprint,
         "config_fingerprint": config_fingerprint,
         "dataset_fingerprint": dataset_fingerprint,
         "model_fingerprint": model_fingerprint,
         "user_count": len(rows),
+        "ordered_user_ids": [row.user_id for row in rows],
         "per_user_rows": [
             {
                 "user_id": row.user_id,
@@ -140,10 +154,18 @@ def metric_json(
         "training_seconds": training_seconds,
         "resource_usage": dict(resource_usage),
         "model_size_bytes": model_size_bytes,
-        "environment": dict(environment),
+        "selected_params": provenance_value(selected_params, source="observed"),
+        "parameter_grid": provenance_value(parameter_grid, source="observed"),
+        "seed": provenance_value(seed, source="observed"),
+        "dependency_versions": provenance_value(
+            dict(dependency_versions), source="observed"
+        ),
+        "hardware": provenance_value(dict(hardware), source="observed"),
+        "legacy_environment": provenance_value(dict(environment), source="observed"),
         "bootstrap_vs_itemcf": dict(bootstrap or {}),
-        "fingerprint": _artifact_fingerprint(rows, method, cohort),
     }
+    artifact["fingerprint"] = artifact_fingerprint(artifact)
+    return artifact
 
 
 def _mean(values: Sequence[float]) -> float:
@@ -161,14 +183,3 @@ def _quantile(values: Sequence[float], position: float) -> float:
     ordered = sorted(values)
     index = min(len(ordered) - 1, int(position * len(ordered)))
     return float(ordered[index])
-
-
-def _artifact_fingerprint(rows: Sequence[MetricRow], method: str, cohort: str) -> str:
-    payload = {
-        "rows": [[r.user_id, r.recall_at_10, r.ndcg_at_10, r.mrr_at_10] for r in rows],
-        "method": method,
-        "cohort": cohort,
-    }
-    return hashlib.sha256(
-        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()

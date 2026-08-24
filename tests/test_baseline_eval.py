@@ -120,6 +120,12 @@ def test_metric_json_reports_aggregates_and_coverage() -> None:
         config_fingerprint="config",
         dataset_fingerprint="dataset",
         model_fingerprint="model",
+        cohort_ledger_fingerprint="ledger",
+        selected_params={},
+        parameter_grid=[],
+        seed=42,
+        dependency_versions={"python": "3.13"},
+        hardware={"platform": "Darwin", "cpu_count": 8},
         training_seconds=1.0,
         resource_usage={
             "metric_name": "process_peak_rss_mib",
@@ -134,35 +140,34 @@ def test_metric_json_reports_aggregates_and_coverage() -> None:
     assert agg["coverage"] == 0.3  # {1,2,3} / 10
     assert agg["latency_ms_p95"] == 4.0
     assert artifact["fingerprint"]
+    assert artifact["schema_version"] == "baseline-evaluation/v2"
+    assert artifact["ordered_user_ids"] == [1, 2]
+    assert artifact["selected_params"]["source"] == "observed"
     assert artifact["resource_usage"]["normalized_mib"] == 100.0
     assert "peak_memory_mb" not in artifact
 
 
-def test_metric_json_handles_empty_rows_and_universe() -> None:
-    artifact = metric_json(
-        [],
-        method="popularity",
-        cohort="development",
-        universe_size=0,
-        config_fingerprint="config",
-        dataset_fingerprint="dataset",
-        model_fingerprint="model",
-        training_seconds=0.0,
-        resource_usage={
-            "metric_name": "process_peak_rss_mib",
-            "normalized_mib": 0.0,
-        },
-        model_size_bytes=0,
-        environment={},
-    )
-    assert artifact["user_count"] == 0
-    assert artifact["aggregates"] == {
-        "recall_at_10": 0.0,
-        "ndcg_at_10": 0.0,
-        "mrr_at_10": 0.0,
-        "candidate_recall": 0.0,
-        "constraint_satisfaction_rate": 0.0,
-        "coverage": 0.0,
-        "latency_ms_p50": 0.0,
-        "latency_ms_p95": 0.0,
-    }
+def test_metric_json_rejects_empty_rows() -> None:
+    with pytest.raises(ValueError, match="non-empty"):
+        metric_json(
+            [],
+            method="popularity",
+            cohort="development",
+            universe_size=0,
+            config_fingerprint="config",
+            dataset_fingerprint="dataset",
+            model_fingerprint="model",
+            cohort_ledger_fingerprint="ledger",
+            selected_params={},
+            parameter_grid=[],
+            seed="not_applicable",
+            dependency_versions={"python": "3.13"},
+            hardware={"platform": "Darwin", "cpu_count": 8},
+            training_seconds=0.0,
+            resource_usage={
+                "metric_name": "process_peak_rss_mib",
+                "normalized_mib": 0.0,
+            },
+            model_size_bytes=0,
+            environment={},
+        )

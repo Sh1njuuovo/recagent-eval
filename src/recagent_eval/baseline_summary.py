@@ -5,8 +5,9 @@ import json
 from collections.abc import Mapping, Sequence
 
 from recagent_eval.baseline_eval import paired_bootstrap_deltas
+from recagent_eval.evidence import validate_evidence_set
 
-SUMMARY_SCHEMA_VERSION = "baseline-summary/v1"
+SUMMARY_SCHEMA_VERSION = "baseline-summary/v2"
 RESAMPLES = 2000
 SEED = 42
 
@@ -15,20 +16,20 @@ def summarize_baselines(
     artifacts: Mapping[str, dict[str, object]],
     *,
     cohort: str,
+    expected_user_ids: Sequence[int],
+    cohort_ledger_fingerprint: str,
     reference: str = "itemcf_direct",
 ) -> dict[str, object]:
+    validated = validate_evidence_set(
+        artifacts,
+        cohort=cohort,
+        expected_user_ids=expected_user_ids,
+        expected_ledger_fingerprint=cohort_ledger_fingerprint,
+    )
     per_method_rows = {
         name: _per_user_rows(artifact) for name, artifact in artifacts.items()
     }
-    user_sets = {
-        name: {row["user_id"] for row in rows}
-        for name, rows in per_method_rows.items()
-    }
-    common = set.intersection(*user_sets.values()) if user_sets else set()
-    counts = {len(users) for users in user_sets.values()}
-    if len(counts) != 1 or len(common) != counts.pop():
-        raise ValueError("per-user rows are not aligned across methods")
-    ordered = sorted(common)
+    ordered = list(validated.ordered_user_ids)
     by_user = {
         name: {row["user_id"]: row for row in rows}
         for name, rows in per_method_rows.items()
@@ -56,7 +57,9 @@ def summarize_baselines(
             )
     payload = {
         "schema_version": SUMMARY_SCHEMA_VERSION,
+        "source_schema_version": validated.schema_version,
         "cohort": cohort,
+        "cohort_ledger_fingerprint": cohort_ledger_fingerprint,
         "reference": reference,
         "user_count": len(ordered),
         "ordered_user_ids": ordered,

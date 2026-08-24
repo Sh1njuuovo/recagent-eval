@@ -5,7 +5,7 @@ import platform
 import tempfile
 import time
 from collections.abc import Mapping, Sequence
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import Path
 
 import numpy as np
@@ -44,6 +44,7 @@ def score_current_v2b(
     if max_training_users is not None:
         training_users = training_users[:max_training_users]
     config = load_experiment_config(Path("configs/v2_dense_latent_bfeat.yaml"))
+    selected_config = asdict(config)
     workdir = Path(tempfile.mkdtemp(prefix="v2b-baseline-", dir="/private/tmp"))
     config = replace(config, latent_artifact_path=str(workdir / "latent.npz"))
     model_path = workdir / "model.json"
@@ -97,6 +98,9 @@ def score_current_v2b(
         "config_fingerprint": lambdamart_config_fingerprint(config),
         "dataset_fingerprint": ranking_dataset_fingerprint(movies, split),
         "model_fingerprint": str(summary["model_checksum"]),
+        "selected_params": selected_config,
+        "parameter_grid": [],
+        "seed": config.seed,
         "training_seconds": training_seconds,
         "resource_usage": read_process_peak_rss(),
         "model_size_bytes": int(model_size_bytes),

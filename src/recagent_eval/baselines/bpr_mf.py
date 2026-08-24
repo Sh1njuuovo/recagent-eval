@@ -530,6 +530,9 @@ def score_bpr_mf(
         "config_fingerprint": selection["fingerprint"],
         "dataset_fingerprint": ranking_dataset_fingerprint(movies, split),
         "model_fingerprint": model.training_fingerprint,
+        "selected_params": dict(params),
+        "parameter_grid": list(selection["grid"]),
+        "seed": 42,
         "training_seconds": training_seconds,
         "resource_usage": read_process_peak_rss(),
         "model_size_bytes": int(
