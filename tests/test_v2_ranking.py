@@ -13,6 +13,7 @@ import pytest
 from recagent_eval.candidate_features import (
     FEATURE_NAMES,
     FEATURE_NAMES_V2,
+    FEATURE_NAMES_V2B,
     build_candidate_feature_rows,
 )
 from recagent_eval.data import Movie, Rating, leakage_safe_ranking_split
@@ -332,6 +333,33 @@ def test_learned_ranker_supports_public_hybrid_rank_signature() -> None:
     )
 
     assert [movie.movie_id for movie in ranked] == [2, 1]
+
+
+def test_learned_ranker_v2b_threads_explicit_recent_and_visible_history_features() -> None:
+    ranker = LearnedRanker(
+        _FakeEstimator(),
+        legal_train_rows=(Rating(9, 2, 5, 1),),
+        feature_version="v2b",
+        score_calibration="raw",
+    )
+    movies = {
+        1: Movie(1, "History", ("Drama",), 2000),
+        2: Movie(2, "Candidate", ("Drama",), 2001),
+    }
+    ranked = ranker.rank(
+        movies,
+        itemcf_scores={2: 0.5},
+        semantic_scores={2: 0.4},
+        latent_scores={2: 0.3},
+        recent_itemcf_scores={2: 0.2},
+        history_rows=(Rating(1, 1, 5, 10),),
+        statistics_rows=(Rating(9, 2, 5, 1),),
+        state=PreferenceState(liked_movie_ids={1}),
+    )
+
+    contributions = ranked[0].score.feature_contributions
+    assert tuple(contributions) == (*FEATURE_NAMES_V2B, "bias")
+    assert contributions["recent_itemcf_score"] == pytest.approx(0.2)
 
 
 def test_ranker_artifact_rejects_tampering(tmp_path: Path) -> None:

@@ -262,10 +262,17 @@ class LearnedRanker:
         state: PreferenceState,
         top_k: int = 10,
         latent_scores: Mapping[int, float] | None = None,
+        recent_itemcf_scores: Mapping[int, float] | None = None,
+        history_rows: Sequence[Rating] | None = None,
+        statistics_rows: Sequence[Rating] | None = None,
     ) -> list[RecommendedMovie]:
-        history = tuple(
-            Rating(0, movie_id, 5, index)
-            for index, movie_id in enumerate(sorted(state.liked_movie_ids))
+        history = (
+            tuple(history_rows)
+            if history_rows is not None
+            else tuple(
+                Rating(0, movie_id, 5, index)
+                for index, movie_id in enumerate(sorted(state.liked_movie_ids))
+            )
         )
         rows = build_candidate_feature_rows(
             user_id=0,
@@ -273,10 +280,15 @@ class LearnedRanker:
             itemcf_scores=itemcf_scores,
             dense_scores=semantic_scores,
             history=history,
-            train_rows=self.legal_train_rows,
+            train_rows=(
+                tuple(statistics_rows)
+                if statistics_rows is not None
+                else self.legal_train_rows
+            ),
             state=state,
             score_calibration=self.score_calibration,
             latent_scores=latent_scores,
+            recent_itemcf_scores=recent_itemcf_scores,
             feature_version=self.feature_version,
         )
         return self.rank_feature_rows(

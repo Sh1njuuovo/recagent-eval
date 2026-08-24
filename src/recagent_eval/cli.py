@@ -1400,6 +1400,21 @@ def _evaluate_learned_ranker(
             raise typer.BadParameter(str(exc)) from exc
     else:
         semantic = TfidfSemanticRetriever.fit(movies)
+    latent = None
+    if config.latent_enabled:
+        if config.latent_artifact_path is None:
+            raise typer.BadParameter(
+                "latent.artifact_path is required for frozen LambdaMART evaluation"
+            )
+        try:
+            latent = LatentFactorRetriever.load(
+                Path(config.latent_artifact_path),
+                expected_training_fingerprint=str(
+                    (artifact.latent_provenance or {})["training_fingerprint"]
+                ),
+            )
+        except (KeyError, OSError, ValueError) as exc:
+            raise typer.BadParameter(str(exc)) from exc
     try:
         ordered_user_ids = tuple(
             int(row["user_id"]) for row in evidence.per_user_rows
@@ -1465,8 +1480,12 @@ def _evaluate_learned_ranker(
         cases,
         ranker=ranker,
         retrieval_top_k=config.retrieval_top_k,
+        semantic_top_k=config.semantic_top_k,
         history_cap=config.semantic_profile_history_cap,
         semantic_retriever=semantic,
+        latent_retriever=latent,
+        latent_top_k=config.latent_top_k,
+        feature_version=config.ranker_feature_version,
     )
     metrics.update(
         {
