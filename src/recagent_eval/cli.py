@@ -75,7 +75,12 @@ from recagent_eval.models import PreferenceState
 from recagent_eval.promotion import (
     PromotionManifest,
     ReplayVerification,
+    audit_one_shot,
+    execute_one_shot,
+    load_promotion_documents,
+    load_source_inventory,
     preflight_promotion,
+    publish_promotion_package,
     verify_git_identity,
 )
 from recagent_eval.provider import RuleBasedProvider, build_provider
@@ -1303,7 +1308,7 @@ def preflight_frozen_promotion(
         Path, typer.Option("--promotion", help="Promotion execution YAML")
     ] = Path("reports/promotion/current-v2b.yaml"),
     data_dir: Annotated[Path, typer.Option()] = Path("data/raw/ml-1m"),
-) -> None:
+) -> object:
     repo_root = Path.cwd().resolve()
     resolved_promotion = (
         promotion_path
@@ -1459,6 +1464,204 @@ def preflight_frozen_promotion(
     except (OSError, TypeError, ValueError) as exc:
         raise typer.BadParameter(str(exc)) from exc
     typer.echo(receipt.model_dump_json(indent=2))
+    return receipt
+
+
+@app.command("prepare-frozen-promotion")
+def prepare_frozen_promotion(
+    inventory_path: Annotated[
+        Path, typer.Option("--inventory", help="Locked source inventory")
+    ] = Path("reports/promotion/current-v2b-source-inventory.json"),
+    confirmation_source: Annotated[
+        Path,
+        typer.Option("--confirmation-source", help="Original Confirmation-B bundle directory"),
+    ] = Path("artifacts/promotion-source/current-v2b"),
+    semantic_cache: Annotated[
+        Path, typer.Option("--semantic-cache", help="Original dense NPZ cache")
+    ] = Path("artifacts/embeddings/movielens-minilm.npz"),
+) -> None:
+    try:
+        inventory = load_source_inventory(inventory_path)
+        sources = {
+            name: confirmation_source / name
+            for name in (
+                "model.json",
+                "validation.json",
+                "bundle.json",
+                "latent.npz",
+                "latent.npz.json",
+            )
+        }
+        sources.update(
+            {
+                "semantic.npz": semantic_cache,
+                "semantic.npz.json": Path(f"{semantic_cache}.json"),
+            }
+        )
+        destination = publish_promotion_package(Path.cwd(), inventory, sources)
+    except (OSError, TypeError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(f"Promotion package published atomically at {destination}")
+
+
+def _load_frozen_execution_runtime(
+    repo_root: Path,
+    manifest: PromotionManifest,
+    data_dir: Path,
+) -> dict[str, object]:
+    config = load_experiment_config(repo_root / manifest.training_config_path)
+    movies, ratings = _load_dataset(data_dir)
+    split = leakage_safe_ranking_split(ratings)
+    member_paths = {
+        name: repo_root / identity.path for name, identity in manifest.members.items()
+    }
+    bundle = load_ranker_bundle(
+        member_paths["model.json"],
+        member_paths["validation.json"],
+        member_paths["bundle.json"],
+        expected_metadata={
+            "config_fingerprint": manifest.training_config_fingerprint,
+            "dataset_fingerprint": manifest.dataset_fingerprint,
+            "candidate_policy_fingerprint": manifest.candidate_policy_fingerprint,
+            "feature_fingerprint": manifest.feature_fingerprint,
+        },
+        latent_path=member_paths["latent.npz"],
+        latent_manifest_path=member_paths["latent.npz.json"],
+    )
+    artifact = parse_ranker_artifact(
+        bundle.model_bytes,
+        expected_dataset_fingerprint=manifest.dataset_fingerprint,
+        expected_feature_fingerprint=manifest.feature_fingerprint,
+        expected_candidate_policy_fingerprint=manifest.candidate_policy_fingerprint,
+        expected_config_fingerprint=manifest.training_config_fingerprint,
+        expected_case_fingerprint=manifest.case_fingerprint,
+        expected_latent_artifact_checksum=manifest.members["latent.npz"].sha256,
+    )
+    if (
+        artifact.feature_fingerprint != manifest.feature_fingerprint
+        or artifact.model_checksum != manifest.model_checksum
+    ):
+        raise ValueError("promotion model identity drift before execution")
+    evidence = LearnedValidationEvidence.model_validate_json(bundle.evidence_bytes)
+    semantic = DenseSemanticRetriever.load(
+        member_paths["semantic.npz"],
+        movies=movies,
+        model_name=manifest.semantic.model_name,
+        model_revision=manifest.semantic.immutable_revision,
+        device="cpu",
+    )
+    latent = LatentFactorRetriever.load(
+        member_paths["latent.npz"],
+        expected_training_fingerprint=str(
+            (artifact.latent_provenance or {})["training_fingerprint"]
+        ),
+    )
+    ranker = LearnedRanker(
+        estimator_from_artifact(artifact),
+        legal_train_rows=split.legal_retrieval_train,
+        score_calibration=manifest.score_calibration,
+        feature_version=manifest.feature_version,
+    )
+    return {
+        "config": config,
+        "movies": movies,
+        "split": split,
+        "semantic": semantic,
+        "latent": latent,
+        "ranker": ranker,
+        "evidence": evidence,
+    }
+
+
+@app.command("run-frozen-promotion")
+def run_frozen_promotion(
+    authorized_manifest_sha: Annotated[
+        str,
+        typer.Option(
+            "--authorized-manifest-sha",
+            help="Exact manifest SHA named by the user's one-time authorization",
+        ),
+    ],
+    promotion_path: Annotated[
+        Path, typer.Option("--promotion", help="Promotion execution YAML")
+    ] = Path("reports/promotion/current-v2b.yaml"),
+    data_dir: Annotated[Path, typer.Option()] = Path("data/raw/ml-1m"),
+) -> None:
+    repo_root = Path.cwd().resolve()
+    resolved_promotion = (
+        promotion_path if promotion_path.is_absolute() else repo_root / promotion_path
+    )
+    try:
+        manifest, promotion = load_promotion_documents(repo_root, resolved_promotion)
+        if authorized_manifest_sha != promotion.manifest_sha256:
+            raise ValueError("real execution requires exact manifest SHA authorization")
+        receipt = preflight_frozen_promotion(resolved_promotion, data_dir)
+        runtime = _load_frozen_execution_runtime(repo_root, manifest, data_dir)
+
+        def case_loader():
+            cases = load_cases(repo_root / manifest.frozen_cases_path)
+            if case_fingerprint(cases) != manifest.case_fingerprint:
+                raise ValueError("registered frozen case fingerprint mismatch")
+            return cases
+
+        def evaluator(cases):
+            config = runtime["config"]
+            metrics = evaluate_frozen_cases(
+                runtime["movies"],
+                runtime["split"].legal_retrieval_train,
+                cases,
+                ranker=runtime["ranker"],
+                retrieval_top_k=config.retrieval_top_k,
+                semantic_top_k=config.semantic_top_k,
+                history_cap=config.semantic_profile_history_cap,
+                semantic_retriever=runtime["semantic"],
+                latent_retriever=runtime["latent"],
+                latent_top_k=config.latent_top_k,
+                feature_version=config.ranker_feature_version,
+            )
+            metrics.update(
+                {
+                    "manifest_sha256": promotion.manifest_sha256,
+                    "case_fingerprint": manifest.case_fingerprint,
+                    "dataset_fingerprint": manifest.dataset_fingerprint,
+                    "model_checksum": manifest.model_checksum,
+                    "selection_evidence_fingerprint": runtime[
+                        "evidence"
+                    ].evidence_fingerprint,
+                }
+            )
+            return metrics
+
+        marker = execute_one_shot(
+            repo_root,
+            manifest,
+            promotion,
+            receipt,
+            case_loader=case_loader,
+            evaluator=evaluator,
+            authorized_manifest_sha=authorized_manifest_sha,
+        )
+    except (OSError, TypeError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(marker.model_dump_json(indent=2))
+
+
+@app.command("audit-frozen-promotion")
+def audit_frozen_promotion(
+    promotion_path: Annotated[
+        Path, typer.Option("--promotion", help="Promotion execution YAML")
+    ] = Path("reports/promotion/current-v2b.yaml"),
+) -> None:
+    repo_root = Path.cwd().resolve()
+    resolved_promotion = (
+        promotion_path if promotion_path.is_absolute() else repo_root / promotion_path
+    )
+    try:
+        manifest, promotion = load_promotion_documents(repo_root, resolved_promotion)
+        audit = audit_one_shot(repo_root, manifest, promotion)
+    except (OSError, TypeError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(json.dumps(audit, indent=2, sort_keys=True))
 
 
 def _evaluate_learned_ranker(

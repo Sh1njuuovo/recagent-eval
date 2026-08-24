@@ -23,6 +23,7 @@ from recagent_eval.promotion import (
     execute_one_shot,
     load_source_inventory,
     preflight_promotion,
+    publish_immutable_report,
     publish_promotion_package,
     validate_relative_path,
     validate_semantic_source,
@@ -55,6 +56,39 @@ def _semantic() -> dict[str, object]:
         "dtype": "float32",
         "normalization": "l2_unit",
         "cache_manifest_fingerprint": _sha("b"),
+    }
+
+
+def _evidence_files() -> dict[str, dict[str, object]]:
+    return {
+        name: {
+            "path": f"reports/promotion/{name}.json",
+            "sha256": _sha(format(index + 8, "x")),
+            "size_bytes": index,
+        }
+        for index, name in enumerate(
+            ("source_inventory", "compact_bundle", "cohort_ledger", "summary"),
+            start=1,
+        )
+    }
+
+
+def _manifest_evidence_fields(ordered_user_ids: list[int]) -> dict[str, object]:
+    return {
+        "ordered_user_digest": canonical_payload_sha256(
+            {"ordered_user_ids": ordered_user_ids}
+        ),
+        "validation_evidence_fingerprint": _sha("7"),
+        "validation_rows_fingerprint": _sha("8"),
+        "frozen_cases_path": "cases/fixed_cases.json",
+        "evidence_files": _evidence_files(),
+        "evidence_fingerprints": {
+            "source_inventory": _sha("9"),
+            "compact_bundle": _sha("a"),
+            "cohort_ledger": _sha("b"),
+            "summary": _sha("c"),
+        },
+        "dependency_versions": {"python": "3.13"},
     }
 
 
@@ -133,6 +167,7 @@ def test_manifest_and_yaml_cross_check_execution_without_training_identity_drift
         "semantic_top_k": 1500,
         "latent_top_k": 500,
         "ordered_user_ids": [9, 3],
+        **_manifest_evidence_fields([9, 3]),
         "members": _members(),
         "semantic": _semantic(),
     }
@@ -307,6 +342,22 @@ def test_atomic_package_publication_rejects_unsafe_sources_and_rename_failure(
     assert not (tmp_path / "artifacts/promotion/current-v2b").exists()
 
 
+def test_promotion_reports_publish_atomically_and_refuse_overwrite(tmp_path) -> None:
+    path = publish_immutable_report(
+        tmp_path,
+        "reports/promotion/manifest.json",
+        b'{"identity":"first"}\n',
+    )
+    assert path.read_bytes() == b'{"identity":"first"}\n'
+    assert path.stat().st_nlink == 1
+    with pytest.raises(ValueError, match="refuses to overwrite"):
+        publish_immutable_report(
+            tmp_path,
+            "reports/promotion/manifest.json",
+            b'{"identity":"second"}\n',
+        )
+
+
 def _published_synthetic_promotion(tmp_path: Path):
     sources = {}
     for name in PACKAGE_MEMBER_NAMES:
@@ -321,6 +372,23 @@ def _published_synthetic_promotion(tmp_path: Path):
         update={"fingerprint": canonical_payload_sha256(inventory.model_dump())}
     )
     publish_promotion_package(tmp_path, inventory, sources)
+    reports = tmp_path / "reports/promotion"
+    reports.mkdir(parents=True)
+    evidence_payloads = {
+        "source_inventory": inventory.model_dump(mode="json"),
+        "compact_bundle": {"fingerprint": _sha("a")},
+        "cohort_ledger": {"fingerprint": _sha("b")},
+        "summary": {"fingerprint": _sha("c")},
+    }
+    evidence_files = {}
+    for name, payload in evidence_payloads.items():
+        path = reports / f"{name}.json"
+        path.write_text(json.dumps(payload, sort_keys=True))
+        evidence_files[name] = {
+            "path": path.relative_to(tmp_path).as_posix(),
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "size_bytes": path.stat().st_size,
+        }
     manifest_payload = {
         "schema_version": "frozen-promotion/v1",
         "implementation_commit": "a" * 40,
@@ -337,14 +405,20 @@ def _published_synthetic_promotion(tmp_path: Path):
         "semantic_top_k": 1500,
         "latent_top_k": 500,
         "ordered_user_ids": [9, 3],
+        **_manifest_evidence_fields([9, 3]),
         "members": {
             name: identity.model_dump() for name, identity in inventory.members.items()
         },
         "semantic": semantic.model_dump(),
     }
+    manifest_payload["evidence_files"] = evidence_files
+    manifest_payload["evidence_fingerprints"] = {
+        "source_inventory": inventory.fingerprint,
+        "compact_bundle": _sha("a"),
+        "cohort_ledger": _sha("b"),
+        "summary": _sha("c"),
+    }
     manifest = PromotionManifest.model_validate(manifest_payload)
-    reports = tmp_path / "reports/promotion"
-    reports.mkdir(parents=True)
     manifest_path = reports / "current-v2b-manifest.json"
     manifest_path.write_text(json.dumps(manifest_payload, sort_keys=True))
     manifest_sha = canonical_payload_sha256(manifest_payload)
@@ -411,7 +485,7 @@ def test_label_free_preflight_verifies_dataset_full_replay_and_all_members(
             ordered_user_ids=(9, 3),
             dataset_fingerprint=manifest.dataset_fingerprint,
             model_checksum=manifest.model_checksum,
-            validation_rows_fingerprint=_sha("7"),
+            validation_rows_fingerprint=manifest.validation_rows_fingerprint,
             validated_components=(
                 "model",
                 "evidence",
@@ -443,7 +517,7 @@ def test_preflight_rejects_incomplete_replay_or_order_drift(tmp_path) -> None:
             ordered_user_ids=(3, 9),
             dataset_fingerprint=manifest.dataset_fingerprint,
             model_checksum=manifest.model_checksum,
-            validation_rows_fingerprint=_sha("7"),
+            validation_rows_fingerprint=manifest.validation_rows_fingerprint,
             validated_components=("model", "evidence"),
         )
 
@@ -458,12 +532,83 @@ def test_preflight_rejects_incomplete_replay_or_order_drift(tmp_path) -> None:
             git_identity_check=lambda _manifest: None,
         )
 
+
+def test_preflight_rejects_dataset_replay_and_existing_marker_identity_drift(
+    tmp_path,
+) -> None:
+    manifest, promotion_path = _published_synthetic_promotion(tmp_path)
+
+    def valid_replay(_manifest, _members, **updates):
+        values = {
+            "ordered_user_ids": manifest.ordered_user_ids,
+            "dataset_fingerprint": manifest.dataset_fingerprint,
+            "model_checksum": manifest.model_checksum,
+            "validation_rows_fingerprint": manifest.validation_rows_fingerprint,
+            "validated_components": (
+                "model",
+                "evidence",
+                "bundle",
+                "latent",
+                "semantic",
+            ),
+        }
+        values.update(updates)
+        return ReplayVerification(**values)
+
+    with pytest.raises(ValueError, match="complete dataset"):
+        preflight_promotion(
+            tmp_path,
+            promotion_path,
+            dataset_fingerprint_check=lambda _manifest, _members: _sha("0"),
+            validation_replay=valid_replay,
+            git_identity_check=lambda _manifest: None,
+        )
+    for field, message in (
+        ("dataset_fingerprint", "replay dataset"),
+        ("model_checksum", "replay model"),
+        ("validation_rows_fingerprint", "replay rows"),
+    ):
+        with pytest.raises(ValueError, match=message):
+            preflight_promotion(
+                tmp_path,
+                promotion_path,
+                dataset_fingerprint_check=lambda _manifest, _members: (
+                    manifest.dataset_fingerprint
+                ),
+                validation_replay=lambda active, members, field=field: valid_replay(
+                    active, members, **{field: _sha("0")}
+                ),
+                git_identity_check=lambda _manifest: None,
+            )
+
+    promotion = PromotionYaml.model_validate(json.loads(promotion_path.read_text()))
+    paths = derive_execution_paths(
+        manifest_sha256=promotion.manifest_sha256,
+        case_fingerprint=manifest.case_fingerprint,
+        dataset_fingerprint=manifest.dataset_fingerprint,
+        model_checksum=manifest.model_checksum,
+        scope="synthetic",
+    )
+    marker = tmp_path / paths.marker
+    marker.parent.mkdir(parents=True)
+    marker.write_text("already started")
+    with pytest.raises(ValueError, match="marker already exists"):
+        preflight_promotion(
+            tmp_path,
+            promotion_path,
+            dataset_fingerprint_check=lambda _manifest, _members: (
+                manifest.dataset_fingerprint
+            ),
+            validation_replay=valid_replay,
+            git_identity_check=lambda _manifest: None,
+        )
+
     def incomplete_components(_manifest, _members):
         return ReplayVerification(
             ordered_user_ids=manifest.ordered_user_ids,
             dataset_fingerprint=manifest.dataset_fingerprint,
             model_checksum=manifest.model_checksum,
-            validation_rows_fingerprint=_sha("7"),
+            validation_rows_fingerprint=manifest.validation_rows_fingerprint,
             validated_components=("model", "evidence"),
         )
 
@@ -512,7 +657,7 @@ def _synthetic_preflight(tmp_path: Path):
             ordered_user_ids=manifest.ordered_user_ids,
             dataset_fingerprint=manifest.dataset_fingerprint,
             model_checksum=manifest.model_checksum,
-            validation_rows_fingerprint=_sha("7"),
+            validation_rows_fingerprint=manifest.validation_rows_fingerprint,
             validated_components=(
                 "model",
                 "evidence",

@@ -264,6 +264,45 @@ def publish_promotion_package(
     return final_path
 
 
+def publish_immutable_report(
+    repo_root: Path,
+    relative_path: str,
+    payload: bytes,
+) -> Path:
+    if not relative_path.startswith("reports/promotion/"):
+        raise ValueError("promotion report must be under reports/promotion")
+    destination = _repo_destination(repo_root, relative_path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    _repo_destination(repo_root, relative_path)
+    if os.path.lexists(destination):
+        raise ValueError("promotion report publication refuses to overwrite")
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{destination.name}.", suffix=".tmp", dir=destination.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        try:
+            os.link(temporary, destination, follow_symlinks=False)
+        except FileExistsError as exc:
+            raise ValueError(
+                "promotion report publication refuses to overwrite"
+            ) from exc
+        temporary.unlink()
+        parent_fd = os.open(destination.parent, os.O_RDONLY)
+        try:
+            os.fsync(parent_fd)
+        finally:
+            os.close(parent_fd)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+    return destination
+
+
 class PromotionManifest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -282,8 +321,15 @@ class PromotionManifest(BaseModel):
     semantic_top_k: int = Field(gt=0)
     latent_top_k: int = Field(gt=0)
     ordered_user_ids: tuple[int, ...]
+    ordered_user_digest: str
+    validation_evidence_fingerprint: str
+    validation_rows_fingerprint: str
+    frozen_cases_path: str
     members: dict[str, FileIdentity]
+    evidence_files: dict[str, FileIdentity]
+    evidence_fingerprints: dict[str, str]
     semantic: SemanticCacheIdentity
+    dependency_versions: dict[str, str]
 
     _training_path = field_validator("training_config_path")(validate_relative_path)
     _training_sha = field_validator("training_config_fingerprint")(_validate_sha256)
@@ -292,6 +338,12 @@ class PromotionManifest(BaseModel):
     _policy_sha = field_validator("candidate_policy_fingerprint")(_validate_sha256)
     _model_sha = field_validator("model_checksum")(_validate_sha256)
     _feature_sha = field_validator("feature_fingerprint")(_validate_sha256)
+    _users_sha = field_validator("ordered_user_digest")(_validate_sha256)
+    _validation_sha = field_validator("validation_evidence_fingerprint")(
+        _validate_sha256
+    )
+    _rows_sha = field_validator("validation_rows_fingerprint")(_validate_sha256)
+    _cases_path = field_validator("frozen_cases_path")(validate_relative_path)
 
     @field_validator("implementation_commit")
     @classmethod
@@ -308,6 +360,27 @@ class PromotionManifest(BaseModel):
             raise ValueError("ordered_user_ids must not be empty")
         if len(self.ordered_user_ids) != len(set(self.ordered_user_ids)):
             raise ValueError("ordered_user_ids contains duplicate users")
+        expected_evidence = {
+            "source_inventory",
+            "compact_bundle",
+            "cohort_ledger",
+            "summary",
+        }
+        if set(self.evidence_files) != expected_evidence:
+            raise ValueError("promotion evidence files are incomplete")
+        if set(self.evidence_fingerprints) != expected_evidence or any(
+            not _SHA256_PATTERN.fullmatch(value)
+            for value in self.evidence_fingerprints.values()
+        ):
+            raise ValueError("promotion evidence fingerprints are incomplete")
+        if self.ordered_user_digest != canonical_payload_sha256(
+            {"ordered_user_ids": list(self.ordered_user_ids)}
+        ):
+            raise ValueError("ordered_user_digest mismatch")
+        if not self.dependency_versions or any(
+            not key or not value for key, value in self.dependency_versions.items()
+        ):
+            raise ValueError("promotion dependency versions are incomplete")
         return self
 
 
@@ -472,14 +545,9 @@ def _file_sha_size(path: Path) -> tuple[str, int]:
     return digest.hexdigest(), size
 
 
-def preflight_promotion(
-    repo_root: Path,
-    promotion_yaml_path: Path,
-    *,
-    dataset_fingerprint_check,
-    validation_replay,
-    git_identity_check,
-) -> PreflightReceipt:
+def load_promotion_documents(
+    repo_root: Path, promotion_yaml_path: Path
+) -> tuple[PromotionManifest, PromotionYaml]:
     root = repo_root.resolve(strict=True)
     promotion_resolved = promotion_yaml_path.resolve(strict=True)
     if not promotion_resolved.is_relative_to(root / "reports/promotion"):
@@ -508,6 +576,19 @@ def preflight_promotion(
     if canonical_payload_sha256(manifest_payload) != promotion.manifest_sha256:
         raise ValueError("promotion manifest canonical SHA mismatch")
     promotion.cross_check(manifest)
+    return manifest, promotion
+
+
+def preflight_promotion(
+    repo_root: Path,
+    promotion_yaml_path: Path,
+    *,
+    dataset_fingerprint_check,
+    validation_replay,
+    git_identity_check,
+) -> PreflightReceipt:
+    root = repo_root.resolve(strict=True)
+    manifest, promotion = load_promotion_documents(root, promotion_yaml_path)
     member_paths: dict[str, Path] = {}
     verified_hashes: dict[str, str] = {}
     for name in PACKAGE_MEMBER_NAMES:
@@ -521,6 +602,26 @@ def preflight_promotion(
         member_paths[name] = member_path
         verified_hashes[name] = actual_sha
     validate_semantic_source(manifest, member_paths["semantic.npz.json"])
+    for label, identity in manifest.evidence_files.items():
+        evidence_path = _regular_repo_file(
+            root, identity.path, max_bytes=16 * 1024 * 1024
+        )
+        actual_sha, actual_size = _file_sha_size(evidence_path)
+        if actual_sha != identity.sha256 or actual_size != identity.size_bytes:
+            raise ValueError(f"promotion evidence file {label} identity mismatch")
+        try:
+            payload = json.loads(
+                read_regular_file(evidence_path, max_bytes=16 * 1024 * 1024)
+            )
+        except (OSError, TypeError, ValueError) as exc:
+            raise ValueError(f"invalid promotion evidence file {label}: {exc}") from exc
+        if label == "source_inventory":
+            source_inventory = SourceInventory.model_validate(payload)
+            actual_fingerprint = source_inventory.fingerprint
+        else:
+            actual_fingerprint = payload.get("fingerprint")
+        if actual_fingerprint != manifest.evidence_fingerprints[label]:
+            raise ValueError(f"promotion evidence file {label} fingerprint mismatch")
     git_identity_check(manifest)
     dataset_fingerprint = dataset_fingerprint_check(manifest, member_paths)
     if dataset_fingerprint != manifest.dataset_fingerprint:
@@ -534,6 +635,8 @@ def preflight_promotion(
         raise ValueError("validation replay dataset fingerprint mismatch")
     if replay.model_checksum != manifest.model_checksum:
         raise ValueError("validation replay model checksum mismatch")
+    if replay.validation_rows_fingerprint != manifest.validation_rows_fingerprint:
+        raise ValueError("validation replay rows fingerprint mismatch")
     required_components = {"model", "evidence", "bundle", "latent", "semantic"}
     if set(replay.validated_components) != required_components:
         raise ValueError("validation replay component verification is incomplete")

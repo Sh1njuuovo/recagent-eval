@@ -1,6 +1,7 @@
 import hashlib
 import json
 from dataclasses import dataclass
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -710,7 +711,7 @@ def test_learned_preflight_uses_artifact_v2b_contract_and_evidence_user_order(
     artifact = SimpleNamespace(
         validation_user_count=2,
         validation_rows_fingerprint=row_fingerprint,
-        model_checksum="model-checksum",
+        model_checksum="e" * 64,
         model_dump=lambda **kwargs: {},
     )
     observed: dict[str, object] = {}
@@ -783,6 +784,480 @@ def test_learned_preflight_uses_artifact_v2b_contract_and_evidence_user_order(
     _, ranker_kwargs = observed["ranker"]
     assert ranker_kwargs["score_calibration"] == "raw"
     assert ranker_kwargs["feature_version"] == "v2b"
+
+
+def test_run_frozen_promotion_rejects_wrong_manifest_authorization_before_preflight(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "recagent_eval.cli.load_promotion_documents",
+        lambda *_args: (object(), SimpleNamespace(manifest_sha256="a" * 64)),
+    )
+    monkeypatch.setattr(
+        "recagent_eval.cli.preflight_frozen_promotion",
+        lambda *_args: (_ for _ in ()).throw(
+            AssertionError("wrong authorization reached preflight")
+        ),
+    )
+    monkeypatch.setattr(
+        "recagent_eval.cli.load_cases",
+        lambda *_args: (_ for _ in ()).throw(
+            AssertionError("wrong authorization read cases")
+        ),
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "run-frozen-promotion",
+            "--promotion",
+            str(tmp_path / "promotion.yaml"),
+            "--authorized-manifest-sha",
+            "b" * 64,
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "exact manifest SHA authorization" in result.output
+
+
+def test_preflight_frozen_promotion_wires_complete_v2b_replay_without_cases(
+    tmp_path, monkeypatch
+) -> None:
+    rows = [{"user_id": 9}]
+    rows_fingerprint = hashlib.sha256(
+        json.dumps(rows, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    manifest = SimpleNamespace(
+        training_config_path="configs/v2_dense_latent_bfeat.yaml",
+        training_config_fingerprint="config",
+        candidate_policy_fingerprint="policy",
+        dataset_fingerprint="d" * 64,
+        feature_version="v2b",
+        feature_fingerprint="feature",
+        score_calibration="raw",
+        itemcf_top_k=500,
+        semantic_top_k=1500,
+        latent_top_k=500,
+        case_fingerprint="cases",
+        model_checksum="e" * 64,
+        ordered_user_ids=(9,),
+        members={"latent.npz": SimpleNamespace(sha256="latent-sha")},
+        semantic=SimpleNamespace(model_name="dense-model", immutable_revision="revision"),
+    )
+    config = SimpleNamespace(
+        ranker_feature_version="v2b",
+        score_calibration="raw",
+        retrieval_top_k=500,
+        semantic_top_k=1500,
+        latent_top_k=500,
+    )
+    split = SimpleNamespace(legal_retrieval_train=())
+    artifact = SimpleNamespace(
+        feature_fingerprint="feature",
+        model_checksum="e" * 64,
+        latent_provenance={"training_fingerprint": "latent-training"},
+        validation_rows_fingerprint=rows_fingerprint,
+        model_dump=lambda **_kwargs: {},
+    )
+    evidence = SimpleNamespace(per_user_rows=rows)
+    observed: dict[str, object] = {}
+
+    monkeypatch.setattr("recagent_eval.cli.load_experiment_config", lambda _path: config)
+    monkeypatch.setattr(
+        "recagent_eval.cli.lambdamart_config_fingerprint", lambda _config: "config"
+    )
+    monkeypatch.setattr(
+        "recagent_eval.cli.candidate_policy_fingerprint", lambda _config: "policy"
+    )
+    monkeypatch.setattr("recagent_eval.cli._load_dataset", lambda _path: ({}, []))
+    monkeypatch.setattr(
+        "recagent_eval.cli.leakage_safe_ranking_split", lambda _ratings: split
+    )
+    monkeypatch.setattr(
+        "recagent_eval.cli.ranking_dataset_fingerprint",
+        lambda _movies, _split: "d" * 64,
+    )
+    monkeypatch.setattr(
+        "recagent_eval.cli.load_ranker_bundle",
+        lambda *args, **kwargs: SimpleNamespace(
+            model_bytes=b"model", evidence_bytes=b"evidence"
+        ),
+    )
+    monkeypatch.setattr(
+        "recagent_eval.cli.parse_ranker_artifact", lambda *args, **kwargs: artifact
+    )
+    monkeypatch.setattr(
+        "recagent_eval.cli.LearnedValidationEvidence",
+        SimpleNamespace(model_validate_json=lambda _raw: evidence),
+    )
+    monkeypatch.setattr(
+        "recagent_eval.cli.DenseSemanticRetriever.load", lambda *args, **kwargs: "semantic"
+    )
+    monkeypatch.setattr(
+        "recagent_eval.cli.LatentFactorRetriever.load", lambda *args, **kwargs: "latent"
+    )
+    monkeypatch.setattr(
+        "recagent_eval.cli.estimator_from_artifact", lambda _artifact: "estimator"
+    )
+
+    class CapturingRanker:
+        def __init__(self, estimator, **kwargs):
+            observed["ranker"] = (estimator, kwargs)
+
+    monkeypatch.setattr("recagent_eval.cli.LearnedRanker", CapturingRanker)
+    monkeypatch.setattr(
+        "recagent_eval.cli.build_validation_rows", lambda *args, **kwargs: rows
+    )
+    monkeypatch.setattr(
+        "recagent_eval.cli.validate_learned_gate", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(
+        "recagent_eval.cli.verify_git_identity", lambda *_args, **_kwargs: None
+    )
+
+    def run_callbacks(_root, _promotion, **kwargs):
+        members = {
+            name: tmp_path / name
+            for name in (
+                "model.json",
+                "validation.json",
+                "bundle.json",
+                "latent.npz",
+                "latent.npz.json",
+                "semantic.npz",
+                "semantic.npz.json",
+            )
+        }
+        assert kwargs["dataset_fingerprint_check"](manifest, members) == "d" * 64
+        replay = kwargs["validation_replay"](manifest, members)
+        assert replay.validation_rows_fingerprint == rows_fingerprint
+        kwargs["git_identity_check"](manifest)
+        return SimpleNamespace(model_dump_json=lambda **_kwargs: '{"label_free":true}')
+
+    monkeypatch.setattr("recagent_eval.cli.preflight_promotion", run_callbacks)
+    monkeypatch.setattr(
+        "recagent_eval.cli.load_cases",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("preflight read cases")),
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "preflight-frozen-promotion",
+            "--promotion",
+            str(tmp_path / "reports/promotion/synthetic.yaml"),
+            "--data-dir",
+            str(tmp_path / "data"),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert '"label_free":true' in result.output
+    estimator, ranker_kwargs = observed["ranker"]
+    assert estimator == "estimator"
+    assert ranker_kwargs["feature_version"] == "v2b"
+    assert ranker_kwargs["score_calibration"] == "raw"
+
+
+def test_frozen_execution_runtime_loads_only_manifest_bound_package_members(
+    tmp_path, monkeypatch
+) -> None:
+    from recagent_eval.cli import _load_frozen_execution_runtime
+
+    members = {
+        name: SimpleNamespace(path=f"artifacts/promotion/current-v2b/{name}")
+        for name in (
+            "model.json",
+            "validation.json",
+            "bundle.json",
+            "latent.npz",
+            "latent.npz.json",
+            "semantic.npz",
+            "semantic.npz.json",
+        )
+    }
+    members["latent.npz"].sha256 = "latent-sha"
+    manifest = SimpleNamespace(
+        training_config_path="configs/v2_dense_latent_bfeat.yaml",
+        members=members,
+        training_config_fingerprint="config",
+        dataset_fingerprint="dataset",
+        candidate_policy_fingerprint="policy",
+        feature_fingerprint="feature",
+        case_fingerprint="cases",
+        model_checksum="model-checksum",
+        semantic=SimpleNamespace(model_name="dense-model", immutable_revision="revision"),
+        score_calibration="raw",
+        feature_version="v2b",
+    )
+    split = SimpleNamespace(legal_retrieval_train=("legal-row",))
+    artifact = SimpleNamespace(
+        feature_fingerprint="feature",
+        model_checksum="model-checksum",
+        latent_provenance={"training_fingerprint": "latent-training"},
+    )
+    evidence = SimpleNamespace(evidence_fingerprint="evidence")
+    observed: dict[str, object] = {}
+    monkeypatch.setattr(
+        "recagent_eval.cli.load_experiment_config", lambda _path: "config-object"
+    )
+    monkeypatch.setattr("recagent_eval.cli._load_dataset", lambda _path: ({}, []))
+    monkeypatch.setattr(
+        "recagent_eval.cli.leakage_safe_ranking_split", lambda _ratings: split
+    )
+
+    def load_bundle(*args, **kwargs):
+        observed["bundle_args"] = args
+        observed["bundle_kwargs"] = kwargs
+        return SimpleNamespace(model_bytes=b"model", evidence_bytes=b"evidence")
+
+    monkeypatch.setattr("recagent_eval.cli.load_ranker_bundle", load_bundle)
+    monkeypatch.setattr(
+        "recagent_eval.cli.parse_ranker_artifact", lambda *args, **kwargs: artifact
+    )
+    monkeypatch.setattr(
+        "recagent_eval.cli.LearnedValidationEvidence",
+        SimpleNamespace(model_validate_json=lambda _raw: evidence),
+    )
+    monkeypatch.setattr(
+        "recagent_eval.cli.DenseSemanticRetriever.load", lambda *args, **kwargs: "semantic"
+    )
+    monkeypatch.setattr(
+        "recagent_eval.cli.LatentFactorRetriever.load", lambda *args, **kwargs: "latent"
+    )
+    monkeypatch.setattr(
+        "recagent_eval.cli.estimator_from_artifact", lambda _artifact: "estimator"
+    )
+
+    class CapturingRanker:
+        def __init__(self, estimator, **kwargs):
+            observed["ranker"] = (estimator, kwargs)
+
+    monkeypatch.setattr("recagent_eval.cli.LearnedRanker", CapturingRanker)
+
+    runtime = _load_frozen_execution_runtime(tmp_path, manifest, tmp_path / "data")
+
+    assert runtime["config"] == "config-object"
+    assert runtime["semantic"] == "semantic"
+    assert runtime["latent"] == "latent"
+    assert runtime["evidence"] is evidence
+    assert observed["bundle_args"][0] == (
+        tmp_path / "artifacts/promotion/current-v2b/model.json"
+    )
+    assert observed["ranker"][1]["feature_version"] == "v2b"
+    artifact.model_checksum = "drifted-model"
+    with pytest.raises(ValueError, match="model identity drift"):
+        _load_frozen_execution_runtime(tmp_path, manifest, tmp_path / "data")
+
+
+def test_prepare_frozen_promotion_wires_locked_sources_without_regeneration(
+    tmp_path, monkeypatch
+) -> None:
+    inventory = object()
+    observed: dict[str, object] = {}
+    monkeypatch.setattr(
+        "recagent_eval.cli.load_source_inventory", lambda path: inventory
+    )
+
+    def publish(root, active_inventory, sources):
+        observed.update(root=root, inventory=active_inventory, sources=sources)
+        return tmp_path / "artifacts/promotion/current-v2b"
+
+    monkeypatch.setattr("recagent_eval.cli.publish_promotion_package", publish)
+    confirmation = tmp_path / "confirmation"
+    semantic = tmp_path / "semantic.npz"
+    result = CliRunner().invoke(
+        app,
+        [
+            "prepare-frozen-promotion",
+            "--inventory",
+            str(tmp_path / "inventory.json"),
+            "--confirmation-source",
+            str(confirmation),
+            "--semantic-cache",
+            str(semantic),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert observed["inventory"] is inventory
+    assert observed["sources"]["model.json"] == confirmation / "model.json"
+    assert observed["sources"]["semantic.npz"] == semantic
+    assert observed["sources"]["semantic.npz.json"] == Path(f"{semantic}.json")
+
+
+def test_prepare_and_audit_promotion_cli_wrap_failures_and_emit_read_only_result(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "recagent_eval.cli.load_source_inventory",
+        lambda _path: (_ for _ in ()).throw(ValueError("locked source missing")),
+    )
+    failed = CliRunner().invoke(
+        app,
+        ["prepare-frozen-promotion", "--inventory", str(tmp_path / "missing.json")],
+    )
+    assert failed.exit_code != 0
+    assert "locked source missing" in failed.output
+
+    monkeypatch.setattr(
+        "recagent_eval.cli.load_promotion_documents", lambda *_args: ("manifest", "yaml")
+    )
+    monkeypatch.setattr(
+        "recagent_eval.cli.audit_one_shot",
+        lambda *_args: {"state": "started", "output_exists": True},
+    )
+    audited = CliRunner().invoke(
+        app,
+        ["audit-frozen-promotion", "--promotion", str(tmp_path / "promotion.yaml")],
+    )
+    assert audited.exit_code == 0, audited.output
+    assert json.loads(audited.output) == {"output_exists": True, "state": "started"}
+
+
+@pytest.mark.parametrize(
+    ("config_fingerprint", "policy_fingerprint", "feature_version", "message"),
+    [
+        ("wrong", "policy", "v2b", "training config fingerprint"),
+        ("config", "wrong", "v2b", "candidate-policy fingerprint"),
+        ("config", "policy", "v1", "training/candidate/feature contract"),
+    ],
+)
+def test_preflight_cli_fails_closed_on_training_identity_drift(
+    tmp_path,
+    monkeypatch,
+    config_fingerprint,
+    policy_fingerprint,
+    feature_version,
+    message,
+) -> None:
+    from recagent_eval.cli import preflight_frozen_promotion
+
+    manifest = SimpleNamespace(
+        training_config_path="configs/v2_dense_latent_bfeat.yaml",
+        training_config_fingerprint="config",
+        candidate_policy_fingerprint="policy",
+        feature_version="v2b",
+        score_calibration="raw",
+        itemcf_top_k=500,
+        semantic_top_k=1500,
+        latent_top_k=500,
+    )
+    config = SimpleNamespace(
+        ranker_feature_version=feature_version,
+        score_calibration="raw",
+        retrieval_top_k=500,
+        semantic_top_k=1500,
+        latent_top_k=500,
+    )
+    monkeypatch.setattr("recagent_eval.cli.load_experiment_config", lambda _path: config)
+    monkeypatch.setattr(
+        "recagent_eval.cli.lambdamart_config_fingerprint",
+        lambda _config: config_fingerprint,
+    )
+    monkeypatch.setattr(
+        "recagent_eval.cli.candidate_policy_fingerprint",
+        lambda _config: policy_fingerprint,
+    )
+
+    def invoke_dataset(_root, _promotion, **kwargs):
+        kwargs["dataset_fingerprint_check"](manifest, {})
+        raise AssertionError("identity drift did not fail closed")
+
+    monkeypatch.setattr("recagent_eval.cli.preflight_promotion", invoke_dataset)
+    with pytest.raises(Exception, match=message):
+        preflight_frozen_promotion(tmp_path / "promotion.yaml", tmp_path / "data")
+
+
+def test_run_frozen_promotion_wires_authorized_synthetic_services_without_real_io(
+    tmp_path, monkeypatch
+) -> None:
+    manifest_sha = "a" * 64
+    manifest = SimpleNamespace(
+        frozen_cases_path="cases/fixed_cases.json",
+        case_fingerprint="case-fingerprint",
+        dataset_fingerprint="dataset-fingerprint",
+        model_checksum="model-checksum",
+    )
+    promotion = SimpleNamespace(manifest_sha256=manifest_sha)
+    receipt = object()
+    config = SimpleNamespace(
+        retrieval_top_k=500,
+        semantic_top_k=1500,
+        semantic_profile_history_cap=50,
+        latent_top_k=500,
+        ranker_feature_version="v2b",
+    )
+    cases = ["synthetic-case"]
+    runtime = {
+        "config": config,
+        "movies": {1: "movie"},
+        "split": SimpleNamespace(legal_retrieval_train=("legal",)),
+        "ranker": "ranker",
+        "semantic": "semantic",
+        "latent": "latent",
+        "evidence": SimpleNamespace(evidence_fingerprint="evidence-fingerprint"),
+    }
+    observed: dict[str, object] = {}
+    monkeypatch.setattr(
+        "recagent_eval.cli.load_promotion_documents",
+        lambda *_args: (manifest, promotion),
+    )
+    monkeypatch.setattr(
+        "recagent_eval.cli.preflight_frozen_promotion", lambda *_args: receipt
+    )
+    monkeypatch.setattr(
+        "recagent_eval.cli._load_frozen_execution_runtime", lambda *_args: runtime
+    )
+    monkeypatch.setattr("recagent_eval.cli.load_cases", lambda _path: cases)
+    monkeypatch.setattr(
+        "recagent_eval.cli.case_fingerprint", lambda active_cases: "case-fingerprint"
+    )
+
+    def evaluate(*args, **kwargs):
+        observed["evaluate_args"] = args
+        observed["evaluate_kwargs"] = kwargs
+        return {"cases": 1}
+
+    monkeypatch.setattr("recagent_eval.cli.evaluate_frozen_cases", evaluate)
+
+    def execute(root, active_manifest, active_promotion, active_receipt, **kwargs):
+        observed["execute"] = (
+            root,
+            active_manifest,
+            active_promotion,
+            active_receipt,
+            kwargs["authorized_manifest_sha"],
+        )
+        loaded_cases = kwargs["case_loader"]()
+        observed["metrics"] = kwargs["evaluator"](loaded_cases)
+        return SimpleNamespace(model_dump_json=lambda **_kwargs: '{"state":"completed"}')
+
+    monkeypatch.setattr("recagent_eval.cli.execute_one_shot", execute)
+    result = CliRunner().invoke(
+        app,
+        [
+            "run-frozen-promotion",
+            "--promotion",
+            str(tmp_path / "reports/promotion/synthetic.yaml"),
+            "--authorized-manifest-sha",
+            manifest_sha,
+            "--data-dir",
+            str(tmp_path / "data"),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert '"state":"completed"' in result.output
+    assert observed["execute"][4] == manifest_sha
+    assert observed["evaluate_args"][2] == cases
+    assert observed["evaluate_kwargs"]["semantic_top_k"] == 1500
+    assert observed["evaluate_kwargs"]["latent_top_k"] == 500
+    assert observed["metrics"]["manifest_sha256"] == manifest_sha
+    assert observed["metrics"]["selection_evidence_fingerprint"] == (
+        "evidence-fingerprint"
+    )
 
 
 def test_missing_bundle_members_do_not_consume_marker(tmp_path) -> None:
