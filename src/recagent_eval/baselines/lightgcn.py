@@ -6,7 +6,6 @@ import json
 import math
 import os
 import platform
-import resource
 import stat
 import tempfile
 import time
@@ -27,6 +26,7 @@ from recagent_eval.lambdamart_pipeline import (
     _state_from_history,
     ranking_dataset_fingerprint,
 )
+from recagent_eval.resource_usage import read_process_peak_rss
 from recagent_eval.retrieval import hard_filter
 
 LIGHTGCN_SCHEMA_VERSION = 1
@@ -586,7 +586,7 @@ def score_lightgcn(
         "dataset_fingerprint": ranking_dataset_fingerprint(movies, split),
         "model_fingerprint": model.training_fingerprint,
         "training_seconds": training_seconds,
-        "peak_memory_mb": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0,
+        "resource_usage": read_process_peak_rss(),
         "model_size_bytes": int(
             model.user_embeddings.nbytes + model.item_embeddings.nbytes
         ),

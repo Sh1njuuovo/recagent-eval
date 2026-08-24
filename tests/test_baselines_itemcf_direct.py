@@ -34,10 +34,12 @@ def test_itemcf_direct_is_registered_and_returns_expected_keys() -> None:
         "dataset_fingerprint",
         "model_fingerprint",
         "training_seconds",
-        "peak_memory_mb",
+        "resource_usage",
         "model_size_bytes",
         "environment",
     }
+    assert result["resource_usage"]["metric_name"] == "process_peak_rss_mib"
+    assert "peak_memory_mb" not in result
 
 
 def test_itemcf_direct_matches_score_many_order() -> None:

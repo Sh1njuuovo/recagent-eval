@@ -907,7 +907,7 @@ def evaluate_baselines(
         dataset_fingerprint=result["dataset_fingerprint"],
         model_fingerprint=result["model_fingerprint"],
         training_seconds=result["training_seconds"],
-        peak_memory_mb=result["peak_memory_mb"],
+        resource_usage=result["resource_usage"],
         model_size_bytes=result["model_size_bytes"],
         environment=result["environment"],
         bootstrap=result.get("bootstrap_vs_itemcf"),

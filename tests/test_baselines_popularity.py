@@ -36,10 +36,12 @@ def test_popularity_is_registered_and_returns_expected_keys() -> None:
         "dataset_fingerprint",
         "model_fingerprint",
         "training_seconds",
-        "peak_memory_mb",
+        "resource_usage",
         "model_size_bytes",
         "environment",
     }
+    assert result["resource_usage"]["metric_name"] == "process_peak_rss_mib"
+    assert "peak_memory_mb" not in result
     assert all(
         row.recommended_ids and all(1 <= movie_id <= 8 for movie_id in row.recommended_ids)
         for row in result["rows"]

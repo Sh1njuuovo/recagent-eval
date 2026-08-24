@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import platform
-import resource
 import time
 from collections.abc import Mapping, Sequence
 
@@ -16,6 +15,7 @@ from recagent_eval.lambdamart_pipeline import (
     _state_from_history,
     ranking_dataset_fingerprint,
 )
+from recagent_eval.resource_usage import read_process_peak_rss
 from recagent_eval.retrieval import ItemCFRetriever, hard_filter
 
 
@@ -66,7 +66,7 @@ def score_itemcf_direct(
         "dataset_fingerprint": ranking_dataset_fingerprint(movies, split),
         "model_fingerprint": hashlib.sha256(model_bytes).hexdigest(),
         "training_seconds": training_seconds,
-        "peak_memory_mb": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0,
+        "resource_usage": read_process_peak_rss(),
         "model_size_bytes": len(model_bytes),
         "environment": {
             "python": platform.python_version(),

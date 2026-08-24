@@ -4,7 +4,6 @@ import hashlib
 import json
 import math
 import platform
-import resource
 import time
 from collections.abc import Mapping, Sequence
 
@@ -18,6 +17,7 @@ from recagent_eval.lambdamart_pipeline import (
     ranking_dataset_fingerprint,
 )
 from recagent_eval.latent_retrieval import LatentFactorRetriever
+from recagent_eval.resource_usage import read_process_peak_rss
 from recagent_eval.retrieval import hard_filter
 
 ALS_PARAMETER_GRID: tuple[Mapping[str, int | float], ...] = tuple(
@@ -168,7 +168,7 @@ def score_als_direct(
         "dataset_fingerprint": ranking_dataset_fingerprint(movies, split),
         "model_fingerprint": latent.training_fingerprint,
         "training_seconds": training_seconds,
-        "peak_memory_mb": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0,
+        "resource_usage": read_process_peak_rss(),
         "model_size_bytes": len(latent.item_factors.tobytes()),
         "environment": {
             "python": platform.python_version(),

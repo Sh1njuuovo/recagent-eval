@@ -121,7 +121,10 @@ def test_metric_json_reports_aggregates_and_coverage() -> None:
         dataset_fingerprint="dataset",
         model_fingerprint="model",
         training_seconds=1.0,
-        peak_memory_mb=100.0,
+        resource_usage={
+            "metric_name": "process_peak_rss_mib",
+            "normalized_mib": 100.0,
+        },
         model_size_bytes=1024,
         environment={"python": "3.13"},
     )
@@ -131,6 +134,8 @@ def test_metric_json_reports_aggregates_and_coverage() -> None:
     assert agg["coverage"] == 0.3  # {1,2,3} / 10
     assert agg["latency_ms_p95"] == 4.0
     assert artifact["fingerprint"]
+    assert artifact["resource_usage"]["normalized_mib"] == 100.0
+    assert "peak_memory_mb" not in artifact
 
 
 def test_metric_json_handles_empty_rows_and_universe() -> None:
@@ -143,7 +148,10 @@ def test_metric_json_handles_empty_rows_and_universe() -> None:
         dataset_fingerprint="dataset",
         model_fingerprint="model",
         training_seconds=0.0,
-        peak_memory_mb=0.0,
+        resource_usage={
+            "metric_name": "process_peak_rss_mib",
+            "normalized_mib": 0.0,
+        },
         model_size_bytes=0,
         environment={},
     )

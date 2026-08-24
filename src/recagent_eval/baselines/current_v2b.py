@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import platform
-import resource
 import tempfile
 import time
 from collections.abc import Mapping, Sequence
@@ -19,6 +18,7 @@ from recagent_eval.lambdamart_pipeline import (
     ranking_dataset_fingerprint,
     train_lambdamart_pipeline,
 )
+from recagent_eval.resource_usage import read_process_peak_rss
 from recagent_eval.retrieval import DenseSemanticRetriever
 
 _FIXED_CASE_FINGERPRINT = "bc2f622cd9311bca8509a46f0ee516355bc64db7d91f809273a35d97ce304d88"
@@ -98,7 +98,7 @@ def score_current_v2b(
         "dataset_fingerprint": ranking_dataset_fingerprint(movies, split),
         "model_fingerprint": str(summary["model_checksum"]),
         "training_seconds": training_seconds,
-        "peak_memory_mb": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0,
+        "resource_usage": read_process_peak_rss(),
         "model_size_bytes": int(model_size_bytes),
         "environment": {
             "python": platform.python_version(),
