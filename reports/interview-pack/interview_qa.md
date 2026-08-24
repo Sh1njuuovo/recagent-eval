@@ -46,7 +46,10 @@ manifest 和 episode 同时记录 LLM 延迟、工具延迟、调用次数和 to
 
 ## 12. 最大限制是什么？
 
-MovieLens 文本只有标题和类型，TF-IDF 语义较弱；50 个固定案例的 top-10 指标方差较大；无记忆基线会退化为流行度召回，在这组小样本上得到更高 NDCG，不能泛化为“不需要记忆”。当前也没有训练排序器。v1 故意不引入多 Agent 或大规模训练，优先保证证据链清楚且一周可完成。
+MovieLens 文本只有标题和类型；50 个固定案例的 Top-10 指标方差较大，而且这套
+cases 曾用于历史 DeepSeek 系统实验。最终 promotion 没有同步运行匹配的 ItemCF/ALS
+对照，因此不能从它推导 baseline 胜负或显著性。主要算法结论来自独立的
+1000-user Confirmation-B；50 cases 只补充锁定模型后的泛化观察。
 
 ## 13. v2 为什么把语义通道换成 dense？缓存怎么做安全？
 
@@ -90,8 +93,37 @@ LightGBM 不进入并行区，是确定性修复，不是把段错误吞掉或�
 torch 已加载的子进程里做真实训练/预测/加载，换环境或依赖升级后会重新暴露问题。
 项目还保留了完整证据契约，门禁、bootstrap、证据回放和 frozen 标记一个都没动。
 
-## 18. 为什么 frozen 只能跑一次？
+## 18. 为什么 final promotion 只能跑一次？
 
 反复查看 frozen 结果会把测试集变成调参集。P0 先锁定 commit、数据、cohort、
-config、model 和 evidence fingerprint，再请求一次明确授权；失败或崩溃也不会
-调参或重跑。The frozen test remains unconsumed. Qwen/4090 remains pending.
+config、model 和 evidence fingerprint，再以 manifest identity 绑定一次明确授权；
+marker 在读取 label 前写入，任何终态或 `started` 残留都永久阻止重跑。本次已经
+完成并永久消费，结果无论高低都不会用于反向调参。
+
+## 19. 这 50 cases 是从未使用过的纯净 holdout 吗？
+
+不能这样描述。同一 case fingerprint `bc2f622c...` 此前用于 DeepSeek
+constraint-aware 系统实验。准确口径是：锁定 current_v2b 后进行的一次性 final
+promotion evaluation；在执行前，它没有参与 current_v2b 调参，而且当前 canonical
+identity 只运行了一次。历史 DeepSeek、Confirmation-B 和本次 promotion 的证据角色
+在报告中分开记录。
+
+## 20. 为什么不能说 current_v2b 在 50 cases 上显著超过 baseline？
+
+这次只执行了 current_v2b，没有在同一 50-case 协议上同步运行与它匹配的 ItemCF
+和 ALS。缺少 paired per-user baseline rows，也就没有可计算的 paired bootstrap
+差值与置信区间。显著超过 ItemCF/ALS 的结论只引用 1000-user Confirmation-B。
+
+## 21. 如何解释 Confirmation-B 到 50-case promotion 的指标下降？
+
+Confirmation-B 有 1000 users，Recall@10 0.118、NDCG@10 0.0555；promotion 只有
+50 cases，点估计是 0.08 和 0.03964，小样本波动明显。两者 cohort 与证据角色不同，
+不能把点估计差直接解释成算法退化。50 cases 的 union 覆盖为 47/50，Top-10 只命中
+4/50，继续指向“候选已进并集、头部排序仍不够深”的瓶颈。
+
+## 22. 为什么不继续围绕这 50 cases 调参？v3 怎么做？
+
+结果已经可见，继续调参会把这套 cases 变成 development data，破坏一次性发布的
+解释边界。后续改进只允许使用 development/validation cohort。若启动 v3，会在开发
+前预注册一套新的、项目历史上未使用的 holdout，并提前锁定 case fingerprint、成功
+门槛和一次性执行规则。Qwen/4090 仍是独立兼容性实验，不混入离线 NDCG。
