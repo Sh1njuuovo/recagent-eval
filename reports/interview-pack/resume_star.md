@@ -24,9 +24,10 @@
 - 用 faulthandler + lldb 定位并修复真实原生崩溃：torch/LightGBM/scikit-learn
   三份 `libomp.dylib` 共存导致 LightGBM 多线程训练段错误，通过固定单线程并补
   两个子进程回归测试解决；229 个自动化测试，90% 行覆盖率。
-- 500 用户正式验证如实保留负结果：约束满足率 100%，但 LambdaMART NDCG@10
-  （0.0327）未超过 ItemCF（0.0334），bootstrap 95% CI 跨零，frozen 门保持
-  锁定；定位瓶颈为候选召回（并集 77.6%、dense 仅 28.8%）。
+- 从早期 500 用户 LambdaMART 负结果出发，通过 ALS latent route 与交叉/时序
+  特征改善候选深度；在全新 1000-user Confirmation-B 上将 Recall@10 从
+  ItemCF 0.064 提升至 0.118、NDCG@10 从 0.0323 提升至 0.0555，paired
+  bootstrap 95% CI 下界大于 0，约束满足率 100%。
 - DeepSeek 历史矩阵中，双路召回相对同深度 ItemCF 将候选覆盖率从 78% 提升到
   88%；计划合法率、工具成功率、硬约束满足率均 100%，同时如实保留
   Recall@10/NDCG@10 未提升的负排序结果。
@@ -40,8 +41,8 @@
 - A：把 LLM 输出收敛为结构化偏好与工具计划；推荐侧独立执行过滤、双路召回、
   排序和指标；实现 dense 缓存指纹校验、整用户分组 CV 的 LambdaMART、验证证据
   回放与单次 frozen 消费；遇到原生段错误时不绕过，先写复现测试再修。
-- R：跑通 MovieLens-1M 的 500 用户 LambdaMART 验证：约束 100%，但 NDCG@10
-  未超过 ItemCF，负结果被完整保留；用真实证据证明瓶颈在候选召回
-  （dense 28.8%）而非最终排序。
-- Reflection：下一步先提高 dense 候选召回与分数校准，而不是继续堆 Agent
-  复杂度；任何对外数字都从已核验 JSON 复制。
+- R：保留早期负结果，并在此前未参与选择的 Confirmation-B 上得到 Recall@10
+  0.118、NDCG@10 0.0555；相对 ItemCF 0.064/0.0323 的提升通过 2,000 次
+  用户级 paired bootstrap 显著性验证。
+- Reflection：Confirmation-A 因读数后 baseline 修复降级为开发证据；主 claim
+  只使用 Confirmation-B。frozen test 尚未消费，Qwen/4090 仍 pending。

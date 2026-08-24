@@ -27,3 +27,39 @@ def test_peak_rss_correction_invalidates_legacy_field() -> None:
     assert "invalid_due_to_platform_unit_bug" in text
     assert "process_peak_rss_mib" in text
     assert "independent process" in text.lower()
+
+
+def test_current_project_docs_report_confirmation_b_certification() -> None:
+    paths = [
+        "README.md",
+        "docs/HANDOFF-2026-08-22.md",
+        "docs/project-methodology.md",
+        "docs/demo-script.md",
+        "reports/interview-pack/resume_star.md",
+        "reports/interview-pack/interview-pack.md",
+        "reports/interview-pack/interview_qa.md",
+        "reports/interview-pack/ppt_prompt.md",
+        "reports/interview-pack/application_checklist.md",
+    ]
+    for relative in paths:
+        text = (ROOT / relative).read_text()
+        assert "Confirmation-B" in text, relative
+        assert "0.0555" in text, relative
+        assert "0.118" in text, relative
+
+
+def test_current_docs_keep_frozen_unconsumed_and_qwen_pending() -> None:
+    combined = "\n".join(
+        (ROOT / relative).read_text()
+        for relative in (
+            "README.md",
+            "docs/HANDOFF-2026-08-22.md",
+            "docs/project-methodology.md",
+            "docs/demo-script.md",
+            "reports/interview-pack/interview-pack.md",
+        )
+    )
+    assert "frozen test remains unconsumed" in combined.lower()
+    assert "qwen/4090 remains pending" in combined.lower()
+    assert "certified on both" not in combined.lower()
+    assert "both untouched" not in combined.lower()

@@ -7,7 +7,9 @@
 - [投递检查表](application_checklist.md)
 - [10 分钟演示脚本](../../docs/demo-script.md)
 
-当前可安全对外表述：本地 MovieLens-1M 全链路、三组离线对照和 DeepSeek
-正式矩阵均已完成；dense 召回与 LambdaMART 证据契约已落地，500 用户验证约束
-100%、NDCG 未超过 ItemCF（负结果保留），frozen 门保持锁定；Qwen/RTX 4090
-冒烟仍待服务器空闲，不能虚构数字。
+当前可安全对外表述：早期 500-user dense/LambdaMART 负结果完整保留；ALS latent
+route 将 latent recall@500 提至 0.838、union recall 提至 0.928。在全新
+1000-user Confirmation-B 上，current_v2b Recall@10 0.118、NDCG@10 0.0555，
+超过 ItemCF 0.064/0.0323 且 paired-bootstrap CI 下界大于 0，约束 100%。
+Confirmation-A 只作开发证据。The frozen test remains unconsumed. Qwen/4090
+remains pending.

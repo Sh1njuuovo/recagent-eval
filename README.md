@@ -9,17 +9,15 @@ An evaluation-first conversational movie recommendation Agent that separates
 LLM preference understanding from deterministic filtering, retrieval, ranking,
 and frozen-test evaluation.
 
-**Verified evidence:** structured Agent reliability and hard-constraint metrics
-reach 100%; dense retrieval and a leakage-safe LambdaMART pipeline run end to
-end on real MovieLens-1M data. A candidate-recall sweep found the dense top-k
-is the dominant lever (union recall 77.6% → 87.8%, dense 28.8% → 61.2% with
-`semantic.top_k=1500`). Ranking diagnostics show the target still ranks deep
-(median ~172) and only the raw ItemCF score separates targets from negatives;
-percentile calibration of route scores was tested and made ranking worse
-(recall@10 0.066 → 0.038). All 500-user LambdaMART validations keep constraint
-satisfaction at 100% but do not beat ItemCF NDCG@10, so the frozen test stays
-locked; negative results are preserved and the bottleneck is ranking depth
-rather than candidate recall.
+**Verified evidence:** the early 500-user dense/LambdaMART variants preserved
+their negative results and motivated candidate-depth diagnosis. Adding the ALS
+latent route raised latent recall@500 to 0.838, union recall to 0.928, and moved
+the median target rank to 93. The final seed-42 Confirmation-B cohort contains
+1,000 previously unused users: current_v2b reaches Recall@10 0.118 and NDCG@10
+0.0555 versus ItemCF 0.064/0.0323 and ALS 0.069/0.0323. User-level paired
+bootstrap lower bounds are positive and constraints remain 100%. Confirmation-A
+is development/debugging evidence; Confirmation-B is the sole certification.
+The frozen test remains unconsumed. Qwen/4090 remains pending.
 
 RecAgent-Eval makes one separation explicit:
 
@@ -339,7 +337,7 @@ with all-negatives training. The v2b contingency (cross/recent/year features)
 produces the best learned ranking so far but still misses the pre-registered
 confidence gate at its lower tail.
 
-### Strong-baseline evaluation (in progress)
+### Strong-baseline evaluation
 
 A pre-registered, untouched-cohort evaluation phase
 ([design](docs/superpowers/specs/2026-08-23-strong-baselines-design.md),
@@ -359,15 +357,13 @@ serialization tests and a 30-user smoke): Popularity, ItemCF direct, ALS
 direct (dev-CV hyperparameters), BPR-MF, LightGCN, and the current v2b method
 (trained on historical-500 ∪ development, evaluated on confirmation cohorts).
 
-Pre-registered **Success A is met and certified on both untouched
-confirmation cohorts** (1000 users each; see
-[confirmation-A](reports/experiments/v2-strong-baselines-confirmation-a.md)
-and [confirmation-B](reports/experiments/v2-strong-baselines-confirmation-b.md)):
-the current v2b method beats ItemCF with paired-bootstrap 95% CI lower bound
-> 0 (A: +0.0146 [0.0024, 0.0267]; B: +0.0231 [0.0118, 0.0346] NDCG@10), beats
-ALS direct and BPR-MF with the same CI rule on B, keeps Recall@10 well above
-ItemCF (0.099/0.118 vs 0.075/0.064), and holds constraints at 100%. The frozen
-test remains locked and has never been consumed.
+Confirmation-A was read before baseline implementation/metric corrections and
+is therefore development/debugging/replication evidence. Seed-42 Confirmation-B
+is the sole final certification cohort: current_v2b NDCG@10 is 0.0555 versus
+ItemCF 0.0323 and ALS direct 0.0323; its deltas are +0.0231 [0.0118, 0.0346]
+and +0.0232 [0.0111, 0.0346]. Recall@10 is 0.118 versus ItemCF 0.064 (+84%
+relative), with 100% constraints. The BPR/LightGCN seed-7/2026 work is labeled
+post-hoc robustness and cannot change Success A.
 
 ## Testing and evidence
 
@@ -394,8 +390,8 @@ schema-v2 contract dispatch. Current line coverage is 90%.
 
 - TF-IDF uses MovieLens title/genre text; it is deliberately lightweight and is
   not a learned sentence embedding model.
-- The current hybrid improves candidate coverage but not Recall@10 or NDCG@10.
-  A learned or calibrated second-stage ranker is intentionally outside v1.
+- The early v1 hybrid improved candidate coverage without improving Recall@10
+  or NDCG@10. That historical negative result remains part of the diagnosis.
 - Dense retrieval uses `all-MiniLM-L6-v2`; on this Mac its OpenMP runtime
   conflicts with LightGBM's, so LambdaMART is pinned to a single thread and
   model load caps `OMP_NUM_THREADS`. This is a documented local-runtime guard,
@@ -411,6 +407,9 @@ schema-v2 contract dispatch. Current line coverage is 90%.
   bound (−0.0024) still crosses zero. Route-balanced hard-negative sampling
   was evaluated and found to break generalization; it is retained as a
   falsified hypothesis, not a tuning success.
+- Confirmation-B establishes the later v2b result; its 1,000-user evidence is
+  distinct from the earlier 500-user LambdaMART experiments. Peak RSS is not
+  compared until corrected independent-process measurements exist.
 - The unstructured no-memory baseline falls back to popularity retrieval, so its
   strong NDCG on 50 fixed cases should not be generalized beyond this matrix.
 - MovieLens data is downloaded separately and remains subject to GroupLens

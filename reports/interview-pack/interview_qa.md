@@ -78,9 +78,20 @@ bootstrap 95% CI 跨零，说明差异不显著；并集候选召回 77.6%、den
 把瓶颈定位在“候选进没进 Top-N”，而不是最终排序器。隐藏负结果反而会在追问中
 失去可信度；报告里同时给出复现命令和全部指纹。
 
+后续实验没有覆盖这项负结果：它通过 ALS latent route 和新特征形成新的 v2b
+路线。在此前未参与选择的 1000-user Confirmation-B 上，Recall@10 0.118、
+NDCG@10 0.0555，超过 ItemCF 0.064/0.0323，paired bootstrap CI 下界大于 0。
+Confirmation-A 因读数后修复只作为开发证据。
+
 ## 17. 固定单线程是不是在绕开问题？
 
 不是。根因是三个 OpenMP 运行时共存，任何 LightGBM 并行区都可能崩；单线程让
 LightGBM 不进入并行区，是确定性修复，不是把段错误吞掉或关掉门禁。回归测试在
 torch 已加载的子进程里做真实训练/预测/加载，换环境或依赖升级后会重新暴露问题。
 项目还保留了完整证据契约，门禁、bootstrap、证据回放和 frozen 标记一个都没动。
+
+## 18. 为什么 frozen 只能跑一次？
+
+反复查看 frozen 结果会把测试集变成调参集。P0 先锁定 commit、数据、cohort、
+config、model 和 evidence fingerprint，再请求一次明确授权；失败或崩溃也不会
+调参或重跑。The frozen test remains unconsumed. Qwen/4090 remains pending.
