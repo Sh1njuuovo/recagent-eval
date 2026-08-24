@@ -1,5 +1,6 @@
 import hashlib
 import json
+from dataclasses import dataclass
 from types import SimpleNamespace
 
 import numpy as np
@@ -1481,6 +1482,62 @@ def test_replay_evidence_rejects_invalid_bundle(tmp_path) -> None:
     assert "unknown bundle schema" in result.output
 
 
+def test_build_evidence_bundle_writes_new_file_with_bound_inputs(
+    tmp_path, monkeypatch
+) -> None:
+    ledger = tmp_path / "ledger.json"
+    ledger.write_text('{"fingerprint":"ledger"}')
+    summary = tmp_path / "summary.json"
+    summary.write_text(json.dumps({"aggregates": {"bpr_mf": {}}}))
+    recovery = tmp_path / "recovery.json"
+    recovery.write_text(
+        json.dumps(
+            {
+                "schema_version": "baseline-parameter-recovery/v1",
+                "cohorts": {"confirmation_b": {"bpr_mf": {"selected_params": {}}}},
+            }
+        )
+    )
+    artifact_dir = tmp_path / "artifacts"
+    artifact_dir.mkdir()
+    (artifact_dir / "bpr-mf-confirmation-b.json").write_text('{"source":true}')
+    seen = {}
+
+    def fake_build(**kwargs):
+        seen.update(kwargs)
+        return {"fingerprint": "f" * 64}
+
+    monkeypatch.setattr("recagent_eval.cli.build_compact_bundle", fake_build)
+    monkeypatch.setattr(
+        "recagent_eval.cli.subprocess.run",
+        lambda *_args, **_kwargs: SimpleNamespace(stdout="a" * 40 + "\n"),
+    )
+    output = tmp_path / "bundle.json"
+    result = CliRunner().invoke(
+        app,
+        [
+            "build-evidence-bundle",
+            "--cohort",
+            "confirmation_b",
+            "--ledger",
+            str(ledger),
+            "--artifact-dir",
+            str(artifact_dir),
+            "--summary",
+            str(summary),
+            "--recovery",
+            str(recovery),
+            "--output",
+            str(output),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert json.loads(output.read_text())["fingerprint"] == "f" * 64
+    assert seen["cohort"] == "confirmation_b"
+    assert seen["commit_sha"] == "a" * 40
+    assert seen["recovery"] == {"bpr_mf": {"selected_params": {}}}
+
+
 def test_recover_baseline_params_refuses_existing_output_before_data(tmp_path) -> None:
     output = tmp_path / "recovery.json"
     output.write_text("{}")
@@ -1500,3 +1557,82 @@ def test_recover_baseline_params_refuses_existing_output_before_data(tmp_path) -
     )
     assert result.exit_code != 0
     assert "refusing to overwrite" in result.output
+
+
+def test_recover_baseline_params_writes_bound_manifest(tmp_path, monkeypatch) -> None:
+    ledger = tmp_path / "ledger.json"
+    ledger.write_text(json.dumps({"cohorts": {"development": [1, 2]}}))
+    artifact_dir = tmp_path / "artifacts"
+    artifact_dir.mkdir()
+
+    def selection(fingerprint: str, *, lightgcn: bool = False) -> dict[str, object]:
+        selected = {"rank": 16}
+        if lightgcn:
+            selected["epochs"] = 20
+        return {
+            "selected_params": selected,
+            "grid": [selected],
+            "fingerprint": fingerprint,
+            "seed": 42,
+            **({"epochs": 20} if lightgcn else {}),
+        }
+
+    fingerprints = {
+        "popularity": hashlib.sha256(b"popularity/v1").hexdigest(),
+        "itemcf_direct": hashlib.sha256(b"itemcf_direct/v1").hexdigest(),
+        "als_direct": "a" * 64,
+        "bpr_mf": "b" * 64,
+        "lightgcn": "l" * 64,
+        "current_v2b": "c" * 64,
+    }
+    for cohort in ("confirmation-a", "confirmation-b"):
+        for method, fingerprint in fingerprints.items():
+            path = artifact_dir / f"{method.replace('_', '-')}-{cohort}.json"
+            path.write_text(
+                json.dumps({"config_fingerprint": fingerprint, "fingerprint": method})
+            )
+
+    @dataclass
+    class FakeConfig:
+        seed: int = 42
+
+    monkeypatch.setattr("recagent_eval.cli._load_dataset", lambda _path: ({}, []))
+    monkeypatch.setattr("recagent_eval.cli.leakage_safe_ranking_split", lambda _ratings: object())
+    monkeypatch.setattr(
+        "recagent_eval.cli._als_registration.select_als_params",
+        lambda *_args: selection("a" * 64),
+    )
+    monkeypatch.setattr(
+        "recagent_eval.cli._bpr_registration.select_bpr_params",
+        lambda *_args: selection("b" * 64),
+    )
+    monkeypatch.setattr(
+        "recagent_eval.cli._lightgcn_registration.select_lightgcn_params",
+        lambda *_args: selection("l" * 64, lightgcn=True),
+    )
+    monkeypatch.setattr("recagent_eval.cli.load_experiment_config", lambda _path: FakeConfig())
+    monkeypatch.setattr(
+        "recagent_eval.cli.lambdamart_config_fingerprint", lambda _config: "c" * 64
+    )
+    output = tmp_path / "recovery.json"
+    result = CliRunner().invoke(
+        app,
+        [
+            "recover-baseline-params",
+            "--ledger",
+            str(ledger),
+            "--artifact-dir",
+            str(artifact_dir),
+            "--data-dir",
+            str(tmp_path),
+            "--output",
+            str(output),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    manifest = json.loads(output.read_text())
+    assert manifest["status"] == "recovered_after_run"
+    assert set(manifest["cohorts"]) == {"confirmation_a", "confirmation_b"}
+    assert manifest["cohorts"]["confirmation_b"]["bpr_mf"]["selected_params"][
+        "source"
+    ] == "recovered"
