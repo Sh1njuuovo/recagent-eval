@@ -1,7 +1,6 @@
 {
   "schema_version": "frozen-promotion-preflight/v1",
-  "canonical_manifest_identity": "7739942cdb8d3c588c7dc6553c919f8166fc0aa55dc882dd3343bb1714d1a72b",
-  "manifest_file_sha256": "7a5a72ebe7a0f25c8d19a5eb776614e174a0b7dc6becb8780d3902e2236ed138",
+  "manifest_sha256": "d3ca04a2a62620095b175ea6adb89bcea0db8436a27f453c0f8a3e096fc66256",
   "dataset_fingerprint": "0d2c756a78f02a8ea8680bd216364a6ab7afffc2ae1a26df0611591147897eac",
   "model_checksum": "cf65d76dff568a696c11e0c3653041fdfa147c8c412e1ee601ca671a5c725cdb",
   "validation_rows_fingerprint": "a472b965e7dd4e1cf850794d77dc8add94e0eea67155413996a101ea0c0a0425",
@@ -16,16 +15,6 @@
     "semantic.npz": "a37cc0ec769f8f77544bdd9a6ae291cc3718b718d97a8ac00c858d59d75f8c84",
     "semantic.npz.json": "229df40442fd02adc66aeb4ce9e9fe7c84935df28594598ea3712f965353afa9"
   },
-  "verified_member_size_bytes": {
-    "model.json": 935361,
-    "validation.json": 28192906,
-    "bundle.json": 874,
-    "latent.npz": 310726,
-    "latent.npz.json": 34936,
-    "semantic.npz": 5995876,
-    "semantic.npz.json": 38652
-  },
-  "package_unchanged": true,
   "label_free": true,
-  "fingerprint": "7bacc65f7600117361b7fcc5ac524642054457bafe1b98b595ac53ff9a79fff3"
+  "fingerprint": "6ecd11e3b7d5a07cfbcaf595bcc3a2bdbd52034e8cfab6706ad0f2447ebdcff6"
 }

@@ -25,6 +25,8 @@ The immutable manifest will use schema `frozen-promotion/v1` and bind:
 - dataset and frozen case fingerprints;
 - Confirmation-B compact-bundle fingerprint and summary fingerprint;
 - current_v2b config and model fingerprints;
+- canonical manifest identity, kept distinct from the serialized manifest file
+  SHA-256;
 - candidate-policy, feature-schema, and validation-gate fingerprints;
 - model, validation evidence, bundle manifest, semantic cache, latent artifact,
   and dependency SHA-256 values;
@@ -42,6 +44,11 @@ Preflight may inspect Git state, configs, model/evidence/bundle hashes, dataset
 identity, expected case fingerprint already registered in configuration, output
 absence, and marker absence. It must not call `load_cases`, open the frozen case
 file, derive labels, create a marker, or create result output.
+
+Preflight must also prove the promotion package has exactly seven declared
+members and that member names, SHA-256 values, and byte sizes are unchanged
+before and after replay. Dense cache loading is lock-free and read-only inside
+the package.
 
 At P0 handoff, the exact preflight and execution commands will be printed with
 the final immutable paths and fingerprints. The execution command will use the

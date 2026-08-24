@@ -177,7 +177,7 @@ The manifest is the execution identity root. Its canonical JSON SHA-256 is the
 promotion identity. The promotion YAML records:
 
 - the repository-relative manifest path;
-- the manifest SHA-256;
+- the canonical manifest identity and separate manifest file SHA-256;
 - `execution.mode: learned_frozen`; and
 - a minimal duplicate of execution-critical identity fields needed for
   cross-checking.
@@ -383,7 +383,7 @@ marker, or existing output.
 ### 10.1 Marker states
 
 Schema `frozen-run-marker/v1` has states `started`, `completed`, and `failed`.
-Every state binds the manifest SHA, case fingerprint, model checksum, evidence
+Every state binds the canonical manifest identity, manifest file SHA-256, case fingerprint, model checksum, evidence
 SHA, marker identity, and start timestamp.
 
 The real marker path is deterministically derived from the promotion manifest

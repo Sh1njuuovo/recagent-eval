@@ -3,7 +3,7 @@
 > **Execution boundary:** implement and test the protected path with synthetic
 > cases only. Do not open `cases/fixed_cases.json`, create a real marker/output,
 > or run `run-frozen-promotion` without a later authorization naming the exact
-> promotion manifest SHA-256.
+> canonical manifest identity.
 
 **Goal:** publish an immutable, manifest-driven Confirmation-B `current_v2b`
 promotion package and prove label-free preflight plus one-shot execution
@@ -53,7 +53,7 @@ three-route v2b candidate builder between validation and frozen execution.
    and synthetic root separation.
 3. Make `execution.mode` valid only in promotion YAML. Reject it in normal
    experiment config.
-4. Derive marker/output/log paths from manifest SHA, case fingerprint, dataset
+4. Derive marker/output/log paths from canonical manifest identity, case fingerprint, dataset
    fingerprint, and model checksum. YAML may only repeat these values.
 5. Prove execution-only changes do not affect the training fingerprint and all
    training/candidate/feature/model changes alter identity or fail.
@@ -200,7 +200,7 @@ three-route v2b candidate builder between validation and frozen execution.
    package member hashes/sizes, replay result, candidate/feature contract,
    synthetic lifecycle matrix, derived real marker/output paths, and the one
    future command.
-5. Stop and request authorization naming the exact manifest SHA. Do not consume
+5. Stop and request authorization naming the exact canonical manifest identity. Do not consume
    frozen cases in this plan.
 
 ## Task 10: Read-only promotion package and no-replace output amendment
