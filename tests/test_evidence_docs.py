@@ -48,7 +48,7 @@ def test_current_project_docs_report_confirmation_b_certification() -> None:
         assert "0.118" in text, relative
 
 
-def test_current_docs_keep_frozen_unconsumed_and_qwen_pending() -> None:
+def test_current_docs_report_consumed_final_promotion_boundaries() -> None:
     combined = "\n".join(
         (ROOT / relative).read_text()
         for relative in (
@@ -59,7 +59,13 @@ def test_current_docs_keep_frozen_unconsumed_and_qwen_pending() -> None:
             "reports/interview-pack/interview-pack.md",
         )
     )
-    assert "frozen test remains unconsumed" in combined.lower()
-    assert "qwen/4090 remains pending" in combined.lower()
-    assert "certified on both" not in combined.lower()
-    assert "both untouched" not in combined.lower()
+    lowered = combined.lower()
+    assert "final promotion evaluation" in lowered
+    assert "permanently consumed" in lowered
+    assert "deepseek" in lowered
+    assert "no matched itemcf/als" in lowered
+    assert "no further tuning" in lowered
+    assert "frozen test remains unconsumed" not in lowered
+    assert "qwen/4090 remains pending" in lowered
+    assert "certified on both" not in lowered
+    assert "both untouched" not in lowered
