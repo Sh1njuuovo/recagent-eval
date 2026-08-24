@@ -15,6 +15,8 @@ RETRIEVAL_TOOLS = {"itemcf_retrieve", "semantic_retrieve"}
 
 def load_experiment_config(path: Path) -> ExperimentConfig:
     payload = yaml.safe_load(path.read_text()) or {}
+    if "execution" in payload:
+        raise ValueError("execution is allowed only in a promotion configuration")
     weights = tuple(float(value) for value in payload.get("weights", (0.5, 0.3, 0.2)))
     if len(weights) != 3 or not math.isclose(sum(weights), 1.0, abs_tol=1e-8):
         raise ValueError("weights must contain three values that sum to 1")

@@ -20,6 +20,13 @@ def test_legacy_weights_keep_minmax_linear_behavior(tmp_path: Path) -> None:
     assert config.semantic_cache_path is None
 
 
+def test_training_config_rejects_promotion_execution_section(tmp_path: Path) -> None:
+    path = tmp_path / "invalid.yaml"
+    path.write_text("name: invalid\nexecution:\n  mode: learned_frozen\n")
+    with pytest.raises(ValueError, match="execution"):
+        load_experiment_config(path)
+
+
 def test_semantic_top_k_parses_and_validates(tmp_path: Path) -> None:
     path = tmp_path / "dense.yaml"
     path.write_text(
