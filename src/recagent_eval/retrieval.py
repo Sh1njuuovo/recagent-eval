@@ -13,7 +13,7 @@ import time
 import zipfile
 from collections import Counter, defaultdict
 from collections.abc import Iterable
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
@@ -405,12 +405,57 @@ class DenseSemanticRetriever:
         model_revision: str | None = None,
         device: str | None = None,
     ) -> DenseSemanticRetriever:
+        return cls._load(
+            path,
+            movies=movies,
+            encoder=encoder,
+            model_name=model_name,
+            model_revision=model_revision,
+            device=device,
+            lock_cache=True,
+        )
+
+    @classmethod
+    def load_read_only(
+        cls,
+        path: Path,
+        *,
+        movies: dict[int, Movie],
+        encoder: EmbeddingEncoder | None = None,
+        model_name: str = DEFAULT_DENSE_MODEL,
+        model_revision: str | None = None,
+        device: str | None = None,
+    ) -> DenseSemanticRetriever:
+        """Load an immutable cache without creating an adjacent lock file."""
+        return cls._load(
+            path,
+            movies=movies,
+            encoder=encoder,
+            model_name=model_name,
+            model_revision=model_revision,
+            device=device,
+            lock_cache=False,
+        )
+
+    @classmethod
+    def _load(
+        cls,
+        path: Path,
+        *,
+        movies: dict[int, Movie],
+        encoder: EmbeddingEncoder | None,
+        model_name: str,
+        model_revision: str | None,
+        device: str | None,
+        lock_cache: bool,
+    ) -> DenseSemanticRetriever:
         manifest, movie_ids, embeddings = _read_dense_cache(
             Path(path),
             movies=movies,
             model_name=model_name,
             model_revision=model_revision,
             device=device,
+            lock_cache=lock_cache,
         )
         # An alias is only used to validate requested provenance. Actual loading is
         # pinned to the already-resolved immutable revision stored in the cache.
@@ -780,9 +825,11 @@ def _read_dense_cache(
     model_name: str,
     model_revision: str | None,
     device: str | None,
+    lock_cache: bool = True,
 ) -> tuple[dict[str, object], np.ndarray, np.ndarray]:
     manifest_path = _manifest_path(cache_path)
-    with _cache_lock(cache_path):
+    lock_context = _cache_lock(cache_path) if lock_cache else nullcontext()
+    with lock_context:
         manifest_fd = _try_open_regular_file(
             manifest_path,
             max_bytes=MAX_MANIFEST_BYTES,

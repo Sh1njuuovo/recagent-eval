@@ -134,7 +134,7 @@ def test_promotion_paths_reject_non_normalized_or_escaping_values(path: str) -> 
 
 def test_marker_and_output_paths_are_derived_from_bound_identity() -> None:
     paths = derive_execution_paths(
-        manifest_sha256=_sha("1"),
+        canonical_manifest_identity=_sha("1"),
         case_fingerprint=_sha("2"),
         dataset_fingerprint=_sha("3"),
         model_checksum=_sha("4"),
@@ -143,7 +143,7 @@ def test_marker_and_output_paths_are_derived_from_bound_identity() -> None:
     assert paths.output.endswith("/metrics.json")
     assert _sha("1")[:16] in paths.marker
     assert paths == derive_execution_paths(
-        manifest_sha256=_sha("1"),
+        canonical_manifest_identity=_sha("1"),
         case_fingerprint=_sha("2"),
         dataset_fingerprint=_sha("3"),
         model_checksum=_sha("4"),
@@ -174,7 +174,7 @@ def test_manifest_and_yaml_cross_check_execution_without_training_identity_drift
     manifest = PromotionManifest.model_validate(manifest_payload)
     manifest_sha = canonical_payload_sha256(manifest_payload)
     paths = derive_execution_paths(
-        manifest_sha256=manifest_sha,
+        canonical_manifest_identity=manifest_sha,
         case_fingerprint=manifest.case_fingerprint,
         dataset_fingerprint=manifest.dataset_fingerprint,
         model_checksum=manifest.model_checksum,
@@ -183,7 +183,8 @@ def test_manifest_and_yaml_cross_check_execution_without_training_identity_drift
         {
             "schema_version": "frozen-promotion-execution/v1",
             "manifest_path": "reports/promotion/current-v2b-manifest.json",
-            "manifest_sha256": manifest_sha,
+            "canonical_manifest_identity": manifest_sha,
+            "manifest_file_sha256": _sha("f"),
             "execution": {"mode": "learned_frozen"},
             "training_config_fingerprint": manifest.training_config_fingerprint,
             "dataset_fingerprint": manifest.dataset_fingerprint,
@@ -203,8 +204,63 @@ def test_manifest_and_yaml_cross_check_execution_without_training_identity_drift
     with pytest.raises(ValueError, match="derived marker"):
         changed_marker.cross_check(manifest)
     changed_candidate_contract = manifest.model_copy(update={"itemcf_top_k": 501})
-    with pytest.raises(ValueError, match="manifest SHA"):
+    with pytest.raises(ValueError, match="canonical manifest identity"):
         promotion.cross_check(changed_candidate_contract)
+
+
+def test_promotion_yaml_distinguishes_canonical_identity_from_manifest_file_sha() -> None:
+    manifest_payload = {
+        "schema_version": "frozen-promotion/v1",
+        "implementation_commit": "a" * 40,
+        "training_config_path": "configs/v2_dense_latent_bfeat.yaml",
+        "training_config_fingerprint": _sha("1"),
+        "dataset_fingerprint": _sha("2"),
+        "case_fingerprint": _sha("3"),
+        "candidate_policy_fingerprint": _sha("4"),
+        "model_checksum": _sha("5"),
+        "feature_version": "v2b",
+        "feature_fingerprint": _sha("6"),
+        "score_calibration": "raw",
+        "itemcf_top_k": 500,
+        "semantic_top_k": 1500,
+        "latent_top_k": 500,
+        "ordered_user_ids": [9, 3],
+        **_manifest_evidence_fields([9, 3]),
+        "members": _members(),
+        "semantic": _semantic(),
+    }
+    manifest = PromotionManifest.model_validate(manifest_payload)
+    canonical_identity = canonical_payload_sha256(manifest)
+    paths = derive_execution_paths(
+        canonical_manifest_identity=canonical_identity,
+        case_fingerprint=manifest.case_fingerprint,
+        dataset_fingerprint=manifest.dataset_fingerprint,
+        model_checksum=manifest.model_checksum,
+    )
+    payload = {
+        "schema_version": "frozen-promotion-execution/v1",
+        "manifest_path": "reports/promotion/current-v2b-manifest.json",
+        "canonical_manifest_identity": canonical_identity,
+        "manifest_file_sha256": _sha("f"),
+        "execution": {"mode": "learned_frozen"},
+        "training_config_fingerprint": manifest.training_config_fingerprint,
+        "dataset_fingerprint": manifest.dataset_fingerprint,
+        "case_fingerprint": manifest.case_fingerprint,
+        "model_checksum": manifest.model_checksum,
+        "marker_path": paths.marker,
+        "output_path": paths.output,
+    }
+
+    promotion = PromotionYaml.model_validate(payload)
+    promotion.cross_check(manifest, manifest_file_sha256=_sha("f"))
+    with pytest.raises(ValidationError):
+        PromotionYaml.model_validate(
+            {
+                **payload,
+                "manifest_sha256": canonical_identity,
+                "canonical_manifest_identity": None,
+            }
+        )
 
 
 def test_file_and_semantic_identity_reject_weak_values() -> None:
@@ -423,7 +479,7 @@ def _published_synthetic_promotion(tmp_path: Path):
     manifest_path.write_text(json.dumps(manifest_payload, sort_keys=True))
     manifest_sha = canonical_payload_sha256(manifest_payload)
     paths = derive_execution_paths(
-        manifest_sha256=manifest_sha,
+        canonical_manifest_identity=manifest_sha,
         case_fingerprint=manifest.case_fingerprint,
         dataset_fingerprint=manifest.dataset_fingerprint,
         model_checksum=manifest.model_checksum,
@@ -432,7 +488,8 @@ def _published_synthetic_promotion(tmp_path: Path):
     promotion_payload = {
         "schema_version": "frozen-promotion-execution/v1",
         "manifest_path": "reports/promotion/current-v2b-manifest.json",
-        "manifest_sha256": manifest_sha,
+        "canonical_manifest_identity": manifest_sha,
+        "manifest_file_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
         "execution": {"mode": "learned_frozen", "scope": "synthetic"},
         "training_config_fingerprint": manifest.training_config_fingerprint,
         "dataset_fingerprint": manifest.dataset_fingerprint,
@@ -509,6 +566,57 @@ def test_label_free_preflight_verifies_dataset_full_replay_and_all_members(
     assert not real_case.exists()
 
 
+def test_preflight_rejects_extra_package_member_before_replay(tmp_path) -> None:
+    manifest, promotion_path = _published_synthetic_promotion(tmp_path)
+    package_dir = tmp_path / Path(manifest.members["semantic.npz"].path).parent
+    (package_dir / "semantic.npz.lock").write_bytes(b"mutable lock")
+
+    with pytest.raises(ValueError, match="exactly the seven declared members"):
+        preflight_promotion(
+            tmp_path,
+            promotion_path,
+            dataset_fingerprint_check=lambda _manifest, _members: (
+                manifest.dataset_fingerprint
+            ),
+            validation_replay=lambda _manifest, _members: (_ for _ in ()).throw(
+                AssertionError("replay must not run for a contaminated package")
+            ),
+            git_identity_check=lambda _manifest: None,
+        )
+
+
+def test_preflight_rejects_package_mutation_during_replay(tmp_path) -> None:
+    manifest, promotion_path = _published_synthetic_promotion(tmp_path)
+    package_dir = tmp_path / Path(manifest.members["semantic.npz"].path).parent
+
+    def mutate_during_replay(_manifest, _members):
+        (package_dir / "semantic.npz.lock").write_bytes(b"late mutation")
+        return ReplayVerification(
+            ordered_user_ids=manifest.ordered_user_ids,
+            dataset_fingerprint=manifest.dataset_fingerprint,
+            model_checksum=manifest.model_checksum,
+            validation_rows_fingerprint=manifest.validation_rows_fingerprint,
+            validated_components=(
+                "model",
+                "evidence",
+                "bundle",
+                "latent",
+                "semantic",
+            ),
+        )
+
+    with pytest.raises(ValueError, match="changed during preflight"):
+        preflight_promotion(
+            tmp_path,
+            promotion_path,
+            dataset_fingerprint_check=lambda _manifest, _members: (
+                manifest.dataset_fingerprint
+            ),
+            validation_replay=mutate_during_replay,
+            git_identity_check=lambda _manifest: None,
+        )
+
+
 def test_preflight_rejects_incomplete_replay_or_order_drift(tmp_path) -> None:
     manifest, promotion_path = _published_synthetic_promotion(tmp_path)
 
@@ -583,7 +691,7 @@ def test_preflight_rejects_dataset_replay_and_existing_marker_identity_drift(
 
     promotion = PromotionYaml.model_validate(json.loads(promotion_path.read_text()))
     paths = derive_execution_paths(
-        manifest_sha256=promotion.manifest_sha256,
+        canonical_manifest_identity=promotion.canonical_manifest_identity,
         case_fingerprint=manifest.case_fingerprint,
         dataset_fingerprint=manifest.dataset_fingerprint,
         model_checksum=manifest.model_checksum,
@@ -697,7 +805,7 @@ def test_synthetic_one_shot_success_publishes_output_before_completed_and_blocks
     assert marker.state == "completed"
     assert observed == ["load", ("evaluate", ["synthetic-case"])]
     paths = derive_execution_paths(
-        manifest_sha256=promotion.manifest_sha256,
+        canonical_manifest_identity=promotion.canonical_manifest_identity,
         case_fingerprint=manifest.case_fingerprint,
         dataset_fingerprint=manifest.dataset_fingerprint,
         model_checksum=manifest.model_checksum,
@@ -715,6 +823,38 @@ def test_synthetic_one_shot_success_publishes_output_before_completed_and_blocks
         )
 
 
+def test_output_publication_is_atomic_no_replace_under_race(
+    tmp_path, monkeypatch
+) -> None:
+    manifest, promotion, receipt = _synthetic_preflight(tmp_path)
+    paths = derive_execution_paths(
+        canonical_manifest_identity=promotion.canonical_manifest_identity,
+        case_fingerprint=manifest.case_fingerprint,
+        dataset_fingerprint=manifest.dataset_fingerprint,
+        model_checksum=manifest.model_checksum,
+        scope="synthetic",
+    )
+    output_path = tmp_path / paths.output
+    original_link = __import__("os").link
+
+    def racing_link(source, destination, *args, **kwargs):
+        Path(destination).write_bytes(b"external winner")
+        return original_link(source, destination, *args, **kwargs)
+
+    monkeypatch.setattr("recagent_eval.promotion.os.link", racing_link)
+
+    with pytest.raises(FileExistsError):
+        execute_one_shot(
+            tmp_path,
+            manifest,
+            promotion,
+            receipt,
+            case_loader=lambda: ["synthetic-case"],
+            evaluator=lambda _cases: {"cases": 1},
+        )
+    assert output_path.read_bytes() == b"external winner"
+
+
 def test_synthetic_one_shot_captured_failure_is_permanent(tmp_path) -> None:
     manifest, promotion, receipt = _synthetic_preflight(tmp_path)
     with pytest.raises(RuntimeError, match="evaluation failed"):
@@ -729,7 +869,7 @@ def test_synthetic_one_shot_captured_failure_is_permanent(tmp_path) -> None:
             ),
         )
     paths = derive_execution_paths(
-        manifest_sha256=promotion.manifest_sha256,
+        canonical_manifest_identity=promotion.canonical_manifest_identity,
         case_fingerprint=manifest.case_fingerprint,
         dataset_fingerprint=manifest.dataset_fingerprint,
         model_checksum=manifest.model_checksum,
@@ -789,7 +929,7 @@ def test_real_scope_requires_authorization_bound_to_exact_manifest(tmp_path) -> 
             "execution": {"mode": "learned_frozen", "scope": "real"},
         }
     )
-    with pytest.raises(ValueError, match="exact manifest SHA authorization"):
+    with pytest.raises(ValueError, match="exact canonical manifest identity"):
         execute_one_shot(
             tmp_path,
             manifest,

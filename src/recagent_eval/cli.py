@@ -1384,7 +1384,7 @@ def preflight_frozen_promotion(
         ordered = tuple(int(row["user_id"]) for row in evidence.per_user_rows)
         if ordered != manifest.ordered_user_ids:
             raise ValueError("promotion evidence ordered users mismatch")
-        semantic = DenseSemanticRetriever.load(
+        semantic = DenseSemanticRetriever.load_read_only(
             member_paths["semantic.npz"],
             movies=movies,
             model_name=manifest.semantic.model_name,
@@ -1543,7 +1543,7 @@ def _load_frozen_execution_runtime(
     ):
         raise ValueError("promotion model identity drift before execution")
     evidence = LearnedValidationEvidence.model_validate_json(bundle.evidence_bytes)
-    semantic = DenseSemanticRetriever.load(
+    semantic = DenseSemanticRetriever.load_read_only(
         member_paths["semantic.npz"],
         movies=movies,
         model_name=manifest.semantic.model_name,
@@ -1575,11 +1575,14 @@ def _load_frozen_execution_runtime(
 
 @app.command("run-frozen-promotion")
 def run_frozen_promotion(
-    authorized_manifest_sha: Annotated[
+    authorized_canonical_manifest_identity: Annotated[
         str,
         typer.Option(
-            "--authorized-manifest-sha",
-            help="Exact manifest SHA named by the user's one-time authorization",
+            "--authorized-canonical-manifest-identity",
+            help=(
+                "Exact canonical manifest identity named by the user's "
+                "one-time authorization"
+            ),
         ),
     ],
     promotion_path: Annotated[
@@ -1593,8 +1596,13 @@ def run_frozen_promotion(
     )
     try:
         manifest, promotion = load_promotion_documents(repo_root, resolved_promotion)
-        if authorized_manifest_sha != promotion.manifest_sha256:
-            raise ValueError("real execution requires exact manifest SHA authorization")
+        if (
+            authorized_canonical_manifest_identity
+            != promotion.canonical_manifest_identity
+        ):
+            raise ValueError(
+                "real execution requires exact canonical manifest identity authorization"
+            )
         receipt = preflight_frozen_promotion(resolved_promotion, data_dir)
         runtime = _load_frozen_execution_runtime(repo_root, manifest, data_dir)
 
@@ -1621,7 +1629,10 @@ def run_frozen_promotion(
             )
             metrics.update(
                 {
-                    "manifest_sha256": promotion.manifest_sha256,
+                    "canonical_manifest_identity": (
+                        promotion.canonical_manifest_identity
+                    ),
+                    "manifest_file_sha256": promotion.manifest_file_sha256,
                     "case_fingerprint": manifest.case_fingerprint,
                     "dataset_fingerprint": manifest.dataset_fingerprint,
                     "model_checksum": manifest.model_checksum,
@@ -1639,7 +1650,7 @@ def run_frozen_promotion(
             receipt,
             case_loader=case_loader,
             evaluator=evaluator,
-            authorized_manifest_sha=authorized_manifest_sha,
+            authorized_canonical_manifest_identity=authorized_canonical_manifest_identity,
         )
     except (OSError, TypeError, ValueError) as exc:
         raise typer.BadParameter(str(exc)) from exc

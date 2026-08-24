@@ -791,7 +791,10 @@ def test_run_frozen_promotion_rejects_wrong_manifest_authorization_before_prefli
 ) -> None:
     monkeypatch.setattr(
         "recagent_eval.cli.load_promotion_documents",
-        lambda *_args: (object(), SimpleNamespace(manifest_sha256="a" * 64)),
+        lambda *_args: (
+            object(),
+            SimpleNamespace(canonical_manifest_identity="a" * 64),
+        ),
     )
     monkeypatch.setattr(
         "recagent_eval.cli.preflight_frozen_promotion",
@@ -812,13 +815,13 @@ def test_run_frozen_promotion_rejects_wrong_manifest_authorization_before_prefli
             "run-frozen-promotion",
             "--promotion",
             str(tmp_path / "promotion.yaml"),
-            "--authorized-manifest-sha",
+            "--authorized-canonical-manifest-identity",
             "b" * 64,
         ],
     )
 
     assert result.exit_code != 0
-    assert "exact manifest SHA authorization" in result.output
+    assert "exact canonical manifest identity" in result.output
 
 
 def test_preflight_frozen_promotion_wires_complete_v2b_replay_without_cases(
@@ -892,7 +895,8 @@ def test_preflight_frozen_promotion_wires_complete_v2b_replay_without_cases(
         SimpleNamespace(model_validate_json=lambda _raw: evidence),
     )
     monkeypatch.setattr(
-        "recagent_eval.cli.DenseSemanticRetriever.load", lambda *args, **kwargs: "semantic"
+        "recagent_eval.cli.DenseSemanticRetriever.load_read_only",
+        lambda *args, **kwargs: "semantic",
     )
     monkeypatch.setattr(
         "recagent_eval.cli.LatentFactorRetriever.load", lambda *args, **kwargs: "latent"
@@ -1021,7 +1025,8 @@ def test_frozen_execution_runtime_loads_only_manifest_bound_package_members(
         SimpleNamespace(model_validate_json=lambda _raw: evidence),
     )
     monkeypatch.setattr(
-        "recagent_eval.cli.DenseSemanticRetriever.load", lambda *args, **kwargs: "semantic"
+        "recagent_eval.cli.DenseSemanticRetriever.load_read_only",
+        lambda *args, **kwargs: "semantic",
     )
     monkeypatch.setattr(
         "recagent_eval.cli.LatentFactorRetriever.load", lambda *args, **kwargs: "latent"
@@ -1180,7 +1185,10 @@ def test_run_frozen_promotion_wires_authorized_synthetic_services_without_real_i
         dataset_fingerprint="dataset-fingerprint",
         model_checksum="model-checksum",
     )
-    promotion = SimpleNamespace(manifest_sha256=manifest_sha)
+    promotion = SimpleNamespace(
+        canonical_manifest_identity=manifest_sha,
+        manifest_file_sha256="f" * 64,
+    )
     receipt = object()
     config = SimpleNamespace(
         retrieval_top_k=500,
@@ -1228,7 +1236,7 @@ def test_run_frozen_promotion_wires_authorized_synthetic_services_without_real_i
             active_manifest,
             active_promotion,
             active_receipt,
-            kwargs["authorized_manifest_sha"],
+            kwargs["authorized_canonical_manifest_identity"],
         )
         loaded_cases = kwargs["case_loader"]()
         observed["metrics"] = kwargs["evaluator"](loaded_cases)
@@ -1241,7 +1249,7 @@ def test_run_frozen_promotion_wires_authorized_synthetic_services_without_real_i
             "run-frozen-promotion",
             "--promotion",
             str(tmp_path / "reports/promotion/synthetic.yaml"),
-            "--authorized-manifest-sha",
+            "--authorized-canonical-manifest-identity",
             manifest_sha,
             "--data-dir",
             str(tmp_path / "data"),
@@ -1254,7 +1262,8 @@ def test_run_frozen_promotion_wires_authorized_synthetic_services_without_real_i
     assert observed["evaluate_args"][2] == cases
     assert observed["evaluate_kwargs"]["semantic_top_k"] == 1500
     assert observed["evaluate_kwargs"]["latent_top_k"] == 500
-    assert observed["metrics"]["manifest_sha256"] == manifest_sha
+    assert observed["metrics"]["canonical_manifest_identity"] == manifest_sha
+    assert observed["metrics"]["manifest_file_sha256"] == "f" * 64
     assert observed["metrics"]["selection_evidence_fingerprint"] == (
         "evidence-fingerprint"
     )

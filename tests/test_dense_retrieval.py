@@ -229,6 +229,34 @@ def test_dense_cache_rejects_old_manifest_and_provenance_mismatch(tmp_path) -> N
             )
 
 
+def test_dense_promotion_load_is_read_only_and_creates_no_adjacent_lock(tmp_path) -> None:
+    cache = tmp_path / "semantic.npz"
+    DenseSemanticRetriever.fit(
+        MOVIES, encoder=FakeEncoder(), model_name="fake"
+    ).save(cache)
+    lock_path = Path(f"{cache}.lock")
+    lock_path.unlink()
+    before = {
+        path.name: (hashlib.sha256(path.read_bytes()).hexdigest(), path.stat().st_size)
+        for path in (cache, Path(f"{cache}.json"))
+    }
+
+    loaded = DenseSemanticRetriever.load_read_only(
+        cache,
+        movies=MOVIES,
+        encoder=FakeEncoder(),
+        model_name="fake",
+    )
+
+    after = {
+        path.name: (hashlib.sha256(path.read_bytes()).hexdigest(), path.stat().st_size)
+        for path in (cache, Path(f"{cache}.json"))
+    }
+    assert loaded.retrieve("space") == [(10, 1.0), (30, 1.0), (20, 0.0)]
+    assert before == after
+    assert not lock_path.exists()
+
+
 @pytest.mark.parametrize("field,value", [("model_name", "other"), ("model_revision", "other")])
 def test_dense_cache_rejects_model_metadata_mismatch(tmp_path, field: str, value: str) -> None:
     cache = tmp_path / "movies.npz"
