@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 import time
 from pathlib import Path
 from typing import Annotated
@@ -41,6 +42,11 @@ from recagent_eval.data import (
 )
 from recagent_eval.dataset import download_movielens_1m
 from recagent_eval.evidence import runtime_dependency_versions, runtime_hardware
+from recagent_eval.evidence_replay import (
+    build_compact_bundle,
+    replay_compact_bundle,
+    write_new_json,
+)
 from recagent_eval.lambdamart_pipeline import (
     build_validation_rows,
     candidate_policy_fingerprint,
@@ -985,6 +991,80 @@ def summarize_baselines_cli(
     )
     md_path.write_text(summary_to_markdown(summary), encoding="utf-8")
     typer.echo(json.dumps(summary["aggregates"], indent=2, sort_keys=True))
+
+
+@app.command("build-evidence-bundle")
+def build_evidence_bundle_cli(
+    cohort: Annotated[str, typer.Option()],
+    ledger_path: Annotated[Path, typer.Option("--ledger")],
+    artifact_dir: Annotated[Path, typer.Option()],
+    summary_path: Annotated[Path, typer.Option("--summary")],
+    recovery_path: Annotated[Path, typer.Option("--recovery")],
+    output: Annotated[Path, typer.Option()],
+) -> None:
+    """Build a compact, provenance-bound baseline replay bundle."""
+    if output.exists():
+        raise typer.BadParameter(f"refusing to overwrite existing evidence: {output}")
+    try:
+        ledger_bytes = ledger_path.read_bytes()
+        summary_bytes = summary_path.read_bytes()
+        summary = json.loads(summary_bytes)
+        recovery = json.loads(recovery_path.read_bytes())
+        methods = sorted(summary["aggregates"])
+        file_cohort = cohort.replace("_", "-")
+        source_artifacts = {
+            method: (
+                artifact_dir
+                / f"{method.replace('_', '-')}-{file_cohort}.json"
+            ).read_bytes()
+            for method in methods
+        }
+        commit_sha = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        bundle = build_compact_bundle(
+            source_artifacts=source_artifacts,
+            ledger_bytes=ledger_bytes,
+            summary_bytes=summary_bytes,
+            recovery=recovery,
+            cohort=cohort,
+            commit_sha=commit_sha,
+        )
+        write_new_json(output, bundle)
+    except (OSError, ValueError, KeyError, subprocess.CalledProcessError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(json.dumps({"fingerprint": bundle["fingerprint"], "output": str(output)}))
+
+
+@app.command("replay-evidence")
+def replay_evidence_cli(
+    bundle_path: Annotated[Path, typer.Option("--bundle")],
+    ledger_path: Annotated[Path, typer.Option("--ledger")],
+    summary_path: Annotated[Path, typer.Option("--summary")],
+) -> None:
+    """Replay aggregate metrics and every paired bootstrap from a compact bundle."""
+    try:
+        bundle = json.loads(bundle_path.read_bytes())
+        replayed = replay_compact_bundle(
+            bundle,
+            ledger_bytes=ledger_path.read_bytes(),
+            summary_bytes=summary_path.read_bytes(),
+        )
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(
+        json.dumps(
+            {
+                "cohort": replayed["cohort"],
+                "user_count": replayed["user_count"],
+                "fingerprint": replayed["fingerprint"],
+            },
+            sort_keys=True,
+        )
+    )
 
 
 @app.command("evaluate-ranker")

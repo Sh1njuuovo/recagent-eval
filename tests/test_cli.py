@@ -1408,3 +1408,51 @@ def test_summarize_baselines_rejects_missing_and_corrupt_artifacts(tmp_path) -> 
     )
     assert result.exit_code != 0
     assert "invalid baseline artifact" in result.output
+
+
+def test_build_evidence_bundle_refuses_existing_output_before_inputs(tmp_path) -> None:
+    output = tmp_path / "bundle.json"
+    output.write_text("{}")
+    result = CliRunner().invoke(
+        app,
+        [
+            "build-evidence-bundle",
+            "--cohort",
+            "confirmation_b",
+            "--ledger",
+            str(tmp_path / "missing-ledger.json"),
+            "--artifact-dir",
+            str(tmp_path / "missing-artifacts"),
+            "--summary",
+            str(tmp_path / "missing-summary.json"),
+            "--recovery",
+            str(tmp_path / "missing-recovery.json"),
+            "--output",
+            str(output),
+        ],
+    )
+    assert result.exit_code != 0
+    assert "refusing to overwrite" in result.output
+
+
+def test_replay_evidence_rejects_invalid_bundle(tmp_path) -> None:
+    bundle = tmp_path / "bundle.json"
+    ledger = tmp_path / "ledger.json"
+    summary = tmp_path / "summary.json"
+    bundle.write_text("{}")
+    ledger.write_text("{}")
+    summary.write_text("{}")
+    result = CliRunner().invoke(
+        app,
+        [
+            "replay-evidence",
+            "--bundle",
+            str(bundle),
+            "--ledger",
+            str(ledger),
+            "--summary",
+            str(summary),
+        ],
+    )
+    assert result.exit_code != 0
+    assert "unknown bundle schema" in result.output
