@@ -513,6 +513,8 @@ class PreflightReceipt(BaseModel):
     validation_user_count: int = Field(gt=0)
     ordered_user_digest: str
     verified_member_sha256: dict[str, str]
+    verified_member_size_bytes: dict[str, int]
+    package_unchanged: Literal[True]
     label_free: Literal[True]
     fingerprint: str
 
@@ -526,6 +528,16 @@ class PreflightReceipt(BaseModel):
 
     @model_validator(mode="after")
     def validate_fingerprint(self) -> PreflightReceipt:
+        if set(self.verified_member_sha256) != set(PACKAGE_MEMBER_NAMES) or any(
+            not _SHA256_PATTERN.fullmatch(value)
+            for value in self.verified_member_sha256.values()
+        ):
+            raise ValueError("preflight member SHA verification is incomplete")
+        if set(self.verified_member_size_bytes) != set(PACKAGE_MEMBER_NAMES) or any(
+            not isinstance(value, int) or value <= 0
+            for value in self.verified_member_size_bytes.values()
+        ):
+            raise ValueError("preflight member size verification is incomplete")
         if self.fingerprint != canonical_payload_sha256(self):
             raise ValueError("preflight receipt fingerprint mismatch")
         return self
@@ -684,6 +696,10 @@ def preflight_promotion(
             {"ordered_user_ids": list(replay.ordered_user_ids)}
         ),
         "verified_member_sha256": verified_hashes,
+        "verified_member_size_bytes": {
+            name: package_snapshot[name][1] for name in PACKAGE_MEMBER_NAMES
+        },
+        "package_unchanged": True,
         "label_free": True,
     }
     receipt_payload["fingerprint"] = canonical_payload_sha256(receipt_payload)

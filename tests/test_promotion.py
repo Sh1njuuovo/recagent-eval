@@ -563,6 +563,10 @@ def test_label_free_preflight_verifies_dataset_full_replay_and_all_members(
     assert observed == ["git", "dataset", "replay"]
     assert receipt.label_free is True
     assert receipt.validation_user_count == 2
+    assert receipt.package_unchanged is True
+    assert receipt.verified_member_size_bytes == {
+        name: manifest.members[name].size_bytes for name in PACKAGE_MEMBER_NAMES
+    }
     assert not real_case.exists()
 
 
