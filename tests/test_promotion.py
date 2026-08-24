@@ -13,14 +13,17 @@ from recagent_eval.promotion import (
     FileIdentity,
     PromotionManifest,
     PromotionYaml,
+    ReplayVerification,
     SemanticCacheIdentity,
     SourceInventory,
     canonical_payload_sha256,
     derive_execution_paths,
     load_source_inventory,
+    preflight_promotion,
     publish_promotion_package,
     validate_relative_path,
     validate_semantic_source,
+    verify_git_identity,
     verify_source_files,
 )
 
@@ -299,3 +302,199 @@ def test_atomic_package_publication_rejects_unsafe_sources_and_rename_failure(
     with pytest.raises(OSError, match="rename failure"):
         publish_promotion_package(tmp_path, inventory, sources)
     assert not (tmp_path / "artifacts/promotion/current-v2b").exists()
+
+
+def _published_synthetic_promotion(tmp_path: Path):
+    sources = {}
+    for name in PACKAGE_MEMBER_NAMES:
+        path = tmp_path / "sources" / name.replace("/", "-")
+        path.parent.mkdir(exist_ok=True)
+        path.write_bytes(name.encode())
+        sources[name] = path
+    semantic, semantic_manifest = _semantic_fixture()
+    sources["semantic.npz.json"].write_text(json.dumps(semantic_manifest))
+    inventory = _inventory_for_sources(sources).model_copy(update={"semantic": semantic})
+    inventory = inventory.model_copy(
+        update={"fingerprint": canonical_payload_sha256(inventory.model_dump())}
+    )
+    publish_promotion_package(tmp_path, inventory, sources)
+    manifest_payload = {
+        "schema_version": "frozen-promotion/v1",
+        "implementation_commit": "a" * 40,
+        "training_config_path": "configs/v2_dense_latent_bfeat.yaml",
+        "training_config_fingerprint": _sha("1"),
+        "dataset_fingerprint": _sha("2"),
+        "case_fingerprint": _sha("3"),
+        "candidate_policy_fingerprint": _sha("4"),
+        "model_checksum": _sha("5"),
+        "feature_version": "v2b",
+        "feature_fingerprint": _sha("6"),
+        "score_calibration": "raw",
+        "itemcf_top_k": 500,
+        "semantic_top_k": 1500,
+        "latent_top_k": 500,
+        "ordered_user_ids": [9, 3],
+        "members": {
+            name: identity.model_dump() for name, identity in inventory.members.items()
+        },
+        "semantic": semantic.model_dump(),
+    }
+    manifest = PromotionManifest.model_validate(manifest_payload)
+    reports = tmp_path / "reports/promotion"
+    reports.mkdir(parents=True)
+    manifest_path = reports / "current-v2b-manifest.json"
+    manifest_path.write_text(json.dumps(manifest_payload, sort_keys=True))
+    manifest_sha = canonical_payload_sha256(manifest_payload)
+    paths = derive_execution_paths(
+        manifest_sha256=manifest_sha,
+        case_fingerprint=manifest.case_fingerprint,
+        dataset_fingerprint=manifest.dataset_fingerprint,
+        model_checksum=manifest.model_checksum,
+    )
+    promotion_payload = {
+        "schema_version": "frozen-promotion-execution/v1",
+        "manifest_path": "reports/promotion/current-v2b-manifest.json",
+        "manifest_sha256": manifest_sha,
+        "execution": {"mode": "learned_frozen"},
+        "training_config_fingerprint": manifest.training_config_fingerprint,
+        "dataset_fingerprint": manifest.dataset_fingerprint,
+        "case_fingerprint": manifest.case_fingerprint,
+        "model_checksum": manifest.model_checksum,
+        "marker_path": paths.marker,
+        "output_path": paths.output,
+    }
+    promotion_path = reports / "current-v2b.yaml"
+    promotion_path.write_text(json.dumps(promotion_payload))
+    return manifest, promotion_path
+
+
+def test_label_free_preflight_verifies_dataset_full_replay_and_all_members(
+    tmp_path, monkeypatch
+) -> None:
+    manifest, promotion_path = _published_synthetic_promotion(tmp_path)
+    real_case = (tmp_path / "cases/fixed_cases.json").resolve()
+    observed: list[str] = []
+    original_path_open = Path.open
+
+    def guarded_open(path, *args, **kwargs):
+        if Path(path).resolve(strict=False) == real_case:
+            raise AssertionError("preflight opened real frozen cases")
+        return original_path_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", guarded_open)
+    monkeypatch.setattr(
+        "recagent_eval.cases.load_cases",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("preflight called load_cases")
+        ),
+    )
+    monkeypatch.setattr(
+        "recagent_eval.cli.load_cases",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("preflight called CLI load_cases")
+        ),
+    )
+
+    def dataset_check(_manifest, _members) -> str:
+        observed.append("dataset")
+        return manifest.dataset_fingerprint
+
+    def replay_check(active_manifest, member_paths):
+        observed.append("replay")
+        assert tuple(active_manifest.ordered_user_ids) == (9, 3)
+        assert set(member_paths) == set(PACKAGE_MEMBER_NAMES)
+        return ReplayVerification(
+            ordered_user_ids=(9, 3),
+            dataset_fingerprint=manifest.dataset_fingerprint,
+            model_checksum=manifest.model_checksum,
+            validation_rows_fingerprint=_sha("7"),
+            validated_components=(
+                "model",
+                "evidence",
+                "bundle",
+                "latent",
+                "semantic",
+            ),
+        )
+
+    receipt = preflight_promotion(
+        tmp_path,
+        promotion_path,
+        dataset_fingerprint_check=dataset_check,
+        validation_replay=replay_check,
+        git_identity_check=lambda _manifest: observed.append("git"),
+    )
+
+    assert observed == ["git", "dataset", "replay"]
+    assert receipt.label_free is True
+    assert receipt.validation_user_count == 2
+    assert not real_case.exists()
+
+
+def test_preflight_rejects_incomplete_replay_or_order_drift(tmp_path) -> None:
+    manifest, promotion_path = _published_synthetic_promotion(tmp_path)
+
+    def incomplete(_manifest, _members):
+        return ReplayVerification(
+            ordered_user_ids=(3, 9),
+            dataset_fingerprint=manifest.dataset_fingerprint,
+            model_checksum=manifest.model_checksum,
+            validation_rows_fingerprint=_sha("7"),
+            validated_components=("model", "evidence"),
+        )
+
+    with pytest.raises(ValueError, match="ordered users"):
+        preflight_promotion(
+            tmp_path,
+            promotion_path,
+            dataset_fingerprint_check=lambda _manifest, _members: (
+                manifest.dataset_fingerprint
+            ),
+            validation_replay=incomplete,
+            git_identity_check=lambda _manifest: None,
+        )
+
+    def incomplete_components(_manifest, _members):
+        return ReplayVerification(
+            ordered_user_ids=manifest.ordered_user_ids,
+            dataset_fingerprint=manifest.dataset_fingerprint,
+            model_checksum=manifest.model_checksum,
+            validation_rows_fingerprint=_sha("7"),
+            validated_components=("model", "evidence"),
+        )
+
+    with pytest.raises(ValueError, match="component verification"):
+        preflight_promotion(
+            tmp_path,
+            promotion_path,
+            dataset_fingerprint_check=lambda _manifest, _members: (
+                manifest.dataset_fingerprint
+            ),
+            validation_replay=incomplete_components,
+            git_identity_check=lambda _manifest: None,
+        )
+
+
+def test_git_identity_requires_implementation_ancestor_and_no_protected_drift(
+    tmp_path, monkeypatch
+) -> None:
+    manifest, _promotion_path = _published_synthetic_promotion(tmp_path)
+    responses = iter(
+        [
+            type("Result", (), {"returncode": 0, "stdout": ""})(),
+            type("Result", (), {"returncode": 0, "stdout": ""})(),
+        ]
+    )
+    monkeypatch.setattr(
+        "recagent_eval.promotion.subprocess.run", lambda *args, **kwargs: next(responses)
+    )
+    verify_git_identity(tmp_path, manifest)
+
+    responses = iter(
+        [
+            type("Result", (), {"returncode": 0, "stdout": ""})(),
+            type("Result", (), {"returncode": 0, "stdout": "src/x.py\n"})(),
+        ]
+    )
+    with pytest.raises(ValueError, match="protected"):
+        verify_git_identity(tmp_path, manifest)

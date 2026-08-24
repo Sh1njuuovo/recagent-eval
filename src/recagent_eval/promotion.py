@@ -6,11 +6,13 @@ import os
 import re
 import shutil
 import stat
+import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Literal
 
+import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from recagent_eval.safe_io import read_regular_file
@@ -141,7 +143,7 @@ def verify_source_files(
 
 
 def validate_semantic_source(
-    inventory: SourceInventory,
+    inventory: SourceInventory | PromotionManifest,
     manifest_path: os.PathLike[str],
 ) -> None:
     try:
@@ -393,3 +395,207 @@ class PromotionYaml(BaseModel):
             raise ValueError("promotion YAML derived marker path mismatch")
         if self.output_path != paths.output:
             raise ValueError("promotion YAML derived output path mismatch")
+
+
+class ReplayVerification(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    ordered_user_ids: tuple[int, ...]
+    dataset_fingerprint: str
+    model_checksum: str
+    validation_rows_fingerprint: str
+    validated_components: tuple[str, ...]
+
+    _dataset_sha = field_validator("dataset_fingerprint")(_validate_sha256)
+    _model_sha = field_validator("model_checksum")(_validate_sha256)
+    _rows_sha = field_validator("validation_rows_fingerprint")(_validate_sha256)
+
+
+class PreflightReceipt(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal["frozen-promotion-preflight/v1"]
+    manifest_sha256: str
+    dataset_fingerprint: str
+    model_checksum: str
+    validation_rows_fingerprint: str
+    validation_user_count: int = Field(gt=0)
+    ordered_user_digest: str
+    verified_member_sha256: dict[str, str]
+    label_free: Literal[True]
+    fingerprint: str
+
+    _manifest_sha = field_validator("manifest_sha256")(_validate_sha256)
+    _dataset_sha = field_validator("dataset_fingerprint")(_validate_sha256)
+    _model_sha = field_validator("model_checksum")(_validate_sha256)
+    _rows_sha = field_validator("validation_rows_fingerprint")(_validate_sha256)
+    _users_sha = field_validator("ordered_user_digest")(_validate_sha256)
+    _fingerprint_sha = field_validator("fingerprint")(_validate_sha256)
+
+    @model_validator(mode="after")
+    def validate_fingerprint(self) -> PreflightReceipt:
+        if self.fingerprint != canonical_payload_sha256(self):
+            raise ValueError("preflight receipt fingerprint mismatch")
+        return self
+
+
+def _regular_repo_file(repo_root: Path, relative: str, *, max_bytes: int) -> Path:
+    path = _repo_destination(repo_root, relative)
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError as exc:
+        raise ValueError(f"promotion file is missing: {relative}") from exc
+    if (
+        stat.S_ISLNK(metadata.st_mode)
+        or not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_nlink != 1
+    ):
+        raise ValueError(f"promotion file is unsafe: {relative}")
+    if metadata.st_size > max_bytes:
+        raise ValueError(f"promotion file is too large: {relative}")
+    return path
+
+
+def _file_sha_size(path: Path) -> tuple[str, int]:
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    digest = hashlib.sha256()
+    size = 0
+    with os.fdopen(descriptor, "rb") as stream:
+        while chunk := stream.read(1024 * 1024):
+            size += len(chunk)
+            digest.update(chunk)
+    return digest.hexdigest(), size
+
+
+def preflight_promotion(
+    repo_root: Path,
+    promotion_yaml_path: Path,
+    *,
+    dataset_fingerprint_check,
+    validation_replay,
+    git_identity_check,
+) -> PreflightReceipt:
+    root = repo_root.resolve(strict=True)
+    promotion_resolved = promotion_yaml_path.resolve(strict=True)
+    if not promotion_resolved.is_relative_to(root / "reports/promotion"):
+        raise ValueError("promotion YAML must be under reports/promotion")
+    relative_promotion = promotion_resolved.relative_to(root).as_posix()
+    promotion_file = _regular_repo_file(
+        root, relative_promotion, max_bytes=1024 * 1024
+    )
+    try:
+        promotion_payload = yaml.safe_load(
+            read_regular_file(promotion_file, max_bytes=1024 * 1024)
+        )
+        promotion = PromotionYaml.model_validate(promotion_payload)
+    except (OSError, TypeError, ValueError) as exc:
+        raise ValueError(f"invalid promotion YAML: {exc}") from exc
+    manifest_file = _regular_repo_file(
+        root, promotion.manifest_path, max_bytes=4 * 1024 * 1024
+    )
+    try:
+        manifest_payload = json.loads(
+            read_regular_file(manifest_file, max_bytes=4 * 1024 * 1024)
+        )
+        manifest = PromotionManifest.model_validate(manifest_payload)
+    except (OSError, TypeError, ValueError) as exc:
+        raise ValueError(f"invalid promotion manifest: {exc}") from exc
+    if canonical_payload_sha256(manifest_payload) != promotion.manifest_sha256:
+        raise ValueError("promotion manifest canonical SHA mismatch")
+    promotion.cross_check(manifest)
+    member_paths: dict[str, Path] = {}
+    verified_hashes: dict[str, str] = {}
+    for name in PACKAGE_MEMBER_NAMES:
+        identity = manifest.members[name]
+        member_path = _regular_repo_file(
+            root, identity.path, max_bytes=512 * 1024 * 1024
+        )
+        actual_sha, actual_size = _file_sha_size(member_path)
+        if actual_sha != identity.sha256 or actual_size != identity.size_bytes:
+            raise ValueError(f"promotion member {name} identity mismatch")
+        member_paths[name] = member_path
+        verified_hashes[name] = actual_sha
+    validate_semantic_source(manifest, member_paths["semantic.npz.json"])
+    git_identity_check(manifest)
+    dataset_fingerprint = dataset_fingerprint_check(manifest, member_paths)
+    if dataset_fingerprint != manifest.dataset_fingerprint:
+        raise ValueError("complete dataset fingerprint mismatch")
+    replay = ReplayVerification.model_validate(
+        validation_replay(manifest, member_paths)
+    )
+    if replay.ordered_user_ids != manifest.ordered_user_ids:
+        raise ValueError("validation replay ordered users mismatch")
+    if replay.dataset_fingerprint != manifest.dataset_fingerprint:
+        raise ValueError("validation replay dataset fingerprint mismatch")
+    if replay.model_checksum != manifest.model_checksum:
+        raise ValueError("validation replay model checksum mismatch")
+    required_components = {"model", "evidence", "bundle", "latent", "semantic"}
+    if set(replay.validated_components) != required_components:
+        raise ValueError("validation replay component verification is incomplete")
+    paths = derive_execution_paths(
+        manifest_sha256=promotion.manifest_sha256,
+        case_fingerprint=manifest.case_fingerprint,
+        dataset_fingerprint=manifest.dataset_fingerprint,
+        model_checksum=manifest.model_checksum,
+    )
+    for label, relative in {"marker": paths.marker, "output": paths.output}.items():
+        destination = _repo_destination(root, relative)
+        if os.path.lexists(destination):
+            raise ValueError(f"real frozen {label} already exists")
+    receipt_payload = {
+        "schema_version": "frozen-promotion-preflight/v1",
+        "manifest_sha256": promotion.manifest_sha256,
+        "dataset_fingerprint": manifest.dataset_fingerprint,
+        "model_checksum": manifest.model_checksum,
+        "validation_rows_fingerprint": replay.validation_rows_fingerprint,
+        "validation_user_count": len(replay.ordered_user_ids),
+        "ordered_user_digest": canonical_payload_sha256(
+            {"ordered_user_ids": list(replay.ordered_user_ids)}
+        ),
+        "verified_member_sha256": verified_hashes,
+        "label_free": True,
+    }
+    receipt_payload["fingerprint"] = canonical_payload_sha256(receipt_payload)
+    return PreflightReceipt.model_validate(receipt_payload)
+
+
+def verify_git_identity(repo_root: Path, manifest: PromotionManifest) -> None:
+    root = repo_root.resolve(strict=True)
+    ancestor = subprocess.run(
+        [
+            "git",
+            "merge-base",
+            "--is-ancestor",
+            manifest.implementation_commit,
+            "HEAD",
+        ],
+        cwd=root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if ancestor.returncode != 0:
+        raise ValueError("hardening implementation commit is not an ancestor of HEAD")
+    protected = subprocess.run(
+        [
+            "git",
+            "diff",
+            "--name-only",
+            f"{manifest.implementation_commit}..HEAD",
+            "--",
+            "src",
+            "configs",
+            "pyproject.toml",
+            "uv.lock",
+        ],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    changed = [line for line in protected.stdout.splitlines() if line.strip()]
+    if changed:
+        raise ValueError(
+            "protected production/config/dependency paths changed after implementation commit: "
+            + ", ".join(changed)
+        )

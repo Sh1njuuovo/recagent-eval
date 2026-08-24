@@ -72,6 +72,12 @@ from recagent_eval.learned_ranking import (
     parse_ranker_artifact,
 )
 from recagent_eval.models import PreferenceState
+from recagent_eval.promotion import (
+    PromotionManifest,
+    ReplayVerification,
+    preflight_promotion,
+    verify_git_identity,
+)
 from recagent_eval.provider import RuleBasedProvider, build_provider
 from recagent_eval.ranker_diagnostics import (
     aggregate_diagnostics,
@@ -112,6 +118,14 @@ from recagent_eval.v2_selection import (
 )
 
 app = typer.Typer(no_args_is_help=True, help="Evaluate a conversational movie recommender.")
+
+
+def _canonical_validation_contract(rows: list[dict[str, object]]) -> str:
+    stable_rows = [
+        {key: value for key, value in row.items() if key != "latency_ms"}
+        for row in rows
+    ]
+    return json.dumps(stable_rows, sort_keys=True, separators=(",", ":"))
 
 
 @app.command("download-data")
@@ -1283,6 +1297,170 @@ def evaluate_ranker(
     typer.echo(f"Frozen ranker test metrics written to {output}")
 
 
+@app.command("preflight-frozen-promotion")
+def preflight_frozen_promotion(
+    promotion_path: Annotated[
+        Path, typer.Option("--promotion", help="Promotion execution YAML")
+    ] = Path("reports/promotion/current-v2b.yaml"),
+    data_dir: Annotated[Path, typer.Option()] = Path("data/raw/ml-1m"),
+) -> None:
+    repo_root = Path.cwd().resolve()
+    resolved_promotion = (
+        promotion_path
+        if promotion_path.is_absolute()
+        else repo_root / promotion_path
+    )
+    context: dict[str, object] = {}
+
+    def dataset_check(
+        manifest: PromotionManifest, _member_paths: dict[str, Path]
+    ) -> str:
+        config = load_experiment_config(repo_root / manifest.training_config_path)
+        if lambdamart_config_fingerprint(config) != manifest.training_config_fingerprint:
+            raise ValueError("promotion training config fingerprint mismatch")
+        if candidate_policy_fingerprint(config) != manifest.candidate_policy_fingerprint:
+            raise ValueError("promotion candidate-policy fingerprint mismatch")
+        contract = (
+            config.ranker_feature_version,
+            config.score_calibration,
+            config.retrieval_top_k,
+            config.semantic_top_k,
+            config.latent_top_k,
+        )
+        expected = (
+            manifest.feature_version,
+            manifest.score_calibration,
+            manifest.itemcf_top_k,
+            manifest.semantic_top_k,
+            manifest.latent_top_k,
+        )
+        if contract != expected:
+            raise ValueError("promotion training/candidate/feature contract mismatch")
+        movies, ratings = _load_dataset(data_dir)
+        split = leakage_safe_ranking_split(ratings)
+        fingerprint = ranking_dataset_fingerprint(movies, split)
+        context.update(config=config, movies=movies, split=split)
+        return fingerprint
+
+    def validation_replay(
+        manifest: PromotionManifest, member_paths: dict[str, Path]
+    ) -> ReplayVerification:
+        config = context["config"]
+        movies = context["movies"]
+        split = context["split"]
+        bundle = load_ranker_bundle(
+            member_paths["model.json"],
+            member_paths["validation.json"],
+            member_paths["bundle.json"],
+            expected_metadata={
+                "config_fingerprint": manifest.training_config_fingerprint,
+                "dataset_fingerprint": manifest.dataset_fingerprint,
+                "candidate_policy_fingerprint": manifest.candidate_policy_fingerprint,
+                "feature_fingerprint": manifest.feature_fingerprint,
+            },
+            latent_path=member_paths["latent.npz"],
+            latent_manifest_path=member_paths["latent.npz.json"],
+        )
+        artifact = parse_ranker_artifact(
+            bundle.model_bytes,
+            expected_dataset_fingerprint=manifest.dataset_fingerprint,
+            expected_feature_fingerprint=manifest.feature_fingerprint,
+            expected_candidate_policy_fingerprint=manifest.candidate_policy_fingerprint,
+            expected_config_fingerprint=manifest.training_config_fingerprint,
+            expected_case_fingerprint=manifest.case_fingerprint,
+            expected_latent_artifact_checksum=manifest.members["latent.npz"].sha256,
+        )
+        if (
+            artifact.feature_fingerprint != manifest.feature_fingerprint
+            or artifact.model_checksum != manifest.model_checksum
+        ):
+            raise ValueError("promotion model feature/checksum identity mismatch")
+        evidence = LearnedValidationEvidence.model_validate_json(bundle.evidence_bytes)
+        ordered = tuple(int(row["user_id"]) for row in evidence.per_user_rows)
+        if ordered != manifest.ordered_user_ids:
+            raise ValueError("promotion evidence ordered users mismatch")
+        semantic = DenseSemanticRetriever.load(
+            member_paths["semantic.npz"],
+            movies=movies,
+            model_name=manifest.semantic.model_name,
+            model_revision=manifest.semantic.immutable_revision,
+            device="cpu",
+        )
+        latent = LatentFactorRetriever.load(
+            member_paths["latent.npz"],
+            expected_training_fingerprint=str(
+                (artifact.latent_provenance or {})["training_fingerprint"]
+            ),
+        )
+        ranker = LearnedRanker(
+            estimator_from_artifact(artifact),
+            legal_train_rows=split.legal_retrieval_train,
+            score_calibration=manifest.score_calibration,
+            feature_version=manifest.feature_version,
+        )
+        replay_rows = build_validation_rows(
+            movies,
+            split,
+            semantic,
+            config,
+            ranker,
+            max_users=len(ordered),
+            latent=latent,
+            ordered_user_ids=ordered,
+        )
+        if _canonical_validation_contract(replay_rows) != _canonical_validation_contract(
+            evidence.per_user_rows
+        ):
+            raise ValueError("complete Confirmation-B validation replay mismatch")
+        recorded_rows_fingerprint = hashlib.sha256(
+            json.dumps(
+                evidence.per_user_rows, sort_keys=True, separators=(",", ":")
+            ).encode()
+        ).hexdigest()
+        if recorded_rows_fingerprint != artifact.validation_rows_fingerprint:
+            raise ValueError("recorded validation evidence fingerprint mismatch")
+        validate_learned_gate(
+            evidence,
+            dataset_fingerprint=manifest.dataset_fingerprint,
+            feature_fingerprint=manifest.feature_fingerprint,
+            model_fingerprint=manifest.model_checksum,
+            candidate_policy_fingerprint=manifest.candidate_policy_fingerprint,
+            case_fingerprint=manifest.case_fingerprint,
+            config_fingerprint=manifest.training_config_fingerprint,
+            artifact_provenance=artifact.model_dump(mode="python"),
+        )
+        stable_fingerprint = hashlib.sha256(
+            _canonical_validation_contract(replay_rows).encode()
+        ).hexdigest()
+        return ReplayVerification(
+            ordered_user_ids=ordered,
+            dataset_fingerprint=manifest.dataset_fingerprint,
+            model_checksum=artifact.model_checksum,
+            validation_rows_fingerprint=stable_fingerprint,
+            validated_components=(
+                "model",
+                "evidence",
+                "bundle",
+                "latent",
+                "semantic",
+            ),
+        )
+
+    try:
+        receipt = preflight_promotion(
+            repo_root,
+            resolved_promotion,
+            dataset_fingerprint_check=dataset_check,
+            validation_replay=validation_replay,
+            git_identity_check=lambda manifest: verify_git_identity(
+                repo_root, manifest
+            ),
+        )
+    except (OSError, TypeError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(receipt.model_dump_json(indent=2))
+
+
 def _evaluate_learned_ranker(
     *,
     config: ExperimentConfig,
@@ -1436,16 +1614,16 @@ def _evaluate_learned_ranker(
         max_users=artifact.validation_user_count,
         ordered_user_ids=ordered_user_ids,
     )
-    canonical_replay = json.dumps(
-        replay_rows, sort_keys=True, separators=(",", ":")
-    )
-    canonical_evidence = json.dumps(
-        evidence.per_user_rows, sort_keys=True, separators=(",", ":")
-    )
-    replay_fingerprint = hashlib.sha256(canonical_replay.encode()).hexdigest()
+    canonical_replay = _canonical_validation_contract(replay_rows)
+    canonical_evidence = _canonical_validation_contract(evidence.per_user_rows)
+    recorded_evidence_fingerprint = hashlib.sha256(
+        json.dumps(
+            evidence.per_user_rows, sort_keys=True, separators=(",", ":")
+        ).encode()
+    ).hexdigest()
     if (
         canonical_replay != canonical_evidence
-        or replay_fingerprint != artifact.validation_rows_fingerprint
+        or recorded_evidence_fingerprint != artifact.validation_rows_fingerprint
     ):
         raise typer.BadParameter(
             "LambdaMART validation replay does not match recorded per-user evidence"
