@@ -9,9 +9,11 @@ import yaml
 from rich.console import Console
 from typer.testing import CliRunner
 
+from recagent_eval.baseline_eval import MetricRow
 from recagent_eval.cases import EvaluationCase
 from recagent_eval.cli import app
 from recagent_eval.data import Movie, Rating
+from recagent_eval.evidence import canonical_digest
 from recagent_eval.models import PreferenceState
 from recagent_eval.v2_selection import (
     consume_frozen_authorization,
@@ -1374,6 +1376,112 @@ def test_evaluate_baselines_rejects_nondefault_seed_without_locked_params(tmp_pa
     )
     assert result.exit_code != 0
     assert "locked-params" in result.output
+
+
+def test_evaluate_baselines_writes_strict_v2_with_locked_recovery(
+    tmp_path, monkeypatch
+) -> None:
+    ledger = tmp_path / "ledger.json"
+    ledger.write_text(
+        json.dumps({"fingerprint": "l" * 64, "cohorts": {"confirmation_b": [7]}})
+    )
+    recovery_binding = {
+        "status": "recovered_after_run",
+        "command": "recover",
+        "source_artifact_sha256": "s" * 64,
+        "input_fingerprint": "i" * 64,
+        "output_fingerprint": "o" * 64,
+        "commit_sha": "c" * 40,
+    }
+    manifest = {
+        "schema_version": "baseline-parameter-recovery/v1",
+        "cohorts": {
+            "confirmation_b": {
+                "bpr_mf": {
+                    "selection_fingerprint": "f" * 64,
+                    "selected_params": {
+                        "source": "recovered",
+                        "value": {"rank": 16},
+                        "recovery": recovery_binding,
+                    },
+                    "parameter_grid": {
+                        "source": "recovered",
+                        "value": [{"rank": 16}],
+                        "recovery": recovery_binding,
+                    },
+                }
+            }
+        },
+    }
+    manifest["fingerprint"] = canonical_digest(manifest)
+    locked = tmp_path / "recovery.json"
+    locked.write_text(json.dumps(manifest))
+    movies = {1: Movie(1, "Movie", ("Drama",), 2000)}
+    monkeypatch.setattr("recagent_eval.cli._load_dataset", lambda _path: (movies, []))
+    monkeypatch.setattr(
+        "recagent_eval.cli.leakage_safe_ranking_split", lambda _ratings: object()
+    )
+    seen = {}
+
+    def fake_scorer(_movies, _split, users, **kwargs):
+        seen.update(kwargs)
+        assert users == [7]
+        return {
+            "rows": [MetricRow(7, 1.0, 1.0, 1.0, 1.0, True, 1.0, (1,))],
+            "config_fingerprint": "f" * 64,
+            "dataset_fingerprint": "d" * 64,
+            "model_fingerprint": "m" * 64,
+            "selected_params": {"rank": 16},
+            "parameter_grid": [{"rank": 16}],
+            "seed": 7,
+            "training_seconds": 1.0,
+            "resource_usage": {
+                "metric_name": "process_peak_rss_mib",
+                "source": "resource.getrusage(resource.RUSAGE_SELF).ru_maxrss",
+                "raw_value": 1024,
+                "raw_unit": "bytes",
+                "normalized_mib": 1.0,
+                "platform": "Darwin",
+                "measurement_scope": "single_process_lifetime_peak",
+                "process_id": 1,
+            },
+            "model_size_bytes": 10,
+            "environment": {"python": "test", "numpy": "test"},
+        }
+
+    monkeypatch.setitem(
+        __import__("recagent_eval.cli", fromlist=["BASELINE_SCORERS"]).BASELINE_SCORERS,
+        "bpr_mf",
+        fake_scorer,
+    )
+    output = tmp_path / "result.json"
+    result = CliRunner().invoke(
+        app,
+        [
+            "evaluate-baselines",
+            "--ledger",
+            str(ledger),
+            "--cohort",
+            "confirmation_b",
+            "--method",
+            "bpr_mf",
+            "--data-dir",
+            str(tmp_path),
+            "--output",
+            str(output),
+            "--locked-params",
+            str(locked),
+            "--seed",
+            "7",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    artifact = json.loads(output.read_text())
+    assert artifact["schema_version"] == "baseline-evaluation/v2"
+    assert artifact["seed"] == {"source": "observed", "value": 7}
+    assert artifact["selected_params"]["source"] == "recovered"
+    assert seen["selected_params"] == {"rank": 16}
+    assert seen["seed"] == 7
 
 
 def test_summarize_baselines_rejects_bad_cohort_and_existing_output(tmp_path) -> None:
