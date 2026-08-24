@@ -1,7 +1,7 @@
 # Frozen Promotion Hardening Design
 
 **Date:** 2026-08-24
-**Status:** approved design scope; implementation pending
+**Status:** approved for hardening implementation; frozen execution unauthorized
 **Authorization boundary:** this design and its implementation are authorized.
 Reading the real frozen cases, creating the real marker, and writing the real
 frozen output remain prohibited until the user separately replies
@@ -80,6 +80,8 @@ artifacts/promotion/current-v2b/
   bundle.json
   latent.npz
   latent.npz.json
+  semantic.npz
+  semantic.npz.json
 ```
 
 The manifest contains only repository-relative POSIX paths. No manifest or YAML
@@ -130,13 +132,23 @@ For every source, temporary member, and final member the builder:
 - records SHA-256 and byte size while copying; and
 - compares the copied digest/size with a second read before publication.
 
-Generated files follow the same exclusive-create, fsync, checksum, and
-regular-file rules. All mutation stays inside repository-controlled promotion
-directories. The implementation must not use a `/private/tmp` artifact as an
-execution input. If the exact Confirmation-B package must be rematerialized, it
-is deterministically generated inside the sibling build directory from the
-registered training users and the exact ordered Confirmation-B IDs, then
-checked against the recorded model/evidence identities.
+Generated report metadata follows the same exclusive-create, fsync, checksum,
+and regular-file rules. All mutation stays inside repository-controlled
+promotion directories. The implementation must not use a `/private/tmp`
+artifact as an execution input.
+
+The Confirmation-B artifact package itself is copy-only. Preparation may copy
+only the existing original model, validation evidence, compact bundle, latent
+NPZ/manifest, and semantic NPZ/manifest bytes. Every source and copied member
+must match a previously recorded SHA-256 and byte size before publication. A
+missing source or identity record stops preparation immediately.
+
+Preparation must not retrain a model, regenerate validation evidence, rebuild
+retriever arrays, or substitute newly produced bytes merely because a config,
+model, or cache fingerprint is equal. Recovery is accepted only when the
+recovered file is byte-for-byte identical to the pre-recorded SHA-256 and size.
+Any differing bytes require a new model/package identity and a new confirmation
+process before frozen promotion.
 
 ## 5. Manifest and promotion YAML identity
 
@@ -175,6 +187,9 @@ Schema `frozen-promotion/v1` binds at least:
 - ItemCF, dense, and latent top-k values;
 - candidate-policy and validation-gate fingerprints;
 - dependency versions and platform identity;
+- semantic-cache model name and immutable model revision, dataset fingerprint,
+  embedding dimension, dtype, normalization mode, and cache-manifest
+  fingerprint;
 - every package member's repository-relative path, SHA-256, and byte size;
 - repository-relative marker, output, command-log, and failure-log paths; and
 - the one permitted execution command in canonical argument order.
@@ -268,7 +283,16 @@ training fingerprint from artifact provenance. Missing, modified, symlinked,
 hardlinked, wrong-shape, non-finite, or checksum-drifted latent data fails
 before any real case content is read.
 
-### 8.3 Candidate and feature construction
+### 8.3 Persisted semantic cache
+
+Preflight verifies the package-local `semantic.npz` and `semantic.npz.json`
+against their recorded SHA-256, byte size, cache-manifest fingerprint, model
+name, immutable model revision, complete dataset fingerprint, embedding
+dimension, dtype, and normalization mode. Execution may load dense embeddings
+only from this package member. It must not discover, fall back to, or read a
+mutable semantic cache elsewhere in the repository or filesystem.
+
+### 8.4 Candidate and feature construction
 
 For each case the protected executor uses:
 
@@ -277,22 +301,45 @@ For each case the protected executor uses:
 - persisted latent fold-in top-500; and
 - the union of all three routes after the same hard filter/history exclusion.
 
-It passes `latent_scores` into `LearnedRanker.rank`. For v2b recent-ItemCF
-features it groups legal positive history by case user, intersects it with the
-state's liked items, orders by `(timestamp, movie_id)`, takes the last ten, and
-scores that recent set over the complete three-route union. Those
-`recent_itemcf_scores` are passed explicitly into candidate feature creation.
+It passes `latent_scores` into `LearnedRanker.rank`. Candidate retrieval and all
+features treat `case.state.liked_movie_ids` as the complete visible positive
+history. They may recover timestamps only for those explicitly listed movie
+IDs, and only from interactions before the frozen target boundary. Interactions
+for the same user that are absent from state must never enter retrieval,
+fold-in, recent-history selection, or feature computation. The hidden test
+target and all relevant IDs must never enter history or features.
+
+For v2b recent-ItemCF features, the executor orders only the state-exposed liked
+IDs by `(recovered_timestamp, movie_id)`, takes the last ten, and scores that
+recent set over the complete three-route union. A missing timestamp uses the
+pre-registered deterministic fallback `(minimum_allowed_timestamp, movie_id)`;
+the fallback value and ordering rule are bound by the candidate-policy
+fingerprint and manifest. Those `recent_itemcf_scores` are passed explicitly
+into candidate feature creation.
 
 Contract tests compare frozen-preparation candidates/features with the
 Confirmation-B validation builder on synthetic data. They lock route sizes,
 union membership, feature value order, feature names/fingerprint, calibration,
-and model checksum.
+and model checksum. A dedicated fixture includes extra dataset interactions for
+the case user that state does not expose and proves they cannot affect latent
+fold-in, candidates, recent history, or features.
 
 ## 9. Label-free preflight
 
-Preflight may read Git metadata, training config, promotion YAML/manifest,
-dataset metadata, model, validation evidence, bundle, semantic cache metadata,
-latent NPZ/manifest, and existing marker/output metadata. It must not:
+Preflight may read Git metadata, training config, promotion YAML/manifest, the
+complete non-frozen training dataset, model, validation evidence, bundle,
+semantic NPZ/manifest, latent NPZ/manifest, and existing marker/output metadata.
+It must:
+
+- recompute the complete dataset fingerprint from the registered dataset;
+- run the complete Confirmation-B validation replay in the evidence's exact
+  ordered-user sequence;
+- compare the replayed canonical rows, aggregate, model checksum, and validation
+  fingerprint with the package evidence; and
+- verify semantic, latent, model, validation evidence, and bundle identities
+  before any frozen-case read is possible.
+
+It must not:
 
 - call `load_cases`;
 - call `case_fingerprint` on case contents;
@@ -309,7 +356,8 @@ open path for the real case path and prove none is invoked.
 
 Preflight fails closed on any manifest/YAML disagreement, SHA/size drift,
 training or Git identity drift, ordered-user mismatch, model/feature/candidate
-policy drift, latent drift, existing marker, or existing output.
+policy drift, semantic or latent drift, incomplete validation replay, existing
+marker, or existing output.
 
 ## 10. Marker and output lifecycle
 
@@ -318,6 +366,12 @@ policy drift, latent drift, existing marker, or existing output.
 Schema `frozen-run-marker/v1` has states `started`, `completed`, and `failed`.
 Every state binds the manifest SHA, case fingerprint, model checksum, evidence
 SHA, marker identity, and start timestamp.
+
+The real marker path is deterministically derived from the promotion manifest
+SHA-256, registered case fingerprint, complete dataset fingerprint, and model
+checksum. YAML cannot choose it. YAML only repeats the expected derived path;
+preflight recomputes and compares it with both YAML and manifest. The output and
+log paths are derived under the same identity-scoped directory.
 
 Execution creates `started` with exclusive atomic creation and directory fsync
 immediately before the first case-content read. If any valid marker already
@@ -364,12 +418,16 @@ Absolute paths, empty components, `.`, `..`, path escape, symlink components,
 hardlinked files, and non-regular files are rejected. Real and synthetic roots
 may not be parents, children, aliases, or resolved equivalents of each other.
 
+A future user authorization must name the exact canonical promotion manifest
+SHA-256. Replacing or changing the manifest invalidates that authorization and
+requires a new explicit approval before any case-content read.
+
 ## 12. Synthetic one-shot rehearsal
 
 Synthetic rehearsal uses generated movies, ratings, model fixture, validation
-evidence, latent artifact, cases, manifest, YAML, marker, output, and logs under
-a dedicated synthetic root. No path is shared with the real promotion marker,
-output, cases, or artifact package.
+evidence, latent and semantic artifacts, cases, manifest, YAML, marker, output,
+and logs under a dedicated synthetic root. No path is shared with the real
+promotion marker, output, cases, or artifact package.
 
 The rehearsal/test matrix covers:
 
@@ -380,11 +438,17 @@ The rehearsal/test matrix covers:
    completion, leaving `output + started`, with retry rejected and read-only SHA
    audit available;
 5. missing and byte-modified latent artifacts rejected before case reads;
-6. Confirmation-B ordered-user permutation rejected;
-7. v2b feature schema/name/order/fingerprint drift rejected;
-8. ItemCF/dense/latent top-k drift rejected;
-9. model checksum or bundle-member drift rejected; and
-10. label-free preflight proving zero real-case content access.
+6. missing and byte-modified semantic artifacts, model revision drift, or
+   cache-manifest drift rejected before case reads;
+7. Confirmation-B ordered-user permutation rejected;
+8. an extra dataset interaction absent from state has no candidate or feature
+   effect, while target/relevant IDs remain hidden;
+9. v2b feature schema/name/order/fingerprint drift rejected;
+10. ItemCF/dense/latent top-k drift rejected;
+11. model checksum or bundle-member drift rejected;
+12. arbitrary marker-path drift rejected in favor of the derived path; and
+13. label-free preflight proving complete dataset/replay verification and zero
+    real-case content access.
 
 Unit tests separately prove all three marker states permanently block a new
 run and malformed markers fail closed.
