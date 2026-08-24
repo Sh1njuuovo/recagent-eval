@@ -1350,3 +1350,61 @@ def test_evaluate_baselines_rejects_bad_cohort_and_unknown_method(tmp_path) -> N
     )
     assert result.exit_code != 0
     assert "unknown baseline method" in result.output
+
+
+def test_summarize_baselines_rejects_bad_cohort_and_existing_output(tmp_path) -> None:
+    output = tmp_path / "summary.json"
+    result = CliRunner().invoke(
+        app,
+        ["summarize-baselines", "--cohort", "bogus", "--output", str(output)],
+    )
+    assert result.exit_code != 0
+    assert "cohort must be" in result.output
+
+    output.write_text("{}")
+    result = CliRunner().invoke(
+        app,
+        [
+            "summarize-baselines",
+            "--cohort",
+            "confirmation_a",
+            "--output",
+            str(output),
+        ],
+    )
+    assert result.exit_code != 0
+    assert "refusing to overwrite" in result.output
+
+
+def test_summarize_baselines_rejects_missing_and_corrupt_artifacts(tmp_path) -> None:
+    output = tmp_path / "summary.json"
+    result = CliRunner().invoke(
+        app,
+        [
+            "summarize-baselines",
+            "--cohort",
+            "confirmation_a",
+            "--artifact-dir",
+            str(tmp_path),
+            "--output",
+            str(output),
+        ],
+    )
+    assert result.exit_code != 0
+    assert "missing baseline artifact" in result.output
+
+    (tmp_path / "popularity-confirmation-a.json").write_text("not-json")
+    result = CliRunner().invoke(
+        app,
+        [
+            "summarize-baselines",
+            "--cohort",
+            "confirmation_a",
+            "--artifact-dir",
+            str(tmp_path),
+            "--output",
+            str(output),
+        ],
+    )
+    assert result.exit_code != 0
+    assert "invalid baseline artifact" in result.output

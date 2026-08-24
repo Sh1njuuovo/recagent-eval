@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import math
 
+import pytest
+
+import recagent_eval.baseline_eval as module
 from recagent_eval.baseline_eval import (
     MetricRow,
     metric_json,
@@ -56,6 +59,36 @@ def test_paired_bootstrap_is_deterministic_and_reports_ci() -> None:
     assert abs(a["mean_delta"] - (-0.25)) < 1e-9
 
 
+@pytest.mark.parametrize(
+    ("baseline", "candidate", "message"),
+    [
+        ([], [], "equal non-empty"),
+        ([0.0], [0.0, 1.0], "equal non-empty"),
+        ([float("nan")], [0.0], "finite"),
+        ([0.0], [float("inf")], "finite"),
+    ],
+)
+def test_paired_bootstrap_rejects_invalid_values(
+    baseline: list[float], candidate: list[float], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        paired_bootstrap_deltas(baseline, candidate, seed=42)
+
+
+def test_register_baseline_rejects_duplicate_name() -> None:
+    name = "test-only-duplicate"
+
+    def scorer() -> None:
+        return None
+
+    try:
+        assert module.register_baseline(name)(scorer) is scorer
+        with pytest.raises(ValueError, match="already registered"):
+            module.register_baseline(name)(scorer)
+    finally:
+        module.BASELINE_SCORERS.pop(name, None)
+
+
 def test_metric_json_reports_aggregates_and_coverage() -> None:
     rows = [
         MetricRow(
@@ -98,3 +131,30 @@ def test_metric_json_reports_aggregates_and_coverage() -> None:
     assert agg["coverage"] == 0.3  # {1,2,3} / 10
     assert agg["latency_ms_p95"] == 4.0
     assert artifact["fingerprint"]
+
+
+def test_metric_json_handles_empty_rows_and_universe() -> None:
+    artifact = metric_json(
+        [],
+        method="popularity",
+        cohort="development",
+        universe_size=0,
+        config_fingerprint="config",
+        dataset_fingerprint="dataset",
+        model_fingerprint="model",
+        training_seconds=0.0,
+        peak_memory_mb=0.0,
+        model_size_bytes=0,
+        environment={},
+    )
+    assert artifact["user_count"] == 0
+    assert artifact["aggregates"] == {
+        "recall_at_10": 0.0,
+        "ndcg_at_10": 0.0,
+        "mrr_at_10": 0.0,
+        "candidate_recall": 0.0,
+        "constraint_satisfaction_rate": 0.0,
+        "coverage": 0.0,
+        "latency_ms_p50": 0.0,
+        "latency_ms_p95": 0.0,
+    }
