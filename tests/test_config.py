@@ -18,7 +18,62 @@ def test_legacy_weights_keep_minmax_linear_behavior(tmp_path: Path) -> None:
     assert config.semantic_model_name == "sentence-transformers/all-MiniLM-L6-v2"
     assert config.semantic_model_revision is None
     assert config.semantic_cache_path is None
-    assert config.semantic_device == "cpu"
+
+
+def test_training_config_rejects_promotion_execution_section(tmp_path: Path) -> None:
+    path = tmp_path / "invalid.yaml"
+    path.write_text("name: invalid\nexecution:\n  mode: learned_frozen\n")
+    with pytest.raises(ValueError, match="execution"):
+        load_experiment_config(path)
+
+
+def test_semantic_top_k_parses_and_validates(tmp_path: Path) -> None:
+    path = tmp_path / "dense.yaml"
+    path.write_text(
+        "name: dense\n"
+        "semantic:\n"
+        "  kind: dense\n"
+        "  cache_path: artifacts/cache.npz\n"
+        "  top_k: 1500\n"
+    )
+    assert load_experiment_config(path).semantic_top_k == 1500
+
+    invalid = tmp_path / "invalid.yaml"
+    invalid.write_text(
+        "name: invalid\nsemantic:\n  kind: dense\n  top_k: 0\n"
+    )
+    with pytest.raises(ValueError, match="semantic.top_k must be positive"):
+        load_experiment_config(invalid)
+
+
+def test_semantic_top_k_defaults_to_none(tmp_path: Path) -> None:
+    path = tmp_path / "plain.yaml"
+    path.write_text("name: plain\n")
+    assert load_experiment_config(path).semantic_top_k is None
+
+
+def test_score_calibration_parses_and_validates(tmp_path: Path) -> None:
+    path = tmp_path / "calibrated.yaml"
+    path.write_text(
+        "name: calibrated\n"
+        "ranker:\n"
+        "  kind: minmax_linear\n"
+        "  score_calibration: percentile\n"
+    )
+    assert load_experiment_config(path).score_calibration == "percentile"
+
+    invalid = tmp_path / "invalid.yaml"
+    invalid.write_text(
+        "name: invalid\nranker:\n  score_calibration: bogus\n"
+    )
+    with pytest.raises(ValueError, match="score_calibration"):
+        load_experiment_config(invalid)
+
+
+def test_score_calibration_defaults_to_raw(tmp_path: Path) -> None:
+    path = tmp_path / "plain.yaml"
+    path.write_text("name: plain\n")
+    assert load_experiment_config(path).score_calibration == "raw"
 
 
 def test_dense_semantic_config_is_loaded(tmp_path: Path) -> None:
@@ -123,5 +178,85 @@ def test_invalid_nested_ranker_is_rejected(
     path = tmp_path / "bad.yaml"
     path.write_text("name: bad\n" + document)
 
+    with pytest.raises(ValueError, match=message):
+        load_experiment_config(path)
+
+
+_KNOWN_V1_POLICY = "a3c3475fec9b49b3e67923a73e97d10c2017031050abcbc8f1e468824b52eb41"
+_KNOWN_V1_CONFIG = "3c0abb8bc68e8e890194e3ba0ddac1941627f35b48c3277a39e3a8cb45ef6396"
+
+
+def test_latent_disabled_default_keeps_fingerprints() -> None:
+    from recagent_eval.lambdamart_pipeline import (
+        candidate_policy_fingerprint,
+        lambdamart_config_fingerprint,
+    )
+
+    config = load_experiment_config(Path("configs/v2_dense_recall1500.yaml"))
+    assert config.latent_enabled is False
+    assert config.ranker_feature_version == "v1"
+    assert candidate_policy_fingerprint(config) == _KNOWN_V1_POLICY
+    assert lambdamart_config_fingerprint(config) == _KNOWN_V1_CONFIG
+
+
+def test_latent_enabled_validates_artifact_path_and_params(tmp_path: Path) -> None:
+    path = tmp_path / "latent.yaml"
+    path.write_text(
+        "latent:\n"
+        "  enabled: true\n"
+        "  artifact_path: artifacts/experiments/run/latent.npz\n"
+        "ranker:\n"
+        "  negative_policy: route_balanced\n"
+        "  max_negatives: 200\n"
+        "  feature_version: v2\n"
+    )
+    config = load_experiment_config(path)
+    assert config.latent_enabled is True
+    assert config.latent_top_k == 500
+    assert config.ranker_negative_policy == "route_balanced"
+    assert config.ranker_max_negatives == 200
+    missing = tmp_path / "missing.yaml"
+    missing.write_text("latent:\n  enabled: true\n")
+    with pytest.raises(ValueError, match="artifact_path"):
+        load_experiment_config(missing)
+    bad = tmp_path / "bad.yaml"
+    bad.write_text(
+        "latent:\n"
+        "  enabled: true\n"
+        "  artifact_path: x.npz\n"
+        "  top_k: 0\n"
+    )
+    with pytest.raises(ValueError, match="top_k"):
+        load_experiment_config(bad)
+
+
+@pytest.mark.parametrize(
+    ("document", "message"),
+    [
+        ("latent:\n  enabled: true\n  artifact_path: x.npz\n  rank: 0\n", "rank"),
+        ("latent:\n  enabled: true\n  artifact_path: x.npz\n  alpha: 0\n", "alpha"),
+        (
+            "latent:\n  enabled: true\n  artifact_path: x.npz\n"
+            "ranker:\n  negative_policy: bogus\n",
+            "negative_policy",
+        ),
+        (
+            "latent:\n  enabled: true\n  artifact_path: x.npz\n"
+            "ranker:\n  feature_version: v9\n",
+            "feature_version",
+        ),
+        (
+            "latent:\n  enabled: true\n  artifact_path: x.npz\n"
+            "ranker:\n  max_negatives: -1\n",
+            "max_negatives",
+        ),
+        ("ranker:\n  feature_version: v2\n", "latent"),
+    ],
+)
+def test_invalid_latent_config_is_rejected(
+    tmp_path: Path, document: str, message: str
+) -> None:
+    path = tmp_path / "bad.yaml"
+    path.write_text("name: bad\n" + document)
     with pytest.raises(ValueError, match=message):
         load_experiment_config(path)

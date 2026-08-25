@@ -1,0 +1,144 @@
+{
+  "aggregates": {
+    "dense_candidate_recall": 0.612,
+    "itemcf_candidate_recall": 0.696,
+    "itemcf_hit_at_10": 0.064,
+    "itemcf_ndcg_at_10": 0.033388484023395205,
+    "itemcf_recall_at_10": 0.064,
+    "lambdamart_hit_at_10": 0.066,
+    "lambdamart_ndcg_at_10": 0.029910844106507944,
+    "lambdamart_recall_at_10": 0.066,
+    "latency_ms": 0.0,
+    "union_candidate_recall": 0.878
+  },
+  "bootstrap_resamples": 2000,
+  "candidate_policy": "semantic_top_k=1500",
+  "candidate_policy_fingerprint": "31af5d5ad03069ca03ec808df75acfc78bce08b0498bad1f771aadc3a72e16c6",
+  "case_fingerprint": "bc2f622cd9311bca8509a46f0ee516355bc64db7d91f809273a35d97ce304d88",
+  "config_fingerprint": "7b9373b48d3c30db8e3fbb5872daa70d03b53c5db789a0890d9b6a482fae44be",
+  "constraint_satisfaction_rate": 1.0,
+  "dataset_fingerprint": "0d2c756a78f02a8ea8680bd216364a6ab7afffc2ae1a26df0611591147897eac",
+  "dependency_versions": {
+    "lightgbm": "4.7.0",
+    "numpy": "2.5.1",
+    "scikit-learn": "1.9.0"
+  },
+  "evidence_fingerprint": "ed0e79d97f97278e6ab8848e00f67e3f042625fb06cab09e3d6890364d3cfc68",
+  "feature_fingerprint": "2a4a88223f5a18feb80f19fb991fab6eb71919ce69df719e0bea7e7b1a522f20",
+  "mean_itemcf_ndcg_at_10": 0.033388484023395205,
+  "mean_lambdamart_ndcg_at_10": 0.029910844106507944,
+  "mean_ndcg_delta": -0.003477639916887261,
+  "model_fingerprint": "3e12b62708d96b1c3edfe7ec05226ebe9376d2d0ca4f9101ee674072db5b1a24",
+  "ndcg_delta_ci_lower": -0.018954790508459704,
+  "ndcg_delta_ci_upper": 0.011085279161921101,
+  "recall_sweep_gate": {
+    "baseline": "baseline-top500",
+    "passed": true,
+    "reason": "selected top1500: dense recall 0.612 vs baseline 0.288, union recall 0.878 vs 0.776",
+    "winner": "top1500"
+  },
+  "recall_sweep_variants": [
+    {
+      "dense_recall": 0.288,
+      "fingerprint": "12d23baad8d4920db63cc58cd870a472ec470a98dbe0152e2cce98fc852c42e4",
+      "history_cap": 50,
+      "itemcf_recall": 0.696,
+      "name": "baseline-top500",
+      "query_style": "baseline",
+      "semantic_top_k": 500,
+      "union_recall": 0.776
+    },
+    {
+      "dense_recall": 0.178,
+      "fingerprint": "22ecee5dff7bab76aacf10b5ac4869a9df829ad16dd9c31e2174f2a8fc74d82a",
+      "history_cap": 50,
+      "itemcf_recall": 0.696,
+      "name": "top250",
+      "query_style": "baseline",
+      "semantic_top_k": 250,
+      "union_recall": 0.748
+    },
+    {
+      "dense_recall": 0.362,
+      "fingerprint": "a8d666af2b33910cdc078aea0f81794761d580e46f293cca5b604b998f69f796",
+      "history_cap": 50,
+      "itemcf_recall": 0.696,
+      "name": "top750",
+      "query_style": "baseline",
+      "semantic_top_k": 750,
+      "union_recall": 0.802
+    },
+    {
+      "dense_recall": 0.456,
+      "fingerprint": "63bddf88da248367979cb1993a19903333843565df353afa6141c78eaa43e04f",
+      "history_cap": 50,
+      "itemcf_recall": 0.696,
+      "name": "top1000",
+      "query_style": "baseline",
+      "semantic_top_k": 1000,
+      "union_recall": 0.838
+    },
+    {
+      "dense_recall": 0.612,
+      "fingerprint": "aca390b81406fbd17cd701bd8efb23deaea647c7a79c916ab5f1ca6956edcb4d",
+      "history_cap": 50,
+      "itemcf_recall": 0.696,
+      "name": "top1500",
+      "query_style": "baseline",
+      "semantic_top_k": 1500,
+      "union_recall": 0.878
+    },
+    {
+      "dense_recall": 0.27,
+      "fingerprint": "eae09285a0e435311bce5c5d607d6eb2aebd0710645fe5ed23608b2bf4bc88fb",
+      "history_cap": 20,
+      "itemcf_recall": 0.696,
+      "name": "history20",
+      "query_style": "baseline",
+      "semantic_top_k": 500,
+      "union_recall": 0.774
+    },
+    {
+      "dense_recall": 0.288,
+      "fingerprint": "f9379609a7e8e3f9b776c27097c3dd964d18188632efc0d0924f443afc784d46",
+      "history_cap": 100,
+      "itemcf_recall": 0.696,
+      "name": "history100",
+      "query_style": "baseline",
+      "semantic_top_k": 500,
+      "union_recall": 0.776
+    },
+    {
+      "dense_recall": 0.238,
+      "fingerprint": "0c09acd2391356681df23488a4835cac4d4e17d50a140b21d72a0827f42b23b8",
+      "history_cap": 50,
+      "itemcf_recall": 0.696,
+      "name": "titles-only",
+      "query_style": "titles-only",
+      "semantic_top_k": 500,
+      "union_recall": 0.754
+    },
+    {
+      "dense_recall": 0.272,
+      "fingerprint": "84033ce2bcc66d7fe97a3f8ea87f16fa625e1e7fc4221f79f61363e41f188211",
+      "history_cap": 50,
+      "itemcf_recall": 0.696,
+      "name": "titles-genres-year",
+      "query_style": "titles-genres-year",
+      "semantic_top_k": 500,
+      "union_recall": 0.774
+    }
+  ],
+  "schema_version": "lambdamart-validation/v1",
+  "seed": 42,
+  "selected_params": {
+    "learning_rate": 0.05,
+    "min_child_samples": 50,
+    "n_estimators": 100,
+    "num_leaves": 15
+  },
+  "status": "validation-complete",
+  "training_group_count": 447,
+  "training_user_count": 447,
+  "validation_user_count": 500
+}

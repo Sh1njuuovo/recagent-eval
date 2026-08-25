@@ -1,0 +1,75 @@
+{
+  "schema_version": "v2-final-promotion-evaluation/v1",
+  "evidence_roles": {
+    "primary_algorithm_evidence": "confirmation_b",
+    "generalization_supplement": "final_promotion_50_case",
+    "historical_same_case_suite": "deepseek_constraint_aware"
+  },
+  "confirmation_b": {
+    "users": 1000,
+    "summary_fingerprint": "9fb834c50b2b32448aa70f8b56c524de8e15540b24275f1f24224da94b7553fe",
+    "source_sha256": "cac731255e7d6fd4b69aeab4e8ce3787f06cfc080a116b255b4be65d49a672ed",
+    "current_v2b": {
+      "recall_at_10": 0.118,
+      "ndcg_at_10": 0.05547091922931336
+    },
+    "itemcf_direct": {
+      "recall_at_10": 0.064,
+      "ndcg_at_10": 0.03233508078614828
+    },
+    "als_direct": {
+      "recall_at_10": 0.069,
+      "ndcg_at_10": 0.03229755101423443
+    },
+    "current_v2b_minus_itemcf_ndcg_bootstrap_95ci": {
+      "mean_delta": 0.023135838443165073,
+      "lower": 0.011849201110002108,
+      "upper": 0.034606497514193216,
+      "resamples": 2000,
+      "seed": 42
+    },
+    "current_v2b_minus_als_ndcg_bootstrap_95ci": {
+      "mean_delta": 0.023173368215078927,
+      "lower": 0.011102256543284684,
+      "upper": 0.03463337778398847,
+      "resamples": 2000,
+      "seed": 42
+    }
+  },
+  "final_promotion_50_case": {
+    "description": "one-time final promotion evaluation after current_v2b identity lock",
+    "canonical_manifest_identity": "7739942cdb8d3c588c7dc6553c919f8166fc0aa55dc882dd3343bb1714d1a72b",
+    "case_fingerprint": "bc2f622cd9311bca8509a46f0ee516355bc64db7d91f809273a35d97ce304d88",
+    "cases": 50,
+    "recall_at_10": 0.08,
+    "ndcg_at_10": 0.0396409129542158,
+    "hit_rate_at_10": 0.08,
+    "top10_hits": 4,
+    "itemcf_candidate_recall": 0.78,
+    "semantic_candidate_recall": 0.6,
+    "latent_candidate_recall": 0.84,
+    "union_candidate_recall": 0.94,
+    "union_candidate_hits": 47,
+    "matched_itemcf_als_evaluated": false,
+    "baseline_significance_claim_allowed": false,
+    "metrics_sha256": "a48bd143e9ddbaee8cb0aa68881d7ee74921ef0b839cdfcc04afd02e7c752ab7",
+    "marker_sha256": "b808e927fc510501587407417e1b1eb9dc2cc5d55cc5495501d24d62bbf9144a",
+    "marker_state": "completed",
+    "run_count_for_identity": 1
+  },
+  "historical_deepseek": {
+    "provider": "deepseek-chat",
+    "source_sha256": "5d299a13da3627b5188e2e0febbbd244dfcf63ba6ede503a616a0c875518de8e",
+    "formal_case_fingerprint": "bc2f622cd9311bca8509a46f0ee516355bc64db7d91f809273a35d97ce304d88",
+    "same_case_suite_as_final_promotion": true,
+    "role": "historical agent-system experiment, not a current_v2b baseline comparison"
+  },
+  "interpretation": {
+    "primary_claim_source": "confirmation_b",
+    "ranking_depth_bottleneck_supported": true,
+    "small_sample_volatility": true,
+    "historically_unused_holdout_claim_allowed": false,
+    "no_further_tuning_on_case_suite": true,
+    "v3_requires_new_preregistered_unused_holdout": true
+  }
+}

@@ -4,6 +4,7 @@ import hashlib
 import json
 import math
 import os
+import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -55,6 +56,8 @@ def cross_validate_lambdamart(
         tuple[Sequence[CandidateQuery], Sequence[CandidateQuery]],
     ]
     | None = None,
+    max_negatives: int | None = None,
+    negative_policy: str = "all",
 ) -> CVSelection:
     """Select LambdaMART parameters with whole-user GroupKFold splits."""
     del seed  # GroupKFold itself is deterministic and intentionally unshuffled.
@@ -110,7 +113,11 @@ def cross_validate_lambdamart(
                 query.user_id for query in validation_queries
             }:
                 raise ValueError("fold query builder mixed training and validation users")
-            train_matrix = build_training_matrix(train_queries)
+            train_matrix = build_training_matrix(
+                train_queries,
+                max_negatives=max_negatives,
+                negative_policy=negative_policy,
+            )
             if not train_matrix.groups:
                 raise ValueError(f"fold {fold} has no trainable query groups")
             estimator = estimator_factory(params)
@@ -254,6 +261,8 @@ _LIST_ROW_FIELDS = {
     "lambdamart_ranked_movie_ids",
 }
 
+VALIDATION_SCHEMA_VERSION_V2 = "lambdamart-validation/v2"
+
 
 class LearnedValidationEvidence(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -290,6 +299,8 @@ class LearnedValidationEvidence(BaseModel):
     fold_map: dict[int, int]
     validation_rows_fingerprint: str
     validation_user_count: int
+    latent_artifact_checksum: str | None = None
+    latent_provenance: dict[str, Any] | None = None
 
 
 def build_validation_evidence(
@@ -318,6 +329,8 @@ def build_validation_evidence(
         "fold_map": {},
         "validation_rows_fingerprint": "unspecified",
         "validation_user_count": 0,
+        "latent_artifact_checksum": None,
+        "latent_provenance": None,
     }
     supplied_provenance = dict(provenance or {})
     provenance = {
@@ -328,6 +341,18 @@ def build_validation_evidence(
         provenance["report_fingerprint"] = supplied_provenance[
             "report_fingerprint"
         ]
+    latent_checksum = provenance.get("latent_artifact_checksum")
+    latent_provenance_value = provenance.get("latent_provenance")
+    is_v2 = (
+        supplied_provenance.get("schema_version") == VALIDATION_SCHEMA_VERSION_V2
+        or latent_checksum is not None
+        or latent_provenance_value is not None
+    )
+    fingerprint_provenance = {
+        key: value
+        for key, value in provenance.items()
+        if key != "report_fingerprint" and value is not None
+    }
     rows = [dict(row) for row in sorted(per_user_rows, key=lambda row: int(row["user_id"]))]
     if not rows:
         raise ValueError("validation evidence requires per-user rows")
@@ -385,13 +410,16 @@ def build_validation_evidence(
         "candidate_policy_fingerprint": candidate_policy_fingerprint,
         "seed": seed,
         "provenance": {
-            key: value for key, value in provenance.items() if key != "report_fingerprint"
+            **fingerprint_provenance
         },
     }
     fingerprint = hashlib.sha256(
         json.dumps(fingerprint_payload, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
     return LearnedValidationEvidence(
+        schema_version=(
+            VALIDATION_SCHEMA_VERSION_V2 if is_v2 else "lambdamart-validation/v1"
+        ),
         per_user_rows=rows,
         dataset_fingerprint=dataset_fingerprint,
         feature_fingerprint=feature_fingerprint,
@@ -432,6 +460,10 @@ def build_validation_evidence(
             provenance.get("validation_rows_fingerprint", "unspecified")
         ),
         validation_user_count=int(provenance.get("validation_user_count", 0)),
+        latent_artifact_checksum=latent_checksum,
+        latent_provenance=(
+            dict(latent_provenance_value) if latent_provenance_value is not None else None
+        ),
     )
 
 
@@ -446,8 +478,24 @@ def validate_learned_gate(
     config_fingerprint: str | None = None,
     artifact_provenance: Mapping[str, Any] | None = None,
 ) -> None:
-    if evidence.schema_version != "lambdamart-validation/v1":
+    if evidence.schema_version not in {
+        "lambdamart-validation/v1",
+        VALIDATION_SCHEMA_VERSION_V2,
+    }:
         raise ValueError("unsupported validation evidence schema")
+    is_v2 = evidence.schema_version == VALIDATION_SCHEMA_VERSION_V2
+    if is_v2:
+        if not re.fullmatch(r"[0-9a-f]{64}", evidence.latent_artifact_checksum or ""):
+            raise ValueError("validation evidence latent checksum is invalid")
+        if not evidence.latent_provenance or not evidence.latent_provenance.get(
+            "training_fingerprint"
+        ):
+            raise ValueError("validation evidence latent provenance is incomplete")
+    elif (
+        evidence.latent_artifact_checksum is not None
+        or evidence.latent_provenance is not None
+    ):
+        raise ValueError("validation evidence v1 cannot carry latent fields")
     try:
         derived = build_validation_evidence(
             evidence.per_user_rows,
@@ -473,6 +521,8 @@ def validate_learned_gate(
                 "fold_map": evidence.fold_map,
                 "validation_rows_fingerprint": evidence.validation_rows_fingerprint,
                 "validation_user_count": evidence.validation_user_count,
+                "latent_artifact_checksum": evidence.latent_artifact_checksum,
+                "latent_provenance": evidence.latent_provenance,
             },
         )
     except (KeyError, TypeError, ValueError) as exc:
@@ -488,6 +538,12 @@ def validate_learned_gate(
         "aggregates",
         "evidence_fingerprint",
     )
+    if is_v2:
+        derived_fields += (
+            "schema_version",
+            "latent_artifact_checksum",
+            "latent_provenance",
+        )
     if any(not _same(getattr(evidence, name), getattr(derived, name)) for name in derived_fields):
         raise ValueError("validation evidence aggregate fields are inconsistent with per-user rows")
     if evidence.cv_results:

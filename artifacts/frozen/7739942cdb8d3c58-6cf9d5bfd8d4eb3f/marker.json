@@ -1,0 +1,16 @@
+{
+  "canonical_manifest_identity": "7739942cdb8d3c588c7dc6553c919f8166fc0aa55dc882dd3343bb1714d1a72b",
+  "case_fingerprint": "bc2f622cd9311bca8509a46f0ee516355bc64db7d91f809273a35d97ce304d88",
+  "dataset_fingerprint": "0d2c756a78f02a8ea8680bd216364a6ab7afffc2ae1a26df0611591147897eac",
+  "error_digest": null,
+  "error_type": null,
+  "evidence_fingerprint": "7bacc65f7600117361b7fcc5ac524642054457bafe1b98b595ac53ff9a79fff3",
+  "finished_at": "2026-08-24T16:08:39.092360+00:00",
+  "manifest_file_sha256": "7a5a72ebe7a0f25c8d19a5eb776614e174a0b7dc6becb8780d3902e2236ed138",
+  "model_checksum": "cf65d76dff568a696c11e0c3653041fdfa147c8c412e1ee601ca671a5c725cdb",
+  "output_sha256": "a48bd143e9ddbaee8cb0aa68881d7ee74921ef0b839cdfcc04afd02e7c752ab7",
+  "output_size_bytes": 845,
+  "schema_version": "frozen-run-marker/v1",
+  "started_at": "2026-08-24T15:56:00.355385+00:00",
+  "state": "completed"
+}

@@ -1,0 +1,22 @@
+{
+  "canonical_manifest_identity": "7739942cdb8d3c588c7dc6553c919f8166fc0aa55dc882dd3343bb1714d1a72b",
+  "dependencies": {
+    "lightgbm": "4.7.0",
+    "numpy": "2.5.1",
+    "pydantic": "2.13.4",
+    "scikit-learn": "1.9.0",
+    "sentence-transformers": "5.7.0",
+    "torch": "2.13.0",
+    "typer": "0.27.0"
+  },
+  "git_head": "b019de79f7dbe805d85b20fe76853d98cc4c6b94",
+  "machine": "arm64",
+  "offline_flags": {
+    "HF_HUB_OFFLINE": "1",
+    "TRANSFORMERS_OFFLINE": "1"
+  },
+  "platform": "macOS-15.7.4-arm64-arm-64bit-Mach-O",
+  "processor": "arm",
+  "python": "3.13.11 | packaged by Anaconda, Inc. | (main, Dec 10 2025, 21:21:08) [Clang 20.1.8 ]",
+  "schema_version": "frozen-runtime-environment/v1"
+}

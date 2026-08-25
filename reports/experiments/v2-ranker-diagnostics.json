@@ -1,0 +1,55 @@
+{
+  "config_fingerprint": "3c0abb8bc68e8e890194e3ba0ddac1941627f35b48c3277a39e3a8cb45ef6396",
+  "fingerprints": {
+    "candidate_policy": "a3c3475fec9b49b3e67923a73e97d10c2017031050abcbc8f1e468824b52eb41",
+    "case": "bc2f622cd9311bca8509a46f0ee516355bc64db7d91f809273a35d97ce304d88",
+    "dataset": "57c3e8e9d55b83943bc1ab98189fd2ca82df65b15c0a660a35827c394f36bcb1",
+    "feature_schema": "2a4a88223f5a18feb80f19fb991fab6eb71919ce69df719e0bea7e7b1a522f20",
+    "model": "3e12b62708d96b1c3edfe7ec05226ebe9376d2d0ca4f9101ee674072db5b1a24"
+  },
+  "max_users": 500,
+  "raw_validation": {
+    "mean_itemcf_ndcg_at_10": 0.033388484023395205,
+    "mean_lambdamart_ndcg_at_10": 0.029910844106507944,
+    "ndcg_delta_ci_lower": -0.018954790508459704,
+    "ndcg_delta_ci_upper": 0.011085279161921101
+  },
+  "schema_version": "ranker-diagnostics/v1",
+  "summary": {
+    "dense_recall": 0.612,
+    "feature_separation": {
+      "dense_reciprocal_rank": 0.0044914087210453655,
+      "dense_score": -0.05002100221054928,
+      "history_genre_jaccard": 0.025765470523487658,
+      "history_year_match": 0.039921292631090406,
+      "in_dense": -0.1492101710756018,
+      "in_itemcf": 0.5109437350406995,
+      "itemcf_reciprocal_rank": 0.03535811187150858,
+      "itemcf_score": 8.800041641461497,
+      "log1p_popularity": 2.0849113082992066,
+      "preference_affinity": 0.053322446830465324
+    },
+    "itemcf_ndcg_at_10": 0.033388484023395205,
+    "itemcf_ndcg_at_10_present": 0.03802788613142962,
+    "itemcf_recall": 0.696,
+    "itemcf_top10_hit": 0.064,
+    "itemcf_top10_hit_present": 0.07289293849658314,
+    "lambdamart_ndcg_at_10": 0.029910844106507944,
+    "lambdamart_ndcg_at_10_present": 0.0340670206224464,
+    "lambdamart_top10_hit": 0.066,
+    "lambdamart_top10_hit_present": 0.07517084282460136,
+    "present_user_count": 439,
+    "target_itemcf_rank_quantiles": {
+      "p25": 53.0,
+      "p50": 172.0,
+      "p75": 430.0
+    },
+    "target_lambdamart_rank_quantiles": {
+      "p25": 57.0,
+      "p50": 173.0,
+      "p75": 374.0
+    },
+    "union_recall": 0.878,
+    "user_count": 500
+  }
+}

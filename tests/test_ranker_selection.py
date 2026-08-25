@@ -278,3 +278,92 @@ def test_frozen_case_evaluation_uses_expected_multi_turn_preferences(
     assert metrics["cases"] == 1
     assert metrics["ranker_kind"] == "itemcf"
     assert metrics["recall_at_10"] == 1.0
+
+
+def test_frozen_v2b_contract_uses_three_routes_and_only_state_visible_history(
+    monkeypatch,
+) -> None:
+    movies = {
+        movie_id: Movie(movie_id, f"Movie {movie_id}", ("Drama",), 2000 + movie_id)
+        for movie_id in range(1, 10)
+    }
+    ratings = [
+        Rating(1, 1, 5, 10),
+        Rating(1, 3, 5, 90),  # Dataset interaction hidden from case state.
+        Rating(1, 9, 5, 100),  # Synthetic hidden target must not enter history.
+        Rating(2, 1, 5, 11),
+        Rating(2, 4, 5, 12),
+    ]
+    state = PreferenceState(liked_movie_ids={1, 2})
+    case = EvaluationCase(
+        case_id="synthetic-001",
+        user_id=1,
+        turns=("recommend",),
+        relevant_movie_ids={9},
+        initial_state=state,
+    )
+    observed: dict[str, object] = {}
+
+    class FakeItemCF:
+        def retrieve(self, history, *, top_k, allowed_ids):
+            observed["itemcf"] = (set(history), top_k, set(allowed_ids))
+            return [(4, 0.4)]
+
+        def score_many(self, history, movie_ids):
+            observed["recent"] = (set(history), set(movie_ids))
+            return {movie_id: 0.1 for movie_id in movie_ids}
+
+    def fit_itemcf(rows):
+        observed["fit_rows"] = tuple(rows)
+        return FakeItemCF()
+
+    monkeypatch.setattr(
+        "recagent_eval.ranker_selection.ItemCFRetriever.fit", fit_itemcf
+    )
+
+    class FakeSemantic:
+        def retrieve(self, query, *, top_k, allowed_ids):
+            observed["semantic"] = (query, top_k, set(allowed_ids))
+            return [(5, 0.5)]
+
+    class FakeLatent:
+        def retrieve(self, history, *, top_k, allowed_ids):
+            observed["latent"] = (set(history), top_k, set(allowed_ids))
+            return [(6, 0.6)]
+
+    class FakeLearnedRanker:
+        kind = "lambdamart"
+
+        def rank(self, movies, **kwargs):
+            observed["rank"] = (set(movies), kwargs)
+            return []
+
+    metrics = evaluate_frozen_cases(
+        movies,
+        ratings,
+        [case],
+        ranker=FakeLearnedRanker(),
+        retrieval_top_k=500,
+        semantic_top_k=1500,
+        latent_top_k=500,
+        history_cap=50,
+        semantic_retriever=FakeSemantic(),
+        latent_retriever=FakeLatent(),
+        feature_version="v2b",
+    )
+
+    assert observed["itemcf"][0:2] == ({1, 2}, 500)
+    assert observed["semantic"][1] == 1500
+    assert observed["latent"][0:2] == ({1, 2}, 500)
+    assert observed["recent"] == ({1, 2}, {4, 5, 6})
+    fit_rows = observed["fit_rows"]
+    assert not any(row.user_id == 1 and row.movie_id in {3, 9} for row in fit_rows)
+    _, rank_kwargs = observed["rank"]
+    assert rank_kwargs["latent_scores"] == {6: 0.6}
+    assert rank_kwargs["recent_itemcf_scores"] == {4: 0.1, 5: 0.1, 6: 0.1}
+    assert {row.movie_id for row in rank_kwargs["history_rows"]} == {1, 2}
+    assert not any(
+        row.user_id == 1 and row.movie_id in {3, 9}
+        for row in rank_kwargs["statistics_rows"]
+    )
+    assert metrics["latent_candidate_recall"] == 0.0

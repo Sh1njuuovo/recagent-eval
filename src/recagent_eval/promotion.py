@@ -1,0 +1,1039 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import re
+import shutil
+import stat
+import subprocess
+import tempfile
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path, PurePosixPath
+from typing import Literal
+
+import yaml
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from recagent_eval.safe_io import read_regular_file
+
+PACKAGE_MEMBER_NAMES = (
+    "model.json",
+    "validation.json",
+    "bundle.json",
+    "latent.npz",
+    "latent.npz.json",
+    "semantic.npz",
+    "semantic.npz.json",
+)
+_SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
+_COMMIT_PATTERN = re.compile(r"[0-9a-f]{40}")
+
+
+def canonical_payload_sha256(payload: BaseModel | dict[str, object]) -> str:
+    value = payload.model_dump(mode="json") if isinstance(payload, BaseModel) else dict(payload)
+    value.pop("fingerprint", None)
+    canonical = json.dumps(value, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def validate_relative_path(value: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise ValueError("path must be a normalized repository-relative path")
+    if "\\" in value or "//" in value or value.startswith("./"):
+        raise ValueError("path must be a normalized repository-relative path")
+    raw_parts = value.split("/")
+    if any(part in {"", ".", ".."} for part in raw_parts):
+        raise ValueError("path must be a normalized repository-relative path")
+    path = PurePosixPath(value)
+    if path.is_absolute() or path.as_posix() != value:
+        raise ValueError("path must be a normalized repository-relative path")
+    return value
+
+
+def _validate_sha256(value: str) -> str:
+    if not _SHA256_PATTERN.fullmatch(value):
+        raise ValueError("value must be a lowercase SHA-256")
+    return value
+
+
+class FileIdentity(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    path: str
+    sha256: str
+    size_bytes: int = Field(gt=0)
+
+    _path = field_validator("path")(validate_relative_path)
+    _sha = field_validator("sha256")(_validate_sha256)
+
+
+class SemanticCacheIdentity(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    model_name: str = Field(min_length=1)
+    immutable_revision: str = Field(min_length=1)
+    dataset_fingerprint: str
+    dimension: int = Field(gt=0)
+    dtype: Literal["float32"]
+    normalization: Literal["l2_unit"]
+    cache_manifest_fingerprint: str
+
+    _dataset_sha = field_validator("dataset_fingerprint")(_validate_sha256)
+    _manifest_sha = field_validator("cache_manifest_fingerprint")(_validate_sha256)
+
+
+class SourceInventory(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal["frozen-promotion-source-inventory/v1"]
+    members: dict[str, FileIdentity]
+    semantic: SemanticCacheIdentity
+    provenance: Literal["observed_existing_bytes"]
+    fingerprint: str
+
+    _fingerprint_sha = field_validator("fingerprint")(_validate_sha256)
+
+    @model_validator(mode="after")
+    def validate_contract(self) -> SourceInventory:
+        if set(self.members) != set(PACKAGE_MEMBER_NAMES):
+            raise ValueError("source inventory package members are incomplete")
+        if self.fingerprint != canonical_payload_sha256(self):
+            raise ValueError("source inventory fingerprint mismatch")
+        return self
+
+
+def load_source_inventory(path: str | os.PathLike[str]) -> SourceInventory:
+    try:
+        raw = read_regular_file(Path(path), max_bytes=1024 * 1024)
+        return SourceInventory.model_validate_json(raw)
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"invalid promotion source inventory: {exc}") from exc
+
+
+def verify_source_files(
+    inventory: SourceInventory,
+    source_paths: dict[str, os.PathLike[str]],
+) -> None:
+    if set(source_paths) != set(PACKAGE_MEMBER_NAMES):
+        raise ValueError("source mapping package members are incomplete")
+    for name in PACKAGE_MEMBER_NAMES:
+        path = os.fspath(source_paths[name])
+        try:
+            descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        except FileNotFoundError as exc:
+            raise ValueError(f"source member {name} is missing") from exc
+        except OSError as exc:
+            raise ValueError(f"source member {name} is unsafe: {exc}") from exc
+        try:
+            metadata = os.fstat(descriptor)
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+                raise ValueError(f"source member {name} is not a unique regular file")
+            digest = hashlib.sha256()
+            with os.fdopen(descriptor, "rb") as stream:
+                descriptor = -1
+                while chunk := stream.read(1024 * 1024):
+                    digest.update(chunk)
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+        expected = inventory.members[name]
+        if metadata.st_size != expected.size_bytes or digest.hexdigest() != expected.sha256:
+            raise ValueError(f"source member {name} identity mismatch")
+
+
+def validate_semantic_source(
+    inventory: SourceInventory | PromotionManifest,
+    manifest_path: os.PathLike[str],
+) -> None:
+    try:
+        raw = read_regular_file(Path(manifest_path), max_bytes=1024 * 1024)
+        payload = json.loads(raw)
+    except (OSError, TypeError, ValueError) as exc:
+        raise ValueError(f"invalid semantic cache manifest: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("invalid semantic cache manifest: expected an object")
+    semantic = inventory.semantic
+    comparisons = {
+        "model_name": semantic.model_name,
+        "resolved_revision": semantic.immutable_revision,
+        "dataset_fingerprint": semantic.dataset_fingerprint,
+        "dimension": semantic.dimension,
+        "embedding_dtype": semantic.dtype,
+        "normalized": True,
+    }
+    for field, expected in comparisons.items():
+        if payload.get(field) != expected:
+            raise ValueError(f"semantic cache manifest {field} mismatch")
+    if canonical_payload_sha256(payload) != semantic.cache_manifest_fingerprint:
+        raise ValueError("semantic cache manifest fingerprint mismatch")
+
+
+def _repo_destination(repo_root: Path, relative: str) -> Path:
+    normalized = validate_relative_path(relative)
+    root = repo_root.resolve(strict=True)
+    candidate = root.joinpath(*PurePosixPath(normalized).parts)
+    resolved = candidate.resolve(strict=False)
+    if not resolved.is_relative_to(root):
+        raise ValueError("promotion destination escapes repository root")
+    current = root
+    for part in PurePosixPath(normalized).parts[:-1]:
+        current /= part
+        if os.path.lexists(current):
+            metadata = current.lstat()
+            if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+                raise ValueError("promotion destination contains an unsafe component")
+    return candidate
+
+
+def publish_promotion_package(
+    repo_root: Path,
+    inventory: SourceInventory,
+    source_paths: dict[str, os.PathLike[str]],
+) -> Path:
+    verify_source_files(inventory, source_paths)
+    validate_semantic_source(inventory, source_paths["semantic.npz.json"])
+    expected_paths = {
+        name: f"artifacts/promotion/current-v2b/{name}"
+        for name in PACKAGE_MEMBER_NAMES
+    }
+    if any(inventory.members[name].path != expected for name, expected in expected_paths.items()):
+        raise ValueError("source inventory destination paths are not canonical")
+    final_path = _repo_destination(repo_root, "artifacts/promotion/current-v2b")
+    parent = final_path.parent
+    parent.mkdir(parents=True, exist_ok=True)
+    _repo_destination(repo_root, "artifacts/promotion/current-v2b")
+    if os.path.lexists(final_path):
+        raise ValueError("promotion package publication refuses to overwrite final directory")
+    build_path = Path(
+        tempfile.mkdtemp(prefix=".current-v2b.build-", dir=parent)
+    )
+    published = False
+    try:
+        for name in PACKAGE_MEMBER_NAMES:
+            source = os.fspath(source_paths[name])
+            destination = build_path / name
+            source_fd = os.open(source, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            destination_fd = os.open(
+                destination,
+                os.O_WRONLY
+                | os.O_CREAT
+                | os.O_EXCL
+                | getattr(os, "O_NOFOLLOW", 0),
+                0o600,
+            )
+            try:
+                with os.fdopen(source_fd, "rb") as source_stream, os.fdopen(
+                    destination_fd, "wb"
+                ) as destination_stream:
+                    source_fd = -1
+                    destination_fd = -1
+                    shutil.copyfileobj(source_stream, destination_stream, 1024 * 1024)
+                    destination_stream.flush()
+                    os.fsync(destination_stream.fileno())
+            finally:
+                if source_fd >= 0:
+                    os.close(source_fd)
+                if destination_fd >= 0:
+                    os.close(destination_fd)
+        verify_source_files(
+            inventory,
+            {name: build_path / name for name in PACKAGE_MEMBER_NAMES},
+        )
+        validate_semantic_source(inventory, build_path / "semantic.npz.json")
+        directory_fd = os.open(build_path, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+        if os.path.lexists(final_path):
+            raise ValueError(
+                "promotion package publication refuses to overwrite final directory"
+            )
+        os.rename(build_path, final_path)
+        published = True
+        parent_fd = os.open(parent, os.O_RDONLY)
+        try:
+            os.fsync(parent_fd)
+        finally:
+            os.close(parent_fd)
+    finally:
+        if not published and build_path.exists():
+            shutil.rmtree(build_path)
+    return final_path
+
+
+def publish_immutable_report(
+    repo_root: Path,
+    relative_path: str,
+    payload: bytes,
+) -> Path:
+    if not relative_path.startswith("reports/promotion/"):
+        raise ValueError("promotion report must be under reports/promotion")
+    destination = _repo_destination(repo_root, relative_path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    _repo_destination(repo_root, relative_path)
+    if os.path.lexists(destination):
+        raise ValueError("promotion report publication refuses to overwrite")
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{destination.name}.", suffix=".tmp", dir=destination.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        try:
+            os.link(temporary, destination, follow_symlinks=False)
+        except FileExistsError as exc:
+            raise ValueError(
+                "promotion report publication refuses to overwrite"
+            ) from exc
+        temporary.unlink()
+        parent_fd = os.open(destination.parent, os.O_RDONLY)
+        try:
+            os.fsync(parent_fd)
+        finally:
+            os.close(parent_fd)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+    return destination
+
+
+class PromotionManifest(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal["frozen-promotion/v1"]
+    implementation_commit: str
+    training_config_path: str
+    training_config_fingerprint: str
+    dataset_fingerprint: str
+    case_fingerprint: str
+    candidate_policy_fingerprint: str
+    model_checksum: str
+    feature_version: Literal["v2b"]
+    feature_fingerprint: str
+    score_calibration: Literal["raw", "percentile"]
+    itemcf_top_k: int = Field(gt=0)
+    semantic_top_k: int = Field(gt=0)
+    latent_top_k: int = Field(gt=0)
+    ordered_user_ids: tuple[int, ...]
+    ordered_user_digest: str
+    validation_evidence_fingerprint: str
+    validation_rows_fingerprint: str
+    frozen_cases_path: str
+    members: dict[str, FileIdentity]
+    evidence_files: dict[str, FileIdentity]
+    evidence_fingerprints: dict[str, str]
+    semantic: SemanticCacheIdentity
+    dependency_versions: dict[str, str]
+
+    _training_path = field_validator("training_config_path")(validate_relative_path)
+    _training_sha = field_validator("training_config_fingerprint")(_validate_sha256)
+    _dataset_sha = field_validator("dataset_fingerprint")(_validate_sha256)
+    _case_sha = field_validator("case_fingerprint")(_validate_sha256)
+    _policy_sha = field_validator("candidate_policy_fingerprint")(_validate_sha256)
+    _model_sha = field_validator("model_checksum")(_validate_sha256)
+    _feature_sha = field_validator("feature_fingerprint")(_validate_sha256)
+    _users_sha = field_validator("ordered_user_digest")(_validate_sha256)
+    _validation_sha = field_validator("validation_evidence_fingerprint")(
+        _validate_sha256
+    )
+    _rows_sha = field_validator("validation_rows_fingerprint")(_validate_sha256)
+    _cases_path = field_validator("frozen_cases_path")(validate_relative_path)
+
+    @field_validator("implementation_commit")
+    @classmethod
+    def validate_commit(cls, value: str) -> str:
+        if not _COMMIT_PATTERN.fullmatch(value):
+            raise ValueError("implementation_commit must be a lowercase full Git SHA")
+        return value
+
+    @model_validator(mode="after")
+    def validate_contract(self) -> PromotionManifest:
+        if set(self.members) != set(PACKAGE_MEMBER_NAMES):
+            raise ValueError("promotion manifest package members are incomplete")
+        if not self.ordered_user_ids:
+            raise ValueError("ordered_user_ids must not be empty")
+        if len(self.ordered_user_ids) != len(set(self.ordered_user_ids)):
+            raise ValueError("ordered_user_ids contains duplicate users")
+        expected_evidence = {
+            "source_inventory",
+            "compact_bundle",
+            "cohort_ledger",
+            "summary",
+        }
+        if set(self.evidence_files) != expected_evidence:
+            raise ValueError("promotion evidence files are incomplete")
+        if set(self.evidence_fingerprints) != expected_evidence or any(
+            not _SHA256_PATTERN.fullmatch(value)
+            for value in self.evidence_fingerprints.values()
+        ):
+            raise ValueError("promotion evidence fingerprints are incomplete")
+        if self.ordered_user_digest != canonical_payload_sha256(
+            {"ordered_user_ids": list(self.ordered_user_ids)}
+        ):
+            raise ValueError("ordered_user_digest mismatch")
+        if not self.dependency_versions or any(
+            not key or not value for key, value in self.dependency_versions.items()
+        ):
+            raise ValueError("promotion dependency versions are incomplete")
+        return self
+
+
+class ExecutionSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    mode: Literal["learned_frozen"]
+    scope: Literal["real", "synthetic"] = "real"
+
+
+@dataclass(frozen=True)
+class ExecutionPaths:
+    marker: str
+    output: str
+    command_log: str
+    failure_log: str
+
+
+def derive_execution_paths(
+    *,
+    canonical_manifest_identity: str,
+    case_fingerprint: str,
+    dataset_fingerprint: str,
+    model_checksum: str,
+    scope: Literal["real", "synthetic"] = "real",
+) -> ExecutionPaths:
+    values = {
+        "canonical_manifest_identity": _validate_sha256(canonical_manifest_identity),
+        "case_fingerprint": _validate_sha256(case_fingerprint),
+        "dataset_fingerprint": _validate_sha256(dataset_fingerprint),
+        "model_checksum": _validate_sha256(model_checksum),
+    }
+    identity = canonical_payload_sha256(values)
+    base = "artifacts/frozen" if scope == "real" else "artifacts/frozen-rehearsal"
+    root = f"{base}/{canonical_manifest_identity[:16]}-{identity[:16]}"
+    return ExecutionPaths(
+        marker=f"{root}/marker.json",
+        output=f"{root}/metrics.json",
+        command_log=f"{root}/command.log",
+        failure_log=f"{root}/failure.log",
+    )
+
+
+class PromotionYaml(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal["frozen-promotion-execution/v1"]
+    manifest_path: str
+    canonical_manifest_identity: str
+    manifest_file_sha256: str
+    execution: ExecutionSettings
+    training_config_fingerprint: str
+    dataset_fingerprint: str
+    case_fingerprint: str
+    model_checksum: str
+    marker_path: str
+    output_path: str
+
+    _manifest_path = field_validator("manifest_path")(validate_relative_path)
+    _manifest_sha = field_validator("canonical_manifest_identity")(_validate_sha256)
+    _manifest_file_sha = field_validator("manifest_file_sha256")(_validate_sha256)
+    _training_sha = field_validator("training_config_fingerprint")(_validate_sha256)
+    _dataset_sha = field_validator("dataset_fingerprint")(_validate_sha256)
+    _case_sha = field_validator("case_fingerprint")(_validate_sha256)
+    _model_sha = field_validator("model_checksum")(_validate_sha256)
+    _marker_path = field_validator("marker_path")(validate_relative_path)
+    _output_path = field_validator("output_path")(validate_relative_path)
+
+    def cross_check(
+        self,
+        manifest: PromotionManifest,
+        *,
+        manifest_file_sha256: str | None = None,
+    ) -> None:
+        if self.canonical_manifest_identity != canonical_payload_sha256(manifest):
+            raise ValueError("promotion YAML canonical manifest identity mismatch")
+        if (
+            manifest_file_sha256 is not None
+            and self.manifest_file_sha256 != manifest_file_sha256
+        ):
+            raise ValueError("promotion YAML manifest file SHA-256 mismatch")
+        comparisons = {
+            "training config fingerprint": (
+                self.training_config_fingerprint,
+                manifest.training_config_fingerprint,
+            ),
+            "dataset fingerprint": (self.dataset_fingerprint, manifest.dataset_fingerprint),
+            "case fingerprint": (self.case_fingerprint, manifest.case_fingerprint),
+            "model checksum": (self.model_checksum, manifest.model_checksum),
+        }
+        for label, (actual, expected) in comparisons.items():
+            if actual != expected:
+                raise ValueError(f"promotion YAML {label} mismatch")
+        paths = derive_execution_paths(
+            canonical_manifest_identity=self.canonical_manifest_identity,
+            case_fingerprint=manifest.case_fingerprint,
+            dataset_fingerprint=manifest.dataset_fingerprint,
+            model_checksum=manifest.model_checksum,
+            scope=self.execution.scope,
+        )
+        if self.marker_path != paths.marker:
+            raise ValueError("promotion YAML derived marker path mismatch")
+        if self.output_path != paths.output:
+            raise ValueError("promotion YAML derived output path mismatch")
+
+
+class ReplayVerification(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    ordered_user_ids: tuple[int, ...]
+    dataset_fingerprint: str
+    model_checksum: str
+    validation_rows_fingerprint: str
+    validated_components: tuple[str, ...]
+
+    _dataset_sha = field_validator("dataset_fingerprint")(_validate_sha256)
+    _model_sha = field_validator("model_checksum")(_validate_sha256)
+    _rows_sha = field_validator("validation_rows_fingerprint")(_validate_sha256)
+
+
+class PreflightReceipt(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal["frozen-promotion-preflight/v1"]
+    canonical_manifest_identity: str
+    manifest_file_sha256: str
+    dataset_fingerprint: str
+    model_checksum: str
+    validation_rows_fingerprint: str
+    validation_user_count: int = Field(gt=0)
+    ordered_user_digest: str
+    verified_member_sha256: dict[str, str]
+    verified_member_size_bytes: dict[str, int]
+    package_unchanged: Literal[True]
+    label_free: Literal[True]
+    fingerprint: str
+
+    _manifest_sha = field_validator("canonical_manifest_identity")(_validate_sha256)
+    _manifest_file_sha = field_validator("manifest_file_sha256")(_validate_sha256)
+    _dataset_sha = field_validator("dataset_fingerprint")(_validate_sha256)
+    _model_sha = field_validator("model_checksum")(_validate_sha256)
+    _rows_sha = field_validator("validation_rows_fingerprint")(_validate_sha256)
+    _users_sha = field_validator("ordered_user_digest")(_validate_sha256)
+    _fingerprint_sha = field_validator("fingerprint")(_validate_sha256)
+
+    @model_validator(mode="after")
+    def validate_fingerprint(self) -> PreflightReceipt:
+        if set(self.verified_member_sha256) != set(PACKAGE_MEMBER_NAMES) or any(
+            not _SHA256_PATTERN.fullmatch(value)
+            for value in self.verified_member_sha256.values()
+        ):
+            raise ValueError("preflight member SHA verification is incomplete")
+        if set(self.verified_member_size_bytes) != set(PACKAGE_MEMBER_NAMES) or any(
+            not isinstance(value, int) or value <= 0
+            for value in self.verified_member_size_bytes.values()
+        ):
+            raise ValueError("preflight member size verification is incomplete")
+        if self.fingerprint != canonical_payload_sha256(self):
+            raise ValueError("preflight receipt fingerprint mismatch")
+        return self
+
+
+def _regular_repo_file(repo_root: Path, relative: str, *, max_bytes: int) -> Path:
+    path = _repo_destination(repo_root, relative)
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError as exc:
+        raise ValueError(f"promotion file is missing: {relative}") from exc
+    if (
+        stat.S_ISLNK(metadata.st_mode)
+        or not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_nlink != 1
+    ):
+        raise ValueError(f"promotion file is unsafe: {relative}")
+    if metadata.st_size > max_bytes:
+        raise ValueError(f"promotion file is too large: {relative}")
+    return path
+
+
+def _file_sha_size(path: Path) -> tuple[str, int]:
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    digest = hashlib.sha256()
+    size = 0
+    with os.fdopen(descriptor, "rb") as stream:
+        while chunk := stream.read(1024 * 1024):
+            size += len(chunk)
+            digest.update(chunk)
+    return digest.hexdigest(), size
+
+
+def load_promotion_documents(
+    repo_root: Path, promotion_yaml_path: Path
+) -> tuple[PromotionManifest, PromotionYaml]:
+    root = repo_root.resolve(strict=True)
+    promotion_resolved = promotion_yaml_path.resolve(strict=True)
+    if not promotion_resolved.is_relative_to(root / "reports/promotion"):
+        raise ValueError("promotion YAML must be under reports/promotion")
+    relative_promotion = promotion_resolved.relative_to(root).as_posix()
+    promotion_file = _regular_repo_file(
+        root, relative_promotion, max_bytes=1024 * 1024
+    )
+    try:
+        promotion_payload = yaml.safe_load(
+            read_regular_file(promotion_file, max_bytes=1024 * 1024)
+        )
+        promotion = PromotionYaml.model_validate(promotion_payload)
+    except (OSError, TypeError, ValueError) as exc:
+        raise ValueError(f"invalid promotion YAML: {exc}") from exc
+    manifest_file = _regular_repo_file(
+        root, promotion.manifest_path, max_bytes=4 * 1024 * 1024
+    )
+    try:
+        manifest_bytes = read_regular_file(manifest_file, max_bytes=4 * 1024 * 1024)
+        manifest_payload = json.loads(manifest_bytes)
+        manifest = PromotionManifest.model_validate(manifest_payload)
+    except (OSError, TypeError, ValueError) as exc:
+        raise ValueError(f"invalid promotion manifest: {exc}") from exc
+    if canonical_payload_sha256(manifest_payload) != promotion.canonical_manifest_identity:
+        raise ValueError("promotion canonical manifest identity mismatch")
+    manifest_file_sha256 = hashlib.sha256(manifest_bytes).hexdigest()
+    promotion.cross_check(manifest, manifest_file_sha256=manifest_file_sha256)
+    return manifest, promotion
+
+
+def preflight_promotion(
+    repo_root: Path,
+    promotion_yaml_path: Path,
+    *,
+    dataset_fingerprint_check,
+    validation_replay,
+    git_identity_check,
+) -> PreflightReceipt:
+    root = repo_root.resolve(strict=True)
+    manifest, promotion = load_promotion_documents(root, promotion_yaml_path)
+    member_paths: dict[str, Path] = {}
+    verified_hashes: dict[str, str] = {}
+    for name in PACKAGE_MEMBER_NAMES:
+        identity = manifest.members[name]
+        member_path = _regular_repo_file(
+            root, identity.path, max_bytes=512 * 1024 * 1024
+        )
+        actual_sha, actual_size = _file_sha_size(member_path)
+        if actual_sha != identity.sha256 or actual_size != identity.size_bytes:
+            raise ValueError(f"promotion member {name} identity mismatch")
+        member_paths[name] = member_path
+        verified_hashes[name] = actual_sha
+    package_snapshot = _promotion_package_snapshot(member_paths)
+    validate_semantic_source(manifest, member_paths["semantic.npz.json"])
+    for label, identity in manifest.evidence_files.items():
+        evidence_path = _regular_repo_file(
+            root, identity.path, max_bytes=16 * 1024 * 1024
+        )
+        actual_sha, actual_size = _file_sha_size(evidence_path)
+        if actual_sha != identity.sha256 or actual_size != identity.size_bytes:
+            raise ValueError(f"promotion evidence file {label} identity mismatch")
+        try:
+            payload = json.loads(
+                read_regular_file(evidence_path, max_bytes=16 * 1024 * 1024)
+            )
+        except (OSError, TypeError, ValueError) as exc:
+            raise ValueError(f"invalid promotion evidence file {label}: {exc}") from exc
+        if label == "source_inventory":
+            source_inventory = SourceInventory.model_validate(payload)
+            actual_fingerprint = source_inventory.fingerprint
+        else:
+            actual_fingerprint = payload.get("fingerprint")
+        if actual_fingerprint != manifest.evidence_fingerprints[label]:
+            raise ValueError(f"promotion evidence file {label} fingerprint mismatch")
+    git_identity_check(manifest)
+    dataset_fingerprint = dataset_fingerprint_check(manifest, member_paths)
+    if dataset_fingerprint != manifest.dataset_fingerprint:
+        raise ValueError("complete dataset fingerprint mismatch")
+    replay = ReplayVerification.model_validate(
+        validation_replay(manifest, member_paths)
+    )
+    if replay.ordered_user_ids != manifest.ordered_user_ids:
+        raise ValueError("validation replay ordered users mismatch")
+    if replay.dataset_fingerprint != manifest.dataset_fingerprint:
+        raise ValueError("validation replay dataset fingerprint mismatch")
+    if replay.model_checksum != manifest.model_checksum:
+        raise ValueError("validation replay model checksum mismatch")
+    if replay.validation_rows_fingerprint != manifest.validation_rows_fingerprint:
+        raise ValueError("validation replay rows fingerprint mismatch")
+    required_components = {"model", "evidence", "bundle", "latent", "semantic"}
+    if set(replay.validated_components) != required_components:
+        raise ValueError("validation replay component verification is incomplete")
+    try:
+        final_package_snapshot = _promotion_package_snapshot(member_paths)
+    except ValueError as exc:
+        raise ValueError("promotion package changed during preflight") from exc
+    if final_package_snapshot != package_snapshot:
+        raise ValueError("promotion package changed during preflight")
+    paths = derive_execution_paths(
+        canonical_manifest_identity=promotion.canonical_manifest_identity,
+        case_fingerprint=manifest.case_fingerprint,
+        dataset_fingerprint=manifest.dataset_fingerprint,
+        model_checksum=manifest.model_checksum,
+        scope=promotion.execution.scope,
+    )
+    for label, relative in {"marker": paths.marker, "output": paths.output}.items():
+        destination = _repo_destination(root, relative)
+        if os.path.lexists(destination):
+            raise ValueError(f"real frozen {label} already exists")
+    receipt_payload = {
+        "schema_version": "frozen-promotion-preflight/v1",
+        "canonical_manifest_identity": promotion.canonical_manifest_identity,
+        "manifest_file_sha256": promotion.manifest_file_sha256,
+        "dataset_fingerprint": manifest.dataset_fingerprint,
+        "model_checksum": manifest.model_checksum,
+        "validation_rows_fingerprint": replay.validation_rows_fingerprint,
+        "validation_user_count": len(replay.ordered_user_ids),
+        "ordered_user_digest": canonical_payload_sha256(
+            {"ordered_user_ids": list(replay.ordered_user_ids)}
+        ),
+        "verified_member_sha256": verified_hashes,
+        "verified_member_size_bytes": {
+            name: package_snapshot[name][1] for name in PACKAGE_MEMBER_NAMES
+        },
+        "package_unchanged": True,
+        "label_free": True,
+    }
+    receipt_payload["fingerprint"] = canonical_payload_sha256(receipt_payload)
+    return PreflightReceipt.model_validate(receipt_payload)
+
+
+def _promotion_package_snapshot(
+    member_paths: dict[str, Path],
+) -> dict[str, tuple[str, int]]:
+    if set(member_paths) != set(PACKAGE_MEMBER_NAMES):
+        raise ValueError("promotion package must contain exactly the seven declared members")
+    parents = {path.parent for path in member_paths.values()}
+    if len(parents) != 1:
+        raise ValueError("promotion package members must share one directory")
+    package_dir = next(iter(parents))
+    actual_names = {entry.name for entry in os.scandir(package_dir)}
+    if actual_names != set(PACKAGE_MEMBER_NAMES):
+        raise ValueError("promotion package must contain exactly the seven declared members")
+    snapshot: dict[str, tuple[str, int]] = {}
+    for name in PACKAGE_MEMBER_NAMES:
+        path = member_paths[name]
+        actual_sha, actual_size = _file_sha_size(path)
+        snapshot[name] = (actual_sha, actual_size)
+    return snapshot
+
+
+def verify_git_identity(repo_root: Path, manifest: PromotionManifest) -> None:
+    root = repo_root.resolve(strict=True)
+    ancestor = subprocess.run(
+        [
+            "git",
+            "merge-base",
+            "--is-ancestor",
+            manifest.implementation_commit,
+            "HEAD",
+        ],
+        cwd=root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if ancestor.returncode != 0:
+        raise ValueError("hardening implementation commit is not an ancestor of HEAD")
+    protected = subprocess.run(
+        [
+            "git",
+            "diff",
+            "--name-only",
+            f"{manifest.implementation_commit}..HEAD",
+            "--",
+            "src",
+            "configs",
+            "pyproject.toml",
+            "uv.lock",
+        ],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    changed = [line for line in protected.stdout.splitlines() if line.strip()]
+    if changed:
+        raise ValueError(
+            "protected production/config/dependency paths changed after implementation commit: "
+            + ", ".join(changed)
+        )
+
+
+class RunMarker(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal["frozen-run-marker/v1"]
+    state: Literal["started", "completed", "failed"]
+    canonical_manifest_identity: str
+    manifest_file_sha256: str
+    case_fingerprint: str
+    dataset_fingerprint: str
+    model_checksum: str
+    evidence_fingerprint: str
+    started_at: str
+    finished_at: str | None = None
+    output_sha256: str | None = None
+    output_size_bytes: int | None = None
+    error_type: str | None = None
+    error_digest: str | None = None
+
+    _manifest_sha = field_validator("canonical_manifest_identity")(_validate_sha256)
+    _manifest_file_sha = field_validator("manifest_file_sha256")(_validate_sha256)
+    _case_sha = field_validator("case_fingerprint")(_validate_sha256)
+    _dataset_sha = field_validator("dataset_fingerprint")(_validate_sha256)
+    _model_sha = field_validator("model_checksum")(_validate_sha256)
+    _evidence_sha = field_validator("evidence_fingerprint")(_validate_sha256)
+
+    @model_validator(mode="after")
+    def validate_state_fields(self) -> RunMarker:
+        if self.state == "started":
+            if any(
+                value is not None
+                for value in (
+                    self.finished_at,
+                    self.output_sha256,
+                    self.output_size_bytes,
+                    self.error_type,
+                    self.error_digest,
+                )
+            ):
+                raise ValueError("started marker contains terminal fields")
+        elif self.state == "completed":
+            if (
+                self.finished_at is None
+                or self.output_sha256 is None
+                or self.output_size_bytes is None
+                or self.error_type is not None
+                or self.error_digest is not None
+            ):
+                raise ValueError("completed marker fields are incomplete")
+            _validate_sha256(self.output_sha256)
+        elif (
+            self.finished_at is None
+            or not self.error_type
+            or self.error_digest is None
+            or self.output_sha256 is not None
+            or self.output_size_bytes is not None
+        ):
+            raise ValueError("failed marker fields are incomplete")
+        if self.error_digest is not None:
+            _validate_sha256(self.error_digest)
+        return self
+
+
+def _marker_payload(
+    manifest: PromotionManifest,
+    promotion: PromotionYaml,
+    receipt: PreflightReceipt,
+) -> dict[str, object]:
+    return {
+        "schema_version": "frozen-run-marker/v1",
+        "state": "started",
+        "canonical_manifest_identity": promotion.canonical_manifest_identity,
+        "manifest_file_sha256": promotion.manifest_file_sha256,
+        "case_fingerprint": manifest.case_fingerprint,
+        "dataset_fingerprint": manifest.dataset_fingerprint,
+        "model_checksum": manifest.model_checksum,
+        "evidence_fingerprint": receipt.fingerprint,
+        "started_at": datetime.now(UTC).isoformat(),
+        "finished_at": None,
+        "output_sha256": None,
+        "output_size_bytes": None,
+        "error_type": None,
+        "error_digest": None,
+    }
+
+
+def _json_bytes(payload: dict[str, object]) -> bytes:
+    return (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode()
+
+
+def _exclusive_write(path: Path, payload: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(
+        path,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+    )
+    with os.fdopen(descriptor, "wb") as stream:
+        stream.write(payload)
+        stream.flush()
+        os.fsync(stream.fileno())
+    parent_fd = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(parent_fd)
+    finally:
+        os.close(parent_fd)
+
+
+def _transition_marker(path: Path, payload: dict[str, object]) -> RunMarker:
+    current = RunMarker.model_validate_json(
+        read_regular_file(path, max_bytes=1024 * 1024)
+    )
+    if current.state != "started":
+        raise ValueError("only a started marker can transition")
+    marker = RunMarker.model_validate(payload)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(_json_bytes(marker.model_dump(mode="json")))
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+        parent_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(parent_fd)
+        finally:
+            os.close(parent_fd)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+    return marker
+
+
+def _publish_no_replace(path: Path, payload: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.link(temporary, path, follow_symlinks=False)
+        temporary.unlink()
+        published_fd = os.open(
+            path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        )
+        try:
+            os.fsync(published_fd)
+        finally:
+            os.close(published_fd)
+        parent_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(parent_fd)
+        finally:
+            os.close(parent_fd)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
+def execute_one_shot(
+    repo_root: Path,
+    manifest: PromotionManifest,
+    promotion: PromotionYaml,
+    receipt: PreflightReceipt,
+    *,
+    case_loader,
+    evaluator,
+    authorized_canonical_manifest_identity: str | None = None,
+    after_output_hook=None,
+) -> RunMarker:
+    manifest = PromotionManifest.model_validate(manifest.model_dump(mode="json"))
+    promotion = PromotionYaml.model_validate(promotion.model_dump(mode="json"))
+    receipt = PreflightReceipt.model_validate(receipt.model_dump(mode="json"))
+    if (
+        promotion.execution.scope == "real"
+        and authorized_canonical_manifest_identity != promotion.canonical_manifest_identity
+    ):
+        raise ValueError(
+            "real execution requires exact canonical manifest identity authorization"
+        )
+    promotion.cross_check(
+        manifest, manifest_file_sha256=receipt.manifest_file_sha256
+    )
+    if receipt.canonical_manifest_identity != promotion.canonical_manifest_identity:
+        raise ValueError("preflight receipt manifest mismatch")
+    root = repo_root.resolve(strict=True)
+    paths = derive_execution_paths(
+        canonical_manifest_identity=promotion.canonical_manifest_identity,
+        case_fingerprint=manifest.case_fingerprint,
+        dataset_fingerprint=manifest.dataset_fingerprint,
+        model_checksum=manifest.model_checksum,
+        scope=promotion.execution.scope,
+    )
+    marker_path = _repo_destination(root, paths.marker)
+    output_path = _repo_destination(root, paths.output)
+    if os.path.lexists(marker_path):
+        raise ValueError("frozen execution opportunity is permanently consumed")
+    if os.path.lexists(output_path):
+        raise ValueError("frozen output already exists without a new execution opportunity")
+    started_payload = _marker_payload(manifest, promotion, receipt)
+    started = RunMarker.model_validate(started_payload)
+    _exclusive_write(marker_path, _json_bytes(started.model_dump(mode="json")))
+    try:
+        cases = case_loader()
+        metrics = evaluator(cases)
+        if not isinstance(metrics, dict):
+            raise ValueError("frozen evaluator must return a JSON object")
+        output_bytes = _json_bytes(metrics)
+        _publish_no_replace(output_path, output_bytes)
+        if after_output_hook is not None:
+            after_output_hook()
+        completed_payload = {
+            **started.model_dump(mode="json"),
+            "state": "completed",
+            "finished_at": datetime.now(UTC).isoformat(),
+            "output_sha256": hashlib.sha256(output_bytes).hexdigest(),
+            "output_size_bytes": len(output_bytes),
+        }
+        return _transition_marker(marker_path, completed_payload)
+    except Exception as exc:
+        failed_payload = {
+            **started.model_dump(mode="json"),
+            "state": "failed",
+            "finished_at": datetime.now(UTC).isoformat(),
+            "error_type": type(exc).__name__,
+            "error_digest": hashlib.sha256(str(exc).encode()).hexdigest(),
+        }
+        _transition_marker(marker_path, failed_payload)
+        raise
+
+
+def audit_one_shot(
+    repo_root: Path,
+    manifest: PromotionManifest,
+    promotion: PromotionYaml,
+) -> dict[str, object]:
+    promotion.cross_check(manifest)
+    paths = derive_execution_paths(
+        canonical_manifest_identity=promotion.canonical_manifest_identity,
+        case_fingerprint=manifest.case_fingerprint,
+        dataset_fingerprint=manifest.dataset_fingerprint,
+        model_checksum=manifest.model_checksum,
+        scope=promotion.execution.scope,
+    )
+    root = repo_root.resolve(strict=True)
+    marker_path = _repo_destination(root, paths.marker)
+    output_path = _repo_destination(root, paths.output)
+    marker = RunMarker.model_validate_json(
+        read_regular_file(marker_path, max_bytes=1024 * 1024)
+    )
+    result: dict[str, object] = {
+        "state": marker.state,
+        "marker_path": paths.marker,
+        "output_path": paths.output,
+        "output_exists": os.path.lexists(output_path),
+        "output_sha256": None,
+        "output_size_bytes": None,
+    }
+    if os.path.lexists(output_path):
+        output_sha, output_size = _file_sha_size(output_path)
+        result["output_sha256"] = output_sha
+        result["output_size_bytes"] = output_size
+    return result

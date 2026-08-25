@@ -225,7 +225,7 @@ RRF 和 percentile fusion 也未通过验证门禁。因此下一步合理实验
 
 ### 6.1 v1 已验证事实
 
-- 229 个测试通过，当前 line coverage 为 90%。
+- 395 个测试通过，当前 line coverage 为 90.02%。
 - 约束感知 DeepSeek 评测中，结构化方案的计划合法率、pipeline、工具执行和硬约束指标达到 100%。
 - 正式矩阵中，ItemCF route candidate recall 为 0.78，完整双路 union recall 为 0.88。
 - 完整方案 Recall@10 为 0.04、NDCG@10 为 0.0149，没有超过结构化 ItemCF。
@@ -242,12 +242,17 @@ RRF 和 percentile fusion 也未通过验证门禁。因此下一步合理实验
 - 500 用户验证：约束满足率 100%；LambdaMART NDCG@10 0.0327 vs ItemCF 0.0334，
   bootstrap 95% CI [−0.0146, 0.0129] 跨零；并集候选召回 77.6%、dense 28.8%。
 - 无 API Key 的离线 Demo 已可运行，并生成本地截图（rule-based 标注）。
+- ALS latent route 的 latent recall@500 为 0.838，三路 union recall 为 0.928，
+  目标中位排名改善到 93。
+- 唯一正式认证 cohort 是全新 1000-user Confirmation-B：current_v2b
+  Recall@10 0.118、NDCG@10 0.0555；ItemCF 为 0.064/0.0323，ALS direct
+  NDCG@10 为 0.0323；paired-bootstrap CI 下界均大于 0，约束满足率 100%。
 
 ### 6.3 不能宣称的内容
 
 - 不能宣称双路召回提升了最终推荐质量。
-- 不能宣称当前系统超过 ItemCF 或流行度基线。
-- 不能声称 LambdaMART 超过 ItemCF：500 用户验证是负结果，frozen 门保持锁定。
+- 不能把早期 500 用户负结果说成正结果；它与后续 Confirmation-B 证据分开。
+- 不能把项目内 LightGCN 说成 canonical/官方标准实现，也不能用单 seed 泛化。
 - 不能把 rule-based Demo 表述成 LLM 效果。
 - 不能声称 Qwen/vLLM 4090 实验已完成或报告其吞吐/显存。
 - 不能把 50 个固定案例的结果泛化为所有电影推荐场景。
@@ -256,9 +261,15 @@ RRF 和 percentile fusion 也未通过验证门禁。因此下一步合理实验
 
 - 提高 dense 候选召回（当前仅 28.8%）与并集候选召回（77.6%），例如扩充
   dense 通道的 top-k、改进 item text schema 或增加候选策略。
-- 在候选召回改善后重新评估分数校准与 LambdaMART 特征质量，只有离线 NDCG
-  改善才考虑 frozen 重跑。
+- current_v2b 锁定后，一次性 final promotion evaluation 已完成；该 identity
+  永久消费，50-case labels 不再用于调参。
 - Qwen smoke 与主结果分开报告；Qwen/vLLM 4090 冒烟待服务器空闲。
+
+50-case promotion 结果为 Recall@10 0.08、NDCG@10 0.03964；同一 case
+fingerprint 曾用于历史 DeepSeek 系统实验，因此它是一次性泛化补充，不是项目历史上
+未使用的 holdout。该次未同步运行 current_v2b 对应 ItemCF/ALS baseline，不能声明
+在这 50 cases 上显著胜出。Confirmation-B 仍是算法比较主证据。Qwen/4090 remains
+pending.
 
 ## 7. 工程方法论
 

@@ -12,6 +12,8 @@ import pytest
 
 from recagent_eval.candidate_features import (
     FEATURE_NAMES,
+    FEATURE_NAMES_V2,
+    FEATURE_NAMES_V2B,
     build_candidate_feature_rows,
 )
 from recagent_eval.data import Movie, Rating, leakage_safe_ranking_split
@@ -184,6 +186,98 @@ def test_feature_builder_rejects_nonfinite_with_context() -> None:
         )
 
 
+def test_score_calibration_raw_preserves_existing_feature_values() -> None:
+    movies = {
+        2: Movie(2, "Candidate", ("Drama",), 2000),
+        3: Movie(3, "Dense", ("Action",), None),
+    }
+    rows = build_candidate_feature_rows(
+        user_id=7,
+        movies=movies,
+        candidate_ids={2, 3},
+        itemcf_scores={2: 0.8},
+        dense_scores={3: 0.8},
+        history=(),
+        train_rows=(),
+        state=PreferenceState(),
+        score_calibration="raw",
+    )
+    assert rows[0].values[0] == 0.8
+    assert rows[0].values[2] == 0.0
+    assert rows[1].values[0] == 0.0
+    assert rows[1].values[2] == 0.8
+
+
+def test_score_calibration_percentile_uses_rank_percentile_with_ties() -> None:
+    movies = {
+        2: Movie(2, "M2", (), 2000),
+        3: Movie(3, "M3", (), 2000),
+        4: Movie(4, "M4", (), 2000),
+    }
+    rows = build_candidate_feature_rows(
+        user_id=7,
+        movies=movies,
+        candidate_ids={2, 3, 4},
+        itemcf_scores={2: 0.8, 3: 0.4, 4: 0.4},
+        dense_scores={2: 0.2, 4: 0.6},
+        history=(),
+        train_rows=(),
+        state=PreferenceState(),
+        score_calibration="percentile",
+    )
+    by_id = {row.movie_id: row.values for row in rows}
+    assert by_id[2][0] == pytest.approx(1.0)
+    assert by_id[3][0] == pytest.approx(2 / 3)
+    assert by_id[4][0] == pytest.approx(2 / 3)
+    assert by_id[2][2] == pytest.approx(0.5)
+    assert by_id[4][2] == pytest.approx(1.0)
+    assert by_id[3][2] == 0.0
+    # Reciprocal-rank and membership features stay on the raw route shape.
+    assert by_id[2][1] == pytest.approx(1.0)
+    assert by_id[3][1] == pytest.approx(0.5)
+    assert by_id[2][8] == 1.0
+    assert by_id[4][9] == 1.0
+
+
+def test_score_calibration_percentile_empty_route_is_zero() -> None:
+    rows = build_candidate_feature_rows(
+        user_id=7,
+        movies={2: Movie(2, "M2", (), 2000)},
+        candidate_ids={2},
+        itemcf_scores={2: 0.8},
+        dense_scores={},
+        history=(),
+        train_rows=(),
+        state=PreferenceState(),
+        score_calibration="percentile",
+    )
+    assert rows[0].values[2] == 0.0
+    assert rows[0].values[3] == 0.0
+
+
+def test_score_calibration_changes_candidate_policy_fingerprint() -> None:
+    from recagent_eval.lambdamart_pipeline import candidate_policy_fingerprint
+    from recagent_eval.runner import ExperimentConfig
+
+    raw = ExperimentConfig(
+        name="dense",
+        semantic_kind="dense",
+        semantic_cache_path="cache.npz",
+        retrieval_top_k=500,
+        semantic_top_k=1500,
+        score_calibration="raw",
+    )
+    percentile = ExperimentConfig(
+        name="dense",
+        semantic_kind="dense",
+        semantic_cache_path="cache.npz",
+        retrieval_top_k=500,
+        semantic_top_k=1500,
+        score_calibration="percentile",
+    )
+    assert candidate_policy_fingerprint(raw) != candidate_policy_fingerprint(percentile)
+
+
 class _FakeEstimator:
     def fit(self, features, labels, *, group):
         self.group = list(group)
@@ -239,6 +333,33 @@ def test_learned_ranker_supports_public_hybrid_rank_signature() -> None:
     )
 
     assert [movie.movie_id for movie in ranked] == [2, 1]
+
+
+def test_learned_ranker_v2b_threads_explicit_recent_and_visible_history_features() -> None:
+    ranker = LearnedRanker(
+        _FakeEstimator(),
+        legal_train_rows=(Rating(9, 2, 5, 1),),
+        feature_version="v2b",
+        score_calibration="raw",
+    )
+    movies = {
+        1: Movie(1, "History", ("Drama",), 2000),
+        2: Movie(2, "Candidate", ("Drama",), 2001),
+    }
+    ranked = ranker.rank(
+        movies,
+        itemcf_scores={2: 0.5},
+        semantic_scores={2: 0.4},
+        latent_scores={2: 0.3},
+        recent_itemcf_scores={2: 0.2},
+        history_rows=(Rating(1, 1, 5, 10),),
+        statistics_rows=(Rating(9, 2, 5, 1),),
+        state=PreferenceState(liked_movie_ids={1}),
+    )
+
+    contributions = ranked[0].score.feature_contributions
+    assert tuple(contributions) == (*FEATURE_NAMES_V2B, "bias")
+    assert contributions["recent_itemcf_score"] == pytest.approx(0.2)
 
 
 def test_ranker_artifact_rejects_tampering(tmp_path: Path) -> None:
@@ -446,3 +567,54 @@ def test_booster_from_model_string_does_not_crash_after_torch_import() -> None:
         "Booster loading crashed after torch import with exit code "
         f"{result.returncode}:\n{result.stderr}"
     )
+
+
+def _v2_query(
+    user_id: int, target: int, rows: dict[int, tuple[float, ...]]
+) -> CandidateQuery:
+    return CandidateQuery(user_id=user_id, target_movie_id=target, features_by_movie=rows)
+
+
+def test_route_balanced_negatives_use_quotas_and_stable_order() -> None:
+    names = FEATURE_NAMES_V2
+    itemcf = names.index("itemcf_score")
+    latent = names.index("latent_score")
+    itemcf_rr = names.index("itemcf_reciprocal_rank")
+    latent_rr = names.index("latent_reciprocal_rank")
+    rows: dict[int, tuple[float, ...]] = {}
+    for movie_id in range(1, 301):
+        values = [0.0] * len(names)
+        values[itemcf] = 10.0 if movie_id % 2 else 1.0
+        values[latent] = 1.0 if movie_id % 2 else 10.0
+        values[itemcf_rr] = 1.0 / movie_id
+        values[latent_rr] = 1.0 / (movie_id + 1)
+        rows[movie_id] = tuple(values)
+    query = _v2_query(1, target=1, rows=rows)
+    matrix = build_training_matrix(
+        [query], max_negatives=200, negative_policy="route_balanced"
+    )
+    assert matrix.groups == (201,)
+    ordered_ids = [matrix.movie_ids[0]] + list(matrix.movie_ids[1:])
+    assert ordered_ids[0] == 1  # target first
+    negatives = ordered_ids[1:]
+    assert len(negatives) == 200
+    odd = [movie_id for movie_id in negatives if movie_id % 2]
+    even = [movie_id for movie_id in negatives if movie_id % 2 == 0]
+    assert len(odd) == 100 and len(even) == 100
+    assert negatives == sorted(
+        negatives,
+        key=lambda movie_id: (
+            -max(rows[movie_id][itemcf_rr], rows[movie_id][latent_rr]),
+            movie_id,
+        ),
+    )
+
+
+def test_negative_policy_all_preserves_movie_id_order() -> None:
+    rows = {movie_id: (float(100 - movie_id),) * 10 for movie_id in range(2, 12)}
+    rows[1] = (0.0,) * 10
+    query = _v2_query(1, target=1, rows=rows)
+    matrix = build_training_matrix([query], max_negatives=5, negative_policy="all")
+    assert matrix.movie_ids[1:] == (2, 3, 4, 5, 6)
+    unlimited = build_training_matrix([query], max_negatives=None, negative_policy="all")
+    assert len(unlimited.movie_ids) == 11

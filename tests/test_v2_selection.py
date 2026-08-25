@@ -4,6 +4,7 @@ import copy
 
 import pytest
 
+from recagent_eval.candidate_features import FEATURE_SCHEMA_FINGERPRINT_V2
 from recagent_eval.data import Movie, Rating, leakage_safe_ranking_split
 from recagent_eval.lambdamart_pipeline import build_fold_queries
 from recagent_eval.learned_ranking import CandidateQuery
@@ -382,3 +383,127 @@ def test_fold_candidate_statistics_fit_only_training_users(monkeypatch) -> None:
 
     assert seen_fit_users == [{1, 2, 3}, {1, 2, 3}]
     assert all(40 not in movie_ids for movie_ids in seen_fit_movies)
+
+
+def test_v2_evidence_carries_latent_provenance() -> None:
+    rows = [
+        {
+            "user_id": 1,
+            "itemcf_ndcg_at_10": 0.0,
+            "lambdamart_ndcg_at_10": 1.0,
+            "itemcf_recall_at_10": 0.0,
+            "lambdamart_recall_at_10": 1.0,
+            "itemcf_hit_at_10": 0.0,
+            "lambdamart_hit_at_10": 1.0,
+            "itemcf_candidate_recall": 1.0,
+            "dense_candidate_recall": 1.0,
+            "union_candidate_recall": 1.0,
+            "constraint_satisfied": True,
+            "legal_history_movie_ids": [2],
+            "allowed_movie_ids": [3],
+            "lambdamart_ranked_movie_ids": [3],
+            "latency_ms": 0.0,
+        }
+    ]
+    evidence = build_validation_evidence(
+        rows,
+        dataset_fingerprint="dataset",
+        feature_fingerprint=FEATURE_SCHEMA_FINGERPRINT_V2,
+        model_fingerprint="model",
+        candidate_policy_fingerprint="policy",
+        seed=42,
+        provenance={
+            "schema_version": "lambdamart-validation/v2",
+            "latent_artifact_checksum": "a" * 64,
+            "latent_provenance": {"training_fingerprint": "b" * 64},
+        },
+    )
+    assert evidence.schema_version == "lambdamart-validation/v2"
+    assert evidence.latent_artifact_checksum == "a" * 64
+
+
+def _positive_evidence_v2() -> LearnedValidationEvidence:
+    rows = [
+        {
+            "user_id": user,
+            "itemcf_ndcg_at_10": 0.0,
+            "lambdamart_ndcg_at_10": 0.2,
+            "itemcf_recall_at_10": 0.0,
+            "lambdamart_recall_at_10": 1.0,
+            "itemcf_hit_at_10": 0.0,
+            "lambdamart_hit_at_10": 1.0,
+            "itemcf_candidate_recall": 1.0,
+            "dense_candidate_recall": 1.0,
+            "union_candidate_recall": 1.0,
+            "constraint_satisfied": True,
+            "legal_history_movie_ids": [100 + user],
+            "allowed_movie_ids": [1, 2],
+            "lambdamart_ranked_movie_ids": [1],
+            "latency_ms": 1.0,
+        }
+        for user in range(20)
+    ]
+    return build_validation_evidence(
+        rows,
+        dataset_fingerprint="data",
+        feature_fingerprint=FEATURE_SCHEMA_FINGERPRINT_V2,
+        model_fingerprint="model",
+        candidate_policy_fingerprint="policy",
+        seed=42,
+        provenance={
+            "latent_artifact_checksum": "a" * 64,
+            "latent_provenance": {"training_fingerprint": "b" * 64},
+        },
+    )
+
+
+def test_v2_gate_validates_positive_evidence_and_rejects_negative() -> None:
+    evidence = _positive_evidence_v2()
+    validate_learned_gate(
+        evidence,
+        dataset_fingerprint="data",
+        feature_fingerprint=FEATURE_SCHEMA_FINGERPRINT_V2,
+        model_fingerprint="model",
+        candidate_policy_fingerprint="policy",
+    )
+    rows = copy.deepcopy(evidence.per_user_rows)
+    for row in rows:
+        row["itemcf_ndcg_at_10"] = 0.2
+        row["lambdamart_ndcg_at_10"] = 0.0
+        row["itemcf_recall_at_10"] = 1.0
+        row["lambdamart_recall_at_10"] = 0.0
+        row["itemcf_hit_at_10"] = 1.0
+        row["lambdamart_hit_at_10"] = 0.0
+    negative = build_validation_evidence(
+        rows,
+        dataset_fingerprint="data",
+        feature_fingerprint=FEATURE_SCHEMA_FINGERPRINT_V2,
+        model_fingerprint="model",
+        candidate_policy_fingerprint="policy",
+        seed=42,
+        provenance={
+            "latent_artifact_checksum": "a" * 64,
+            "latent_provenance": {"training_fingerprint": "b" * 64},
+        },
+    )
+    with pytest.raises(ValueError, match="did not improve"):
+        validate_learned_gate(
+            negative,
+            dataset_fingerprint="data",
+            feature_fingerprint=FEATURE_SCHEMA_FINGERPRINT_V2,
+            model_fingerprint="model",
+            candidate_policy_fingerprint="policy",
+        )
+
+
+def test_v1_evidence_rejects_latent_fields() -> None:
+    evidence = _positive_evidence()
+    evidence.latent_artifact_checksum = "a" * 64
+    with pytest.raises(ValueError, match="v1 cannot carry latent"):
+        validate_learned_gate(
+            evidence,
+            dataset_fingerprint="data",
+            feature_fingerprint="features",
+            model_fingerprint="model",
+            candidate_policy_fingerprint="policy",
+        )

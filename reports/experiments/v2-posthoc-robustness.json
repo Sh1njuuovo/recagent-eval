@@ -1,0 +1,38 @@
+{
+  "evidence_status": "post-hoc robustness",
+  "fingerprint": "6074e78c27467f2d1e4de1436d5aee747120d5e284323f820b08570b6f230faa",
+  "formal_main_seed": 42,
+  "methods": {
+    "bpr_mf": {
+      "seeds": [
+        {"candidate_recall": 1.0, "constraint_satisfaction_rate": 1.0, "mrr_at_10": 0.012574206349206349, "ndcg_at_10": 0.020466845867727408, "recall_at_10": 0.047, "seed": 42},
+        {"candidate_recall": 1.0, "constraint_satisfaction_rate": 1.0, "mrr_at_10": 0.013592063492063492, "ndcg_at_10": 0.020581728296156065, "recall_at_10": 0.044, "seed": 7},
+        {"candidate_recall": 1.0, "constraint_satisfaction_rate": 1.0, "mrr_at_10": 0.011207142857142856, "ndcg_at_10": 0.017887486112273736, "recall_at_10": 0.04, "seed": 2026}
+      ],
+      "summary": {
+        "candidate_recall": {"mean": 1.0, "sample_std": 0.0, "worst_seed": 42, "worst_value": 1.0},
+        "constraint_satisfaction_rate": {"mean": 1.0, "sample_std": 0.0, "worst_seed": 42, "worst_value": 1.0},
+        "mrr_at_10": {"mean": 0.012457804232804232, "sample_std": 0.0011967137077199086, "worst_seed": 2026, "worst_value": 0.011207142857142856},
+        "ndcg_at_10": {"mean": 0.019645353425385734, "sample_std": 0.001523441042827427, "worst_seed": 2026, "worst_value": 0.017887486112273736},
+        "recall_at_10": {"mean": 0.043666666666666666, "sample_std": 0.003511884584284246, "worst_seed": 2026, "worst_value": 0.04}
+      }
+    },
+    "lightgcn": {
+      "seeds": [
+        {"candidate_recall": 1.0, "constraint_satisfaction_rate": 1.0, "mrr_at_10": 0.010628968253968253, "ndcg_at_10": 0.016309393523155444, "recall_at_10": 0.035, "seed": 42},
+        {"candidate_recall": 1.0, "constraint_satisfaction_rate": 1.0, "mrr_at_10": 0.011282539682539684, "ndcg_at_10": 0.018523576466929956, "recall_at_10": 0.043, "seed": 7},
+        {"candidate_recall": 1.0, "constraint_satisfaction_rate": 1.0, "mrr_at_10": 0.011879761904761905, "ndcg_at_10": 0.018536847218909587, "recall_at_10": 0.041, "seed": 2026}
+      ],
+      "summary": {
+        "candidate_recall": {"mean": 1.0, "sample_std": 0.0, "worst_seed": 42, "worst_value": 1.0},
+        "constraint_satisfaction_rate": {"mean": 1.0, "sample_std": 0.0, "worst_seed": 42, "worst_value": 1.0},
+        "mrr_at_10": {"mean": 0.011263756613756615, "sample_std": 0.0006256083375172601, "worst_seed": 42, "worst_value": 0.010628968253968253},
+        "ndcg_at_10": {"mean": 0.017789939069664997, "sample_std": 0.0012822072237674673, "worst_seed": 42, "worst_value": 0.016309393523155444},
+        "recall_at_10": {"mean": 0.03966666666666666, "sample_std": 0.004163331998932263, "worst_seed": 42, "worst_value": 0.035}
+      }
+    }
+  },
+  "posthoc_seeds": [7, 2026],
+  "schema_version": "posthoc-robustness-summary/v1",
+  "source_input_fingerprint": "a5bbae17582d3b231e98c8338cf81f54aa6eca5c341c9a4c76bc3a939c38aa9a"
+}

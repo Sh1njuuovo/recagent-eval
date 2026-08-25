@@ -1,0 +1,7 @@
+command: HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 .venv/bin/recagent-eval run-frozen-promotion --promotion reports/promotion/current-v2b.yaml --authorized-canonical-manifest-identity 7739942cdb8d3c588c7dc6553c919f8166fc0aa55dc882dd3343bb1714d1a72b --data-dir /Users/shinjuu/intern/recagent-eval/data/raw/ml-1m
+exit_code: 0
+started_at: 2026-08-24T15:56:00.355385+00:00
+finished_at: 2026-08-24T16:08:39.092360+00:00
+preflight_receipt_fingerprint: 7bacc65f7600117361b7fcc5ac524642054457bafe1b98b595ac53ff9a79fff3
+marker_state: completed
+metrics_sha256: a48bd143e9ddbaee8cb0aa68881d7ee74921ef0b839cdfcc04afd02e7c752ab7

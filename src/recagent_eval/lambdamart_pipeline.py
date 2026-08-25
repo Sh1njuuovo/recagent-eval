@@ -3,18 +3,19 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import time
 from collections import Counter, defaultdict
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
 from recagent_eval.agent import build_semantic_profile
 from recagent_eval.bundle import publish_ranker_bundle
 from recagent_eval.candidate_features import (
-    FEATURE_SCHEMA_FINGERPRINT,
     build_candidate_feature_rows,
 )
 from recagent_eval.data import LeakageSafeRankingSplit, Movie, Rating
+from recagent_eval.latent_retrieval import LatentFactorRetriever
 from recagent_eval.learned_ranking import (
     CandidateQuery,
     LearnedRanker,
@@ -45,17 +46,46 @@ def train_lambdamart_pipeline(
     max_users: int,
     seed: int,
     registered_case_fingerprint: str = "unregistered",
+    training_user_ids: tuple[int, ...] | None = None,
+    eval_user_ids: tuple[int, ...] | None = None,
 ) -> dict[str, Any]:
     dataset_fingerprint = ranking_dataset_fingerprint(movies, split)
+    if training_user_ids is not None:
+        training_targets = {
+            user_id: split.ranker_targets[user_id] for user_id in training_user_ids
+        }
+        training_histories = {
+            user_id: split.histories[user_id] for user_id in training_user_ids
+        }
+    else:
+        training_targets = split.ranker_targets
+        training_histories = split.histories
+    training_latent = (
+        LatentFactorRetriever.fit(
+            split.ranker_training_history,
+            rank=config.latent_rank,
+            iterations=config.latent_iterations,
+            alpha=config.latent_alpha,
+            lambda_reg=config.latent_lambda_reg,
+            seed=config.latent_seed,
+        )
+        if config.latent_enabled
+        else None
+    )
     training_queries = build_candidate_queries(
         movies,
         split.ranker_training_history,
-        split.histories,
-        split.ranker_targets,
+        training_histories,
+        training_targets,
         semantic,
         retrieval_top_k=config.retrieval_top_k,
         history_cap=config.semantic_profile_history_cap,
+        semantic_top_k=config.semantic_top_k,
+        score_calibration=config.score_calibration,
         max_users=max_users,
+        latent=training_latent,
+        latent_top_k=config.latent_top_k,
+        feature_version=config.ranker_feature_version,
     )
     cv = cross_validate_lambdamart(
         training_queries,
@@ -69,8 +99,14 @@ def train_lambdamart_pipeline(
             train_users=train_users,
             validation_users=validation_users,
         ),
+        max_negatives=config.ranker_max_negatives,
+        negative_policy=config.ranker_negative_policy,
     )
-    matrix = build_training_matrix(training_queries)
+    matrix = build_training_matrix(
+        training_queries,
+        max_negatives=config.ranker_max_negatives,
+        negative_policy=config.ranker_negative_policy,
+    )
     estimator = make_lgbm_ranker(cv.selected_params, seed=seed)
     estimator.fit(
         list(matrix.features),
@@ -117,9 +153,45 @@ def train_lambdamart_pipeline(
         "case_fingerprint": registered_case_fingerprint,
         "report_fingerprint": _fingerprint(cv_results),
     }
-    learned = LearnedRanker(estimator, legal_train_rows=split.legal_retrieval_train)
+    learned = LearnedRanker(
+        estimator,
+        legal_train_rows=split.legal_retrieval_train,
+        score_calibration=config.score_calibration,
+        feature_version=config.ranker_feature_version,
+    )
+    final_latent: LatentFactorRetriever | None = None
+    latent_artifact_checksum: str | None = None
+    latent_provenance: dict[str, Any] | None = None
+    if config.latent_enabled:
+        final_latent = LatentFactorRetriever.fit(
+            split.legal_retrieval_train,
+            rank=config.latent_rank,
+            iterations=config.latent_iterations,
+            alpha=config.latent_alpha,
+            lambda_reg=config.latent_lambda_reg,
+            seed=config.latent_seed,
+        )
+        latent_bytes, latent_manifest_bytes = final_latent.to_artifact_bytes()
+        latent_artifact_checksum = hashlib.sha256(latent_bytes).hexdigest()
+        latent_provenance = {
+            "training_fingerprint": final_latent.training_fingerprint,
+            "rank": final_latent.rank,
+            "iterations": final_latent.iterations,
+            "alpha": final_latent.alpha,
+            "lambda_reg": final_latent.lambda_reg,
+            "seed": final_latent.seed,
+            "top_k": config.latent_top_k,
+            "artifact_path": config.latent_artifact_path,
+        }
     rows = build_validation_rows(
-        movies, split, semantic, config, learned, max_users=max_users
+        movies,
+        split,
+        semantic,
+        config,
+        learned,
+        max_users=max_users,
+        latent=final_latent,
+        ordered_user_ids=eval_user_ids,
     )
     provenance["validation_rows_fingerprint"] = _fingerprint(rows)
     provenance["validation_user_count"] = len(rows)
@@ -131,12 +203,16 @@ def train_lambdamart_pipeline(
         training_group_count=len(matrix.groups),
         provenance=provenance,
         cv_results=cv_results,
+        feature_version=config.ranker_feature_version,
+        latent_artifact_checksum=latent_artifact_checksum,
+        latent_provenance=latent_provenance,
     )
     policy_fingerprint = candidate_policy_fingerprint(config)
+    feature_fingerprint = learned.feature_fingerprint
     evidence = build_validation_evidence(
         rows,
         dataset_fingerprint=dataset_fingerprint,
-        feature_fingerprint=FEATURE_SCHEMA_FINGERPRINT,
+        feature_fingerprint=feature_fingerprint,
         model_fingerprint=artifact.model_checksum,
         candidate_policy_fingerprint=policy_fingerprint,
         seed=seed,
@@ -147,11 +223,24 @@ def train_lambdamart_pipeline(
             "training_user_count": matrix.training_users,
             "training_group_count": len(matrix.groups),
             "dependency_versions": artifact.dependency_versions,
+            "latent_artifact_checksum": latent_artifact_checksum,
+            "latent_provenance": latent_provenance,
         },
     )
     evidence_bytes = (
         json.dumps(evidence.model_dump(mode="json"), indent=2, sort_keys=True) + "\n"
     ).encode()
+    latent_member = None
+    latent_manifest_member = None
+    if config.latent_enabled:
+        latent_member = (
+            Path(config.latent_artifact_path),
+            latent_bytes,
+        )
+        latent_manifest_member = (
+            Path(f"{config.latent_artifact_path}.json"),
+            latent_manifest_bytes,
+        )
     publish_ranker_bundle(
         serialize_ranker_artifact(artifact),
         evidence_bytes,
@@ -163,8 +252,10 @@ def train_lambdamart_pipeline(
             "config_fingerprint": provenance["config_fingerprint"],
             "dataset_fingerprint": dataset_fingerprint,
             "candidate_policy_fingerprint": policy_fingerprint,
-            "feature_fingerprint": FEATURE_SCHEMA_FINGERPRINT,
+            "feature_fingerprint": feature_fingerprint,
         },
+        latent_member=latent_member,
+        latent_manifest_member=latent_manifest_member,
     )
     return {
         "selected_params": cv.selected_params,
@@ -173,7 +264,7 @@ def train_lambdamart_pipeline(
         "validation_users": len(rows),
         "model_checksum": artifact.model_checksum,
         "dataset_fingerprint": dataset_fingerprint,
-        "feature_fingerprint": FEATURE_SCHEMA_FINGERPRINT,
+        "feature_fingerprint": feature_fingerprint,
         "candidate_policy_fingerprint": policy_fingerprint,
         "bundle_manifest_path": str(bundle_manifest_output),
     }
@@ -187,8 +278,13 @@ def build_validation_rows(
     learned: LearnedRanker,
     *,
     max_users: int,
+    latent: LatentFactorRetriever | None = None,
+    ordered_user_ids: tuple[int, ...] | None = None,
 ) -> list[dict[str, Any]]:
     validation_histories = _positive_histories(split.legal_retrieval_train, movies)
+    query_max_users = (
+        len(ordered_user_ids) if ordered_user_ids is not None else max_users
+    )
     validation_queries = build_candidate_queries(
         movies,
         split.legal_retrieval_train,
@@ -197,15 +293,23 @@ def build_validation_rows(
         semantic,
         retrieval_top_k=config.retrieval_top_k,
         history_cap=config.semantic_profile_history_cap,
-        max_users=max_users,
+        semantic_top_k=config.semantic_top_k,
+        score_calibration=config.score_calibration,
+        latent=latent,
+        latent_top_k=config.latent_top_k,
+        feature_version=config.ranker_feature_version,
+        max_users=query_max_users,
+        ordered_user_ids=ordered_user_ids,
     )
     baseline = HybridRanker(kind="itemcf")
     rows: list[dict[str, Any]] = []
     for query in validation_queries:
         feature_rows = query.features_by_movie
+        rank_started = time.perf_counter()
         learned_ids = [
             item.movie_id for item in learned.rank_feature_rows(movies, feature_rows, top_k=10)
         ]
+        latency_ms = (time.perf_counter() - rank_started) * 1000.0
         # ItemCF uses the exact same union candidate policy; non-ItemCF route
         # members receive the existing baseline's zero score and ID tie-break.
         itemcf_scores = {movie_id: values[0] for movie_id, values in feature_rows.items()}
@@ -243,7 +347,7 @@ def build_validation_rows(
                 ),
                 "allowed_movie_ids": sorted(feature_rows),
                 "lambdamart_ranked_movie_ids": learned_ids,
-                "latency_ms": 0.0,
+                "latency_ms": latency_ms,
             }
         )
     return rows
@@ -260,10 +364,42 @@ def build_candidate_queries(
     history_cap: int,
     max_users: int,
     states: Mapping[int, PreferenceState] | None = None,
+    semantic_top_k: int | None = None,
+    semantic_query_builder: Callable[[PreferenceState, dict[int, Movie], int], str]
+    | None = None,
+    score_calibration: str = "raw",
+    latent: LatentFactorRetriever | None = None,
+    latent_top_k: int | None = None,
+    feature_version: str = "v1",
+    ordered_user_ids: tuple[int, ...] | None = None,
 ) -> list[CandidateQuery]:
+    if semantic_top_k is not None and semantic_top_k <= 0:
+        raise ValueError("semantic_top_k must be positive")
+    dense_top_k = retrieval_top_k if semantic_top_k is None else semantic_top_k
+    query_builder = semantic_query_builder or (
+        lambda state, movies, history_cap: build_semantic_profile(
+            "", state, movies, history_cap=history_cap
+        )
+    )
     itemcf = ItemCFRetriever.fit(legal_train_rows)
     queries: list[CandidateQuery] = []
-    for user_id, target in sorted(targets.items())[:max_users]:
+    if ordered_user_ids is None:
+        selected_targets = sorted(targets.items())[:max_users]
+    else:
+        if len(ordered_user_ids) != len(set(ordered_user_ids)):
+            raise ValueError("ordered_user_ids contains duplicate users")
+        if len(ordered_user_ids) != max_users:
+            raise ValueError("ordered_user_ids count must match max_users")
+        missing_targets = [user_id for user_id in ordered_user_ids if user_id not in targets]
+        if missing_targets:
+            raise ValueError(
+                f"ordered_user_ids contains missing target users: {missing_targets}"
+            )
+        ineligible = [user_id for user_id in ordered_user_ids if not histories.get(user_id)]
+        if ineligible:
+            raise ValueError(f"ordered_user_ids contains ineligible users: {ineligible}")
+        selected_targets = [(user_id, targets[user_id]) for user_id in ordered_user_ids]
+    for user_id, target in selected_targets:
         history_rows = histories.get(user_id, ())
         history_ids = {
             row.movie_id for row in history_rows if row.rating >= 4 and row.movie_id in movies
@@ -281,19 +417,47 @@ def build_candidate_queries(
         )
         dense_scores = dict(
             semantic.retrieve(
-                build_semantic_profile("", state, movies, history_cap=history_cap),
-                top_k=retrieval_top_k,
+                query_builder(state, movies, history_cap),
+                top_k=dense_top_k,
                 allowed_ids=allowed_ids,
             )
         )
+        latent_scores = {}
+        if latent is not None:
+            latent_scores = dict(
+                latent.retrieve(
+                    history_ids,
+                    top_k=latent_top_k or 500,
+                    allowed_ids=allowed_ids,
+                )
+            )
+        recent_itemcf_scores = None
+        if feature_version == "v2b":
+            recent_rows = sorted(
+                (
+                    row
+                    for row in history_rows
+                    if row.rating >= 4 and row.movie_id in movies
+                ),
+                key=lambda row: (row.timestamp, row.movie_id),
+            )[-10:]
+            recent_ids = {row.movie_id for row in recent_rows}
+            union_candidates = (
+                set(itemcf_scores) | set(dense_scores) | set(latent_scores)
+            )
+            recent_itemcf_scores = itemcf.score_many(recent_ids, union_candidates)
         rows = build_candidate_feature_rows(
             user_id=user_id,
             movies=movies,
             itemcf_scores=itemcf_scores,
             dense_scores=dense_scores,
+            latent_scores=latent_scores,
+            recent_itemcf_scores=recent_itemcf_scores,
             history=history_rows,
             train_rows=legal_train_rows,
             state=state,
+            score_calibration=score_calibration,
+            feature_version=feature_version,
         )
         queries.append(
             CandidateQuery(
@@ -321,12 +485,29 @@ def build_fold_queries(
         for row in split.ranker_training_history
         if row.user_id in training_user_set
     )
+    latent = (
+        LatentFactorRetriever.fit(
+            fold_train_rows,
+            rank=config.latent_rank,
+            iterations=config.latent_iterations,
+            alpha=config.latent_alpha,
+            lambda_reg=config.latent_lambda_reg,
+            seed=config.latent_seed,
+        )
+        if config.latent_enabled
+        else None
+    )
     common = {
         "movies": movies,
         "legal_train_rows": fold_train_rows,
         "semantic": semantic,
         "retrieval_top_k": config.retrieval_top_k,
         "history_cap": config.semantic_profile_history_cap,
+        "semantic_top_k": config.semantic_top_k,
+        "score_calibration": config.score_calibration,
+        "latent": latent,
+        "latent_top_k": config.latent_top_k,
+        "feature_version": config.ranker_feature_version,
     }
     return (
         build_candidate_queries(
@@ -350,32 +531,67 @@ def build_fold_queries(
 
 
 def candidate_policy_fingerprint(config: ExperimentConfig) -> str:
-    payload = {
-        "schema": "union-candidate-policy/v1",
+    base = {
         "retrieval_top_k": config.retrieval_top_k,
         "semantic_profile_history_cap": config.semantic_profile_history_cap,
         "semantic_kind": config.semantic_kind,
         "semantic_model_name": config.semantic_model_name,
         "semantic_model_revision": config.semantic_model_revision,
         "semantic_cache_path": config.semantic_cache_path,
+        "semantic_top_k": config.semantic_top_k,
+        "score_calibration": config.score_calibration,
     }
+    if not config.latent_enabled:
+        payload = {"schema": "union-candidate-policy/v1", **base}
+    else:
+        payload = {
+            "schema": "union-candidate-policy/v2",
+            **base,
+            "latent": {
+                "rank": config.latent_rank,
+                "iterations": config.latent_iterations,
+                "alpha": config.latent_alpha,
+                "lambda_reg": config.latent_lambda_reg,
+                "seed": config.latent_seed,
+                "top_k": config.latent_top_k,
+            },
+            "feature_version": config.ranker_feature_version,
+            "negative_policy": config.ranker_negative_policy,
+            "max_negatives": config.ranker_max_negatives,
+        }
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
 
 
 def lambdamart_config_fingerprint(config: ExperimentConfig) -> str:
-    return _fingerprint(
-        {
-            "retrieval_top_k": config.retrieval_top_k,
-            "semantic_profile_history_cap": config.semantic_profile_history_cap,
-            "semantic_kind": config.semantic_kind,
-            "semantic_model_name": config.semantic_model_name,
-            "semantic_model_revision": config.semantic_model_revision,
-            "semantic_cache_path": config.semantic_cache_path,
-            "seed": config.seed,
+    payload = {
+        "retrieval_top_k": config.retrieval_top_k,
+        "semantic_profile_history_cap": config.semantic_profile_history_cap,
+        "semantic_kind": config.semantic_kind,
+        "semantic_model_name": config.semantic_model_name,
+        "semantic_model_revision": config.semantic_model_revision,
+        "semantic_cache_path": config.semantic_cache_path,
+        "semantic_top_k": config.semantic_top_k,
+        "score_calibration": config.score_calibration,
+        "seed": config.seed,
+    }
+    if config.latent_enabled:
+        payload = {
+            **payload,
+            "latent": {
+                "rank": config.latent_rank,
+                "iterations": config.latent_iterations,
+                "alpha": config.latent_alpha,
+                "lambda_reg": config.latent_lambda_reg,
+                "seed": config.latent_seed,
+                "top_k": config.latent_top_k,
+            },
+            "feature_version": config.ranker_feature_version,
+            "negative_policy": config.ranker_negative_policy,
+            "max_negatives": config.ranker_max_negatives,
         }
-    )
+    return _fingerprint(payload)
 
 
 def ranking_dataset_fingerprint(

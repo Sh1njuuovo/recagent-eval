@@ -1505,6 +1505,7 @@ dependencies = [
     { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "pydantic" },
     { name = "pyyaml" },
+    { name = "threadpoolctl" },
     { name = "typer" },
 ]
 
@@ -1521,6 +1522,7 @@ ml = [
     { name = "lightgbm" },
     { name = "scikit-learn" },
     { name = "sentence-transformers" },
+    { name = "torch" },
 ]
 
 [package.metadata]
@@ -1536,6 +1538,8 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.9,<1" },
     { name = "scikit-learn", marker = "extra == 'ml'", specifier = ">=1.5,<2" },
     { name = "sentence-transformers", marker = "extra == 'ml'", specifier = ">=3.3,<6" },
+    { name = "threadpoolctl", specifier = ">=3.1,<4" },
+    { name = "torch", marker = "extra == 'ml'", specifier = ">=2.2,<3" },
     { name = "typer", specifier = ">=0.12,<1" },
 ]
 provides-extras = ["demo", "ml", "dev"]

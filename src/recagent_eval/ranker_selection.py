@@ -14,6 +14,7 @@ from recagent_eval.agent import MovieRanker, build_semantic_profile
 from recagent_eval.cases import EvaluationCase
 from recagent_eval.data import DatasetSplit, Movie, Rating
 from recagent_eval.evaluation import hit_rate_at_k, ndcg_at_k, recall_at_k
+from recagent_eval.latent_retrieval import LatentFactorRetriever
 from recagent_eval.models import PreferenceState
 from recagent_eval.ranking import HybridRanker, RankerKind
 from recagent_eval.retrieval import (
@@ -253,22 +254,45 @@ def evaluate_frozen_cases(
     retrieval_top_k: int,
     history_cap: int,
     semantic_retriever: SemanticRetriever | None = None,
+    semantic_top_k: int | None = None,
+    latent_retriever: LatentFactorRetriever | None = None,
+    latent_top_k: int = 500,
+    feature_version: str = "v1",
 ) -> dict[str, float | int | str]:
-    itemcf = ItemCFRetriever.fit(ratings)
+    if semantic_top_k is not None and semantic_top_k <= 0:
+        raise ValueError("semantic_top_k must be positive")
+    if latent_top_k <= 0:
+        raise ValueError("latent_top_k must be positive")
+    if feature_version not in {"v1", "v2", "v2b"}:
+        raise ValueError("feature_version must be v1, v2, or v2b")
+    legal_rows = tuple(ratings)
+    minimum_allowed_timestamp = min(
+        (row.timestamp for row in legal_rows), default=0
+    )
     semantic = semantic_retriever or TfidfSemanticRetriever.fit(movies)
     recalls: list[float] = []
     ndcgs: list[float] = []
     hits: list[float] = []
     itemcf_hits: list[float] = []
     semantic_hits: list[float] = []
+    latent_hits: list[float] = []
     union_hits: list[float] = []
     for case in cases:
         state = case.expected_preferences or case.initial_state
+        history = set(state.liked_movie_ids)
+        if history & case.relevant_movie_ids:
+            raise ValueError("frozen target/relevant IDs must not enter visible history")
+        visible_rows = tuple(
+            row
+            for row in legal_rows
+            if row.user_id != case.user_id
+            or (row.movie_id in history and row.movie_id not in case.relevant_movie_ids)
+        )
+        itemcf = ItemCFRetriever.fit(visible_rows)
         allowed_movies = {
             movie.movie_id: movie for movie in hard_filter(movies.values(), state)
         }
         allowed_ids = set(allowed_movies)
-        history = set(state.liked_movie_ids)
         itemcf_scores = dict(
             itemcf.retrieve(
                 history,
@@ -284,16 +308,72 @@ def evaluate_frozen_cases(
                     movies,
                     history_cap=history_cap,
                 ),
-                top_k=retrieval_top_k,
+                top_k=semantic_top_k or retrieval_top_k,
                 allowed_ids=allowed_ids,
             )
         )
+        latent_scores = (
+            dict(
+                latent_retriever.retrieve(
+                    history,
+                    top_k=latent_top_k,
+                    allowed_ids=allowed_ids,
+                )
+            )
+            if latent_retriever is not None
+            else {}
+        )
+        timestamps: dict[int, int] = {}
+        for row in visible_rows:
+            if (
+                row.user_id == case.user_id
+                and row.movie_id in history
+                and row.rating >= 4
+            ):
+                timestamps[row.movie_id] = max(
+                    timestamps.get(row.movie_id, minimum_allowed_timestamp),
+                    row.timestamp,
+                )
+        history_rows = tuple(
+            Rating(
+                case.user_id,
+                movie_id,
+                5,
+                timestamps.get(movie_id, minimum_allowed_timestamp),
+            )
+            for movie_id in sorted(history)
+            if movie_id in movies
+        )
+        recent_ids = {
+            row.movie_id
+            for row in sorted(
+                history_rows, key=lambda row: (row.timestamp, row.movie_id)
+            )[-10:]
+        }
+        union_candidates = set(itemcf_scores) | set(semantic_scores) | set(latent_scores)
+        recent_itemcf_scores = (
+            itemcf.score_many(recent_ids, union_candidates)
+            if feature_version == "v2b"
+            else None
+        )
+        rank_kwargs = {
+            "itemcf_scores": itemcf_scores,
+            "semantic_scores": semantic_scores,
+            "state": state,
+            "top_k": 10,
+        }
+        if ranker.kind == "lambdamart":
+            rank_kwargs.update(
+                {
+                    "latent_scores": latent_scores,
+                    "recent_itemcf_scores": recent_itemcf_scores,
+                    "history_rows": history_rows,
+                    "statistics_rows": visible_rows,
+                }
+            )
         ranked = ranker.rank(
             allowed_movies,
-            itemcf_scores=itemcf_scores,
-            semantic_scores=semantic_scores,
-            state=state,
-            top_k=10,
+            **rank_kwargs,
         )
         ranked_ids = [movie.movie_id for movie in ranked]
         relevant = case.relevant_movie_ids
@@ -302,8 +382,14 @@ def evaluate_frozen_cases(
         hits.append(hit_rate_at_k(ranked_ids, relevant, 10))
         itemcf_hits.append(float(bool(set(itemcf_scores) & relevant)))
         semantic_hits.append(float(bool(set(semantic_scores) & relevant)))
+        latent_hits.append(float(bool(set(latent_scores) & relevant)))
         union_hits.append(
-            float(bool((set(itemcf_scores) | set(semantic_scores)) & relevant))
+            float(
+                bool(
+                    (set(itemcf_scores) | set(semantic_scores) | set(latent_scores))
+                    & relevant
+                )
+            )
         )
     return {
         "cases": len(cases),
@@ -313,6 +399,7 @@ def evaluate_frozen_cases(
         "hit_rate_at_10": _mean(hits),
         "itemcf_candidate_recall": _mean(itemcf_hits),
         "semantic_candidate_recall": _mean(semantic_hits),
+        "latent_candidate_recall": _mean(latent_hits),
         "union_candidate_recall": _mean(union_hits),
     }
 

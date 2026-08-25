@@ -34,16 +34,22 @@ runtime 面板会明确标注 provider 为 rule-based，不能表述成 LLM 效�
 5. **5:15–6:30 — 防泄漏评测。** 按用户时间切分，验证目标与测试目标都不进入
    ItemCF 训练；LambdaMART 用整用户 GroupKFold 三分 CV 选参、验证证据可回放，
    frozen 评测单次消费、fail-closed。
-6. **6:30–8:15 — v2 本地结果。** 展示 500-user 表：约束 100%，但 LambdaMART
-   NDCG@10（0.0327）未超过 ItemCF（0.0334），bootstrap CI 跨零，frozen 门保持
-   锁定；候选并集召回 77.6%、dense 召回仅 28.8%。这是**如实保留的负结果**。
+6. **6:30–8:15 — 从负结果到认证。** 先展示早期 500-user LambdaMART
+   NDCG@10 0.0327 vs ItemCF 0.0334 的负结果，再讲 ALS latent route：latent
+   recall@500 0.838、union recall 0.928、中位目标排名 93。最后展示全新
+   Confirmation-B：current_v2b Recall@10 0.118、NDCG@10 0.0555，ItemCF
+   0.064/0.0323，paired-bootstrap CI 下界大于 0，约束 100%。
 7. **8:15–9:30 — 真实调试案例。** 讲 LightGBM 段错误：torch/LightGBM/scikit-learn
    各加载一份 `libomp.dylib`，多线程训练在 `__kmp_suspend_initialize_thread`
    空指针崩溃；用 faulthandler/lldb 拿到原生栈后，通过 `n_jobs=1` 与
    `OMP_NUM_THREADS=1` 修复，并新增两个子进程回归测试（先写测试、看它崩、
    再修代码）。
-8. **9:30–10:00 — 下一步。** 保持测试矩阵冻结；先在验证集提高候选召回
-   （尤其是 dense 通道 28.8%）与分数校准，离线 NDCG 改善后再考虑 frozen 重跑。
+8. **9:30–10:00 — 一次性发布与边界。** Confirmation-A 因读数后修复降级为
+   开发证据；Confirmation-B 是唯一算法认证。锁定 current_v2b 后完成一次
+   50-case final promotion evaluation：Recall@10 0.08、NDCG@10 0.03964，union
+   覆盖 47/50、Top-10 命中 4/50。该 suite 曾用于历史 DeepSeek 系统实验，且本次
+   未运行匹配 ItemCF/ALS baseline，因此只作为泛化补充，不作 frozen baseline
+   显著性 claim；identity 已永久消费，后续不调参、不重跑。
    DeepSeek 历史结果见
    [deepseek-constraint-aware](../reports/experiments/deepseek-constraint-aware.md)；
    Qwen/vLLM 待 4090 空闲后仅做兼容性冒烟，不虚构吞吐/显存数字。
@@ -54,4 +60,7 @@ runtime 面板会明确标注 provider 为 rule-based，不能表述成 LLM 效�
 - 简历数字一律从 `artifacts/experiments/v2-500/validation.json` 等已核验 JSON
   复制，不临时估算。
 - 当前安全主结论：搭建了防泄漏的 Agent/检索/排序评测系统，完成可复现的 dense
-  召回与 LambdaMART 证据契约，并定位到剩余的真实训练/运行瓶颈。
+  召回与 LambdaMART 证据契约，并在独立 Confirmation-B 上取得显著提升。
+
+The one-time final promotion identity is completed and permanently consumed.
+Confirmation-B remains the headline evidence. Qwen/4090 remains pending.

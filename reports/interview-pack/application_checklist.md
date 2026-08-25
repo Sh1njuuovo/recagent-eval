@@ -8,18 +8,23 @@
 | 本地最小路径 | `uv run recagent-eval smoke` | 完成 |
 | MovieLens 全链路 | 50 案例三组 rule-based 对照 | 完成 |
 | 核心代码讲解 | `docs/core-code-walkthrough.md` | 完成 |
-| 自动化测试 | pytest 229 tests，90% line coverage | 完成 |
+| 自动化测试 | pytest 439 tests，90.04% line coverage | 完成 |
 | 指标口径与负结果 | `reports/experiments/deepseek-constraint-aware.md` | 完成 |
 | 简历 4–5 行 | `resume_star.md` | 完成 |
 | 面试追问 | `interview_qa.md` | 完成 |
 | 10 分钟展示 | `docs/demo-script.md` | 完成 |
 | DeepSeek 正式 50 案例 | `reports/experiments/deepseek-constraint-aware.md` | 完成 |
 | dense 缓存与 LambdaMART 证据 | `reports/experiments/v2-dense-lambdamart-500user.md` | 完成 |
+| Confirmation-B 正式认证 | Recall@10 0.118、NDCG@10 0.0555 | 完成 |
+| 一次性 final promotion | 50 cases：Recall@10 0.08、NDCG@10 0.03964 | 完成并永久消费 |
+| Promotion claim 边界 | 同 suite 曾用于 DeepSeek；无匹配 ItemCF/ALS 对照 | 完成 |
 | 本地 Demo 截图（rule-based） | `reports/demo/v2-demo-lambdamart-rule-based.png` | 完成 |
 | Qwen/vLLM 4090 冒烟 | `scripts/run_remote_qwen.sh` | 待远程主机 |
 | 远程硬件/成本记录 | `docs/remote-4090.md` | 待实跑填写 |
 
-投递时可使用已完成的本地与 DeepSeek 指标：正式结构化方案的计划、工具、
-pipeline 和硬约束指标均达到 100%；v2 LambdaMART 验证约束 100%，但 NDCG@10
-未超过 ItemCF（bootstrap CI 跨零），frozen 门保持锁定。必须保留这些负结果；
-Qwen 数字仍需等远程主机实跑。
+投递时保留早期 LambdaMART 负结果作为诊断过程。主要算法数字来自全新
+1000-user Confirmation-B：Recall@10 0.118、NDCG@10 0.0555，ItemCF 为
+0.064/0.0323，bootstrap CI 下界大于 0，约束 100%。Confirmation-A 标为开发
+证据。50-case promotion 只作泛化补充：union 覆盖 47/50、Top-10 命中 4/50；
+不声明历史纯净 holdout 或 baseline 显著胜出，也不再围绕这些 cases 调参。若启动
+v3，先预注册新的未使用 holdout。Qwen/4090 remains pending.

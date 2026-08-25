@@ -1,0 +1,32 @@
+{
+  "config_fingerprint": "58a0a73e58971a2cc1eb60a26d62ecf50e12ae5b011c93063e6248cb51ecaab0",
+  "fingerprints": {
+    "candidate_policy": "30b325ed7a021a7d5e9c146a9df771903aba90a1352f3a0ee9530c95fa3dc5aa",
+    "case": "bc2f622cd9311bca8509a46f0ee516355bc64db7d91f809273a35d97ce304d88",
+    "dataset": "0d2c756a78f02a8ea8680bd216364a6ab7afffc2ae1a26df0611591147897eac",
+    "diagnostic_dataset": "57c3e8e9d55b83943bc1ab98189fd2ca82df65b15c0a660a35827c394f36bcb1",
+    "feature_schema": "4f4c4a4b8fa4979fce378c57466c5e2fdccd23d017919d3232ca3bc24a0e3603"
+  },
+  "max_users": 500,
+  "schema_version": "latent-diagnostics/v1",
+  "summary": {
+    "fit_seconds": 2.3363028329913504,
+    "latent_only_coverage": 0.05,
+    "latent_present_user_count": 419,
+    "latent_recall_100_all": 0.44,
+    "latent_recall_10_all": 0.084,
+    "latent_recall_10_present": 0.10023866348448687,
+    "latent_recall_500_all": 0.838,
+    "latent_recall_500_present": 1.0,
+    "latent_recall_50_all": 0.264,
+    "overlap_dense_latent": 0.14960483934593244,
+    "overlap_itemcf_latent": 0.46960254325831696,
+    "target_latent_rank_quantiles": {
+      "p25": 37.0,
+      "p50": 93.0,
+      "p75": 191.0
+    },
+    "union_recall_three_route": 0.928,
+    "user_count": 500
+  }
+}
