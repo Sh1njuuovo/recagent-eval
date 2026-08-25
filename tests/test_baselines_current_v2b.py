@@ -24,7 +24,9 @@ def _ratings() -> list[Rating]:
     ]
 
 
-def test_current_v2b_is_registered_and_restricts_training_users(monkeypatch) -> None:
+def test_current_v2b_is_registered_and_restricts_training_users(
+    monkeypatch, tmp_path
+) -> None:
     assert "current_v2b" in BASELINE_SCORERS
     movies = _movies()
     split = leakage_safe_ranking_split(_ratings())
@@ -32,6 +34,11 @@ def test_current_v2b_is_registered_and_restricts_training_users(monkeypatch) -> 
     dev = eligible[6:10]
     eval_users = tuple(eligible[10:13])
     calls: dict[str, object] = {}
+    real_mkdtemp = module.tempfile.mkdtemp
+
+    def portable_mkdtemp(*, prefix, **kwargs):
+        calls["tempdir_kwargs"] = kwargs
+        return real_mkdtemp(prefix=prefix, dir=tmp_path)
 
     def fake_train(movies_, split_, semantic, config, **kwargs):
         del movies_, semantic, config
@@ -67,6 +74,7 @@ def test_current_v2b_is_registered_and_restricts_training_users(monkeypatch) -> 
         "DenseSemanticRetriever",
         SimpleNamespace(load=lambda *args, **kwargs: SimpleNamespace()),
     )
+    monkeypatch.setattr(module.tempfile, "mkdtemp", portable_mkdtemp)
     monkeypatch.setattr(module, "train_lambdamart_pipeline", fake_train)
     result = score_current_v2b(
         movies,
@@ -82,3 +90,4 @@ def test_current_v2b_is_registered_and_restricts_training_users(monkeypatch) -> 
     assert len(result["rows"]) == len(eval_users)
     assert all(row.recall_at_10 == 1.0 for row in result["rows"])
     assert result["model_fingerprint"] == "m" * 64
+    assert calls["tempdir_kwargs"] == {}

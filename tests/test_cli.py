@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 import yaml
+from click import unstyle
 from rich.console import Console
 from typer.testing import CliRunner
 
@@ -20,6 +21,16 @@ from recagent_eval.v2_selection import (
     consume_frozen_authorization,
     consumption_marker_path,
 )
+
+
+def _plain_cli_output(output: str) -> str:
+    return unstyle(output)
+
+
+def test_plain_cli_output_removes_ansi_inside_option_name() -> None:
+    styled = "\x1b[31mlocked\x1b[0m\x1b[31m-params\x1b[0m"
+
+    assert "locked-params" in _plain_cli_output(styled)
 
 
 def test_smoke_command_runs_offline_end_to_end(tmp_path) -> None:
@@ -1950,7 +1961,7 @@ def test_evaluate_baselines_rejects_nondefault_seed_without_locked_params(tmp_pa
         ],
     )
     assert result.exit_code != 0
-    assert "locked-params" in result.output
+    assert "locked-params" in _plain_cli_output(result.output)
 
 
 def test_evaluate_baselines_writes_strict_v2_with_locked_recovery(

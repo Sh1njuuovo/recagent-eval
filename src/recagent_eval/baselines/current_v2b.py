@@ -45,7 +45,7 @@ def score_current_v2b(
         training_users = training_users[:max_training_users]
     config = load_experiment_config(Path("configs/v2_dense_latent_bfeat.yaml"))
     selected_config = asdict(config)
-    workdir = Path(tempfile.mkdtemp(prefix="v2b-baseline-", dir="/private/tmp"))
+    workdir = Path(tempfile.mkdtemp(prefix="v2b-baseline-"))
     config = replace(config, latent_artifact_path=str(workdir / "latent.npz"))
     model_path = workdir / "model.json"
     evidence_path = workdir / "validation.json"
