@@ -35,20 +35,26 @@ instead of logging secrets.
 
 ## 4. Retrieval and ranking
 
-The execution path is:
+The current `v2b` execution path is:
 
-1. `hard_filter` removes watched/disliked/excluded IDs, invalid year ranges, and
-   required/excluded genre violations.
-2. `ItemCFRetriever` fits positive interactions from training rows only and
-   uses cosine-normalized co-occurrence. Popularity is the cold-start fallback.
-3. `TfidfSemanticRetriever` embeds title and genre tokens and excludes
-   zero-similarity candidates.
-4. `HybridRanker` min-max normalizes sources, adds preference affinity, and
-   returns score decomposition for every movie.
+1. `hard_filter` removes watched, disliked, and explicitly excluded IDs and
+   enforces required/excluded genres and year ranges.
+2. `ItemCFRetriever` produces a Top-500 collaborative route from legal positive
+   history. Popularity remains its cold-start fallback.
+3. `DenseSemanticRetriever` produces a Top-1500 semantic route from normalized
+   `all-MiniLM-L6-v2` embeddings of MovieLens title/genre text.
+4. `LatentFactorRetriever` produces a Top-500 weighted-ALS route. Evaluation users are
+   scored by standard fold-in from their own legal history; fitted user factors
+   are never reused across the split boundary.
+5. The route union is represented by the fixed 16-feature `v2b` schema:
+   raw score, reciprocal rank, route membership, popularity, genre/year/history
+   signals, latent interactions, recent-ItemCF, and year recency.
+6. The learned ranker returns the Top-10 with feature contributions, route
+   provenance, and deterministic movie-ID tie-breaking.
 
-Weights were searched on at most 500 validation users with step 0.1 and frozen
-as `(0.7, 0.3, 0.0)`. The explicit preference score going to zero is an observed
-validation result, not a manually chosen success story.
+The earlier TF-IDF/min-max hybrid is still available as a lightweight control
+and API-key-free demo path. Its validation-selected weights `(0.7, 0.3, 0.0)`
+are retained as historical evidence rather than presented as the final method.
 
 ## 5. Dense retrieval and leakage-safe LambdaMART (v2)
 
@@ -57,19 +63,26 @@ The v2 path is the current focus. `DenseSemanticRetriever` stores
 and returns deterministic NumPy cosine retrieval through the same
 `retrieve(query, top_k, allowed_ids)` contract as TF-IDF.
 
-`LeakageSafeRankingSplit` orders each user's ratings by timestamp: the
-penultimate positive item is the validation target and the latest is the test
-target; neither enters ItemCF training. `train-ranker` builds ten candidate
-features per movie, runs whole-user GroupKFold three-fold CV over a fixed
-sixteen-parameter grid, and publishes a model/evidence bundle whose fingerprints
-cover dataset, rows, history, folds, groups, candidate policy, config, metrics,
-cases, and validation replay. The frozen evaluation replays the validation rows
-from the artifact and compares them byte-for-byte with the recorded evidence.
+`LeakageSafeRankingSplit` orders each user's ratings by timestamp: earlier
+interactions form legal history, then separate positives become ranking-train,
+validation, and frozen targets. Whole users stay within one grouped-CV fold.
+`train-ranker` builds the versioned candidate rows and publishes a
+model/evidence bundle whose fingerprints cover dataset, rows, history, folds,
+groups, candidate policy, feature order, config, metrics, and validation replay.
 
-Key files: `learned_ranking.py` (schema, artifact, booster loading),
-`lambdamart_pipeline.py` (candidate construction and orchestration),
-`v2_selection.py` (grouped CV and evidence), and `bundle.py` (atomic single-use
-publication).
+The final algorithm comparison uses a separately generated cohort ledger:
+development, Confirmation-A, Confirmation-B, and reserve users are mutually
+exclusive. Confirmation-A became debugging/replication evidence after baseline
+corrections; the untouched 1,000-user Confirmation-B cohort is the sole
+certification result. `baseline_eval.py`, `baseline_summary.py`, and the
+`baselines/` package implement the common evaluation protocol for Popularity,
+ItemCF, ALS, BPR-MF, LightGCN, and current_v2b.
+
+Key files: `latent_retrieval.py` (weighted ALS persistence and fold-in),
+`candidate_features.py` (versioned v1/v2/v2b schema), `learned_ranking.py`
+(artifact and booster loading), `lambdamart_pipeline.py` (candidate construction),
+`v2_selection.py` (grouped CV), `baseline_eval.py` / `baseline_summary.py`
+(strong-baseline evidence), and `promotion.py` (single-use publication).
 
 ## 6. Native crash lesson: three OpenMP runtimes
 
@@ -92,3 +105,14 @@ real cross-process reproducibility bug caused by Python hash randomization.
 Tests target behavior at module boundaries; the only external mock is
 `httpx.MockTransport`, which preserves the real provider request/response
 shape.
+
+The final promotion path adds a canonical manifest over the implementation
+commit, training identity, model, validation evidence, latent factors, and
+semantic cache. Label-free preflight verifies these bytes without opening the
+frozen case file. Execution atomically transitions a marker through `started`
+to `completed` or `failed`; every state permanently prevents a second run.
+
+For the published result, the 1,000-user Confirmation-B comparison is the main
+statistical evidence. The later 50-case one-shot run is a bounded generalization
+supplement because that case fingerprint had appeared in an earlier DeepSeek
+system experiment and the run did not contain matched ItemCF/ALS baselines.
