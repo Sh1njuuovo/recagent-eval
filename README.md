@@ -2,7 +2,7 @@
 
 ![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB)
 ![License](https://img.shields.io/badge/License-MIT-green)
-![Tests](https://img.shields.io/badge/tests-438%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-439%20passed-brightgreen)
 ![Coverage](https://img.shields.io/badge/coverage-90.04%25-brightgreen)
 
 An evaluation-first conversational movie recommendation Agent that separates
@@ -397,7 +397,7 @@ uv run pytest
 uv run ruff check .
 ```
 
-The 438-test suite covers schemas, memory updates, invalid plans, one-shot repair,
+The 439-test suite covers schemas, memory updates, invalid plans, one-shot repair,
 provider retries, chronological splitting, case-label preflight, frozen
 retrieval policy, hard constraints, route-level diagnostics, retrieval
 selection, ranking, weight tuning, metrics, CLI smoke tests, scripts, and

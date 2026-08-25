@@ -8,7 +8,7 @@
 2. 来源：RecAI/InteRecAgent 的工具化思想；明确本项目为独立实现。
 3. 架构：Conversation → PreferenceState/ToolPlan → Hard Filter → ItemCF + Dense（`all-MiniLM-L6-v2`）→ 十特征 LambdaMART → Traces/Metrics。
 4. 数据与契约：MovieLens-1M，用户时间切分，整用户 GroupKFold 三分 CV，模型/证据/指纹 bundle 单次消费、fail-closed。
-5. 真实调试：faulthandler + lldb 定位三份 `libomp.dylib` 共存导致的段错误，`n_jobs=1`/`OMP_NUM_THREADS=1` 修复并补子进程回归测试；438 个测试、90.04% 覆盖。
+5. 真实调试：faulthandler + lldb 定位三份 `libomp.dylib` 共存导致的段错误，`n_jobs=1`/`OMP_NUM_THREADS=1` 修复并补子进程回归测试；439 个测试、90.04% 覆盖。
 6. 证据演进：保留 500-user LambdaMART NDCG@10 `0.0327` vs ItemCF `0.0334`
    的负结果；ALS latent recall@500 `0.838`、union recall `0.928`；全新
    Confirmation-B 上 current_v2b Recall@10 `0.118`、NDCG@10 `0.0555`

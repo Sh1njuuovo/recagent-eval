@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-25
 
-**Status:** approved in conversation; awaiting written-spec review
+**Status:** implemented and verified on macOS and Ubuntu CI
 
 ## Context
 
