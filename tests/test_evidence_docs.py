@@ -32,14 +32,10 @@ def test_peak_rss_correction_invalidates_legacy_field() -> None:
 def test_current_project_docs_report_confirmation_b_certification() -> None:
     paths = [
         "README.md",
-        "docs/HANDOFF-2026-08-22.md",
         "docs/project-methodology.md",
         "docs/demo-script.md",
-        "reports/interview-pack/resume_star.md",
-        "reports/interview-pack/interview-pack.md",
-        "reports/interview-pack/interview_qa.md",
-        "reports/interview-pack/ppt_prompt.md",
-        "reports/interview-pack/application_checklist.md",
+        "reports/experiments/v2-strong-baselines-confirmation-b.md",
+        "reports/experiments/v2-final-promotion-evaluation.md",
     ]
     for relative in paths:
         text = (ROOT / relative).read_text()
@@ -53,10 +49,9 @@ def test_current_docs_report_consumed_final_promotion_boundaries() -> None:
         (ROOT / relative).read_text()
         for relative in (
             "README.md",
-            "docs/HANDOFF-2026-08-22.md",
             "docs/project-methodology.md",
             "docs/demo-script.md",
-            "reports/interview-pack/interview-pack.md",
+            "reports/experiments/v2-final-promotion-evaluation.md",
         )
     )
     lowered = combined.lower()
@@ -69,3 +64,19 @@ def test_current_docs_report_consumed_final_promotion_boundaries() -> None:
     assert "qwen/4090 remains pending" in lowered
     assert "certified on both" not in lowered
     assert "both untouched" not in lowered
+
+
+def test_public_portfolio_excludes_internal_workflow_artifacts() -> None:
+    excluded = (
+        "docs/superpowers",
+        "docs/HANDOFF-2026-08-22.md",
+        "docs/implementation-plan.md",
+        "docs/frozen-promotion-checklist-draft.md",
+        "reports/archive",
+        "reports/interview-pack",
+        "reports/profile",
+        "reports/ranking",
+        "scripts/candidate_score.py",
+    )
+    assert all(not (ROOT / relative).exists() for relative in excluded)
+    assert not tuple((ROOT / "reports/promotion").glob("obsolete-*"))

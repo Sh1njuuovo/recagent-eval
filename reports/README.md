@@ -51,9 +51,9 @@ They are kept separate from the 1,000-user offline algorithm comparison.
 - [`promotion/`](promotion) — canonical one-shot promotion manifest and receipt
 - [`experiments/`](experiments) — human-readable reports and machine JSON
 
-The historical `obsolete-*` promotion files are retained only as immutable
-identity history. The canonical current result and the consumed marker are
-identified in the final promotion report.
+The directory exposes only the canonical promotion identity. Earlier identities
+remain recoverable from Git history and are excluded from the public evidence
+surface to avoid ambiguity.
 
 ## Reproduction entry points
 
@@ -70,5 +70,4 @@ uv run pytest
 ```
 
 Detailed training, artifact, and frozen-promotion history lives in the linked
-experiment reports and [`docs/superpowers`](../docs/superpowers). Those files
-are engineering records, not the recommended first reading path.
+experiment reports. The list above is the recommended reading path.

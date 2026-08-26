@@ -10,12 +10,7 @@ Start with the documents that explain the shipped system:
 | [Remote 4090 runbook](remote-4090.md) | Optional Qwen3-8B/vLLM compatibility procedure; no completed GPU claim |
 | [Final experiment report](../reports/experiments/v2-final-promotion-evaluation.md) | Confirmation-B and one-shot promotion claim boundaries |
 
-## Historical engineering record
-
-`superpowers/specs/` and `superpowers/plans/` preserve the approved designs and
-implementation sequences used during development. They are useful for auditing
-decisions such as leakage-safe splitting, latent retrieval, evidence hygiene,
-and one-shot promotion hardening, but are not required to run the project.
-
-`HANDOFF-2026-08-22.md` is a detailed chronological handoff. The current public
-status is summarized more directly in the root [README](../README.md).
+The root [README](../README.md) summarizes the current public status. Historical
+implementation plans and session handoffs are intentionally excluded from the
+portfolio branch; the shipped methodology and evidence contracts are documented
+in the files above and enforced by tests.
